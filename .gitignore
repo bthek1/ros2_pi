@@ -1,0 +1,26 @@
+# colcon
+build/
+install/
+log/
+
+# model weights — fetched, not committed (see docs/info/setup.md)
+models/
+*.onnx
+*.engine
+
+# recorded data and output
+bags/
+captures/
+meshes/
+maps/
+*.ply
+*.db3
+
+# editor / OS
+.vscode/*
+!.vscode/tasks.json
+!.vscode/settings.json
+.cache/
+compile_commands.json
+*.swp
+.DS_Store
