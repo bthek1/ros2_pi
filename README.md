@@ -73,7 +73,9 @@ Measured on this hardware, via the predecessor:
 | [docs/info/setup.md](docs/info/setup.md) | Getting both machines to build and run this |
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause |
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones |
-| [docs/plans/in-progress/bootstrap-plan.md](docs/plans/in-progress/bootstrap-plan.md) | The build order, P0–P8 |
+| [docs/plans/README.md](docs/plans/README.md) | How plans are written here: stable phases, a command for a test, executable phases only |
+| [docs/plans/in-progress/bootstrap-plan.md](docs/plans/in-progress/bootstrap-plan.md) | The build order, P0–P8, each ending in a `just gate-*` test |
+| [docs/plans/future/bootstrap-future.md](docs/plans/future/bootstrap-future.md) | Deferred work, each entry with the trigger that promotes it into the plan |
 
 ## What one webcam can honestly do
 

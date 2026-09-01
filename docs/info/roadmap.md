@@ -1,8 +1,9 @@
 # Roadmap
 
-Status as of **2026-09-01**. The build order and per-phase gates live in
+Status as of **2026-09-01**. The build order and per-phase tests live in
 [../plans/in-progress/bootstrap-plan.md](../plans/in-progress/bootstrap-plan.md);
-this page is the one-line status view.
+this page is the one-line status view. Milestones map to plan phases: M1 = P0,
+M2 = P1, and so on through M9 = P8.
 
 | # | Milestone | Status |
 | --- | --- | --- |
@@ -20,23 +21,33 @@ this page is the one-line status view.
 
 ## What "done" means here
 
-A milestone is done when it **runs and something measured it**. Not when the
+A milestone is done when it **runs and a test command said so**. Not when the
 code compiles, and not when it looked right in RViz once. Each phase in the
-bootstrap plan names its own evidence — a number on a topic, a log line with a
-threshold, a rendered image file — and the phase is annotated with what actually
-happened and on what date.
+bootstrap plan ends in a `just gate-*` recipe that exits 0 or non-zero and
+prints the number it asserted on; the phase is then annotated with the date and
+what that recipe printed.
 
 The exceptions are physical-world checks that no script can close: the tape
 measure that pins `depth_scale`, exposure in a real room, and whether the mesh
 looks like the room. Those say "needs a human" explicitly and name the one
 recording that would turn them into a replayable gate.
 
-## Deliberately not in scope yet
+## Deferred, not forgotten
+
+Work that is real but not executable yet is **not** in the plan. It sits in
+[../plans/future/bootstrap-future.md](../plans/future/bootstrap-future.md), each
+entry with the trigger that would make it executable — CUDA TSDF kernels, the
+TensorRT provider, relocalisation, a CUDA OpenCV build, and the loop-closure
+work that becomes M10. When a trigger fires, the entry moves into the plan as
+the next phase number. Nothing waits in both places.
+
+## Never in scope
+
+These are non-goals, not deferrals — they do not belong in the future file
+either:
 
 - **Multi-camera or stereo.** One webcam is the constraint the project is built
   around; a second view would remove the interesting problem.
-- **CUDA TSDF kernels.** Only after the CPU integrator is correct and profiled,
-  and only once a CUDA toolkit is actually installed.
 - **Autonomy of any kind** — navigation, planning, control. This is perception
   and reconstruction.
 - **Running inference on the Pi.** The Pi is a sensor head. That is the design.

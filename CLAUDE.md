@@ -208,8 +208,31 @@ strong priors, re-verify before quoting a number as this project's own.
 - **Docs split by kind**: reference in `docs/info/`, plans in `docs/plans/`. A
   plan starts in `docs/plans/in-progress/` and is *moved* to `completed/` when
   done — moving the file is the status change, so fix inbound links when it
-  moves. Plans use stable phase numbers (P0, P1, …); once written, a phase's
-  number and scope never change. Record progress by annotating the phase.
+  moves.
+- **Every plan is a markdown file of executable phases, and nothing else.** The
+  three rules, in full in [docs/plans/README.md](docs/plans/README.md):
+  1. **Stable phases.** `## P0`, `## P1`, … Once written, a phase's number and
+     scope never change, so "P3" means the same thing in every doc, commit
+     message and conversation. Record progress by annotating the phase with
+     dates and what actually happened — never by renumbering or reshuffling.
+  2. **Every phase ends in a test that is a command.** Not "verify it looks
+     right", not "check the mesh" — a recipe someone can run that exits 0 or
+     non-zero and prints the number it asserted on. The test recipe is written
+     in the same change as the phase's code.
+  3. **Executable phases only.** A phase must be startable now, by the person
+     reading it, with the hardware and code that exist. Anything that is
+     waiting on something — a later phase, a purchase, an upstream release, or
+     the passage of time — **is not a phase**. Never write a phase like "check
+     back in 48 hours", "monitor for a week", "revisit once we have more data",
+     or "decide later whether to keep it".
+- **Deferred work lives in `docs/plans/future/`, never in a plan.** Each plan
+  may have one companion `docs/plans/future/<name>-future.md` holding the items
+  that are not executable yet. Every entry there names **the trigger that would
+  make it executable** — the measurement, the phase, or the hardware it is
+  waiting on. When the trigger fires, the entry is deleted from the future file
+  and appended to the plan as the **next unused phase number**, with a test.
+  Moving work into a plan is the only way it gets built; moving it into the
+  future file is the only way it gets deferred. It never sits in both.
 - `build/`, `install/`, `log/`, model weights and bag files are git-ignored.
 
 ## Working here
@@ -237,7 +260,9 @@ somebody once.
 | [docs/info/setup.md](docs/info/setup.md) | Getting both machines to build and run this, including the GPU stack |
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause, mostly inherited and worth reading before debugging |
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones and their status |
-| [docs/plans/in-progress/bootstrap-plan.md](docs/plans/in-progress/bootstrap-plan.md) | The build order, P0–P7, each phase ending in something runnable |
+| [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: stable phases, a command for a test, executable-only, and the future file |
+| [docs/plans/in-progress/bootstrap-plan.md](docs/plans/in-progress/bootstrap-plan.md) | The build order, P0–P8 — each phase startable now and ending in a test recipe |
+| [docs/plans/future/bootstrap-future.md](docs/plans/future/bootstrap-future.md) | Work deferred out of the bootstrap plan, each entry with the trigger that would make it executable |
 
 When hardware facts change (camera replugged, Pi reflashed, IP moved), update
 [docs/info/hardware.md](docs/info/hardware.md) from real command output and note

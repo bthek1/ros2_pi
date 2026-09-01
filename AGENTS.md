@@ -17,3 +17,8 @@ Short version:
   it runs until you have watched it run.
 - **Clean up after yourself**: no orphaned nodes on either machine, and a leaked
   camera process locks `/dev/video0` for everyone.
+- **Plans are markdown files of executable phases only** — stable numbers, and
+  every phase ending in a test that is a command. Anything that is waiting on
+  something goes in `docs/plans/future/`, with the trigger that would make it
+  executable. Never write a phase like "check back in 48 hours". Full rules:
+  [docs/plans/README.md](docs/plans/README.md).
