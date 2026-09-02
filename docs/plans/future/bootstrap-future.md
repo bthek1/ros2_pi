@@ -95,6 +95,31 @@ is not worth the build.
 
 ---
 
+## Bringing the dev box under this repo's playbook
+
+**What.** Add a `dev` group to `ansible/inventory.yml` and let `site.yml`
+provision this machine too — the Lyrical metapackage, the `ens18` DDS pin, the
+OpenCV/PCL/Eigen build dependencies, and eventually the ONNX Runtime tarball.
+
+**Why not now.** P9 deliberately manages one host. The dev box is the control
+node and is **still owned by the predecessor's playbook**
+(`~/Documents/piros2/ansible`), so adding it here means two trees writing the
+same `~/.profile` blocks and the same `cyclonedds.xml` on the same machine —
+the exact ownership collision P9's gate exists to detect on the Pi. Untangling
+that is its own piece of work, with its own way of going wrong: `become` on
+this host needs `ansible_become_exe: /usr/bin/sudo.ws`, because Ubuntu 26.04
+made `sudo-rs` the default and it does not support the prompt flag Ansible uses
+to recognise a password prompt — the play hangs, then fails with a message that
+names neither cause.
+
+**Trigger.** The predecessor's tree stops being run against this machine — i.e.
+`piros2` is archived, or its playbook is limited to `robot` and this repo's
+`ansible/` is the only thing writing `~/.profile` here. At that point it is a
+phase: fork the `dev` group_vars, assert `changed=0` on a second run, and assert
+the three shared variables still match the Pi's.
+
+---
+
 ## Retired
 
 Nothing yet. When an entry's trigger can no longer fire — the hardware went

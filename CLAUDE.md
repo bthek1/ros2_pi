@@ -27,8 +27,10 @@ to do.
 
 As of 2026-09-01, **`pimesh_msgs` and `pimesh_bringup` are built and their gate
 passes** on both machines (`just gate-build`). There are no nodes yet — the
-container launches empty and the frame tree is static. Everything else in
-`docs/` is still **design intent**, not a description of running code.
+container launches empty and the frame tree is static. There is **no `ansible/`
+tree yet either** — P9 builds it, and it is the next phase to execute.
+Everything else in `docs/` is still **design intent**, not a description of
+running code.
 
 When you build something, change the doc that describes it from future tense to
 a measured statement, and say what you measured it with. Do not write "the node
@@ -63,6 +65,17 @@ there. **Every package must build from source on both machines** — no
 cross-compiled binaries, no shipped `install/` tree, and nothing in
 `pimesh_camera` may depend on a Lyrical-only API. C++17 (Jazzy's baseline), not
 C++20, in anything the Pi builds.
+
+**The Pi's configuration is Ansible's, not a shell history.** Every apt package,
+the ROS environment, the Cyclone DDS interface pin and the `video` group are
+tasks in `ansible/roles/*` — so **never `apt install` on the Pi by hand**; add
+it to a role and re-run the playbook, or the next reflash silently loses it.
+Ansible owns *machine state*; `just sync-pi` and `just build-pi` own *the code*
+— do not add a workspace role that duplicates them. The tree does not exist yet
+(P9 builds it, forked from the predecessor's), and until it does the Pi is
+provisioned by `~/Documents/piros2/ansible`, which must stop being run against
+this host once P9 lands. Full design and the trap list:
+[docs/info/ansible.md](docs/info/ansible.md).
 
 The Pi is reachable non-interactively, so **verify hardware claims by running
 commands over SSH** rather than assuming:
@@ -161,7 +174,11 @@ strong priors, re-verify before quoting a number as this project's own.
   failed to build with `No module named 'em'` (measured 2026-09-01). Every
   build recipe puts `/usr/bin` first on `PATH`; if you hit it anyway, CMake has
   cached the wrong interpreter and you need `rm -rf build install`, not another
-  `colcon build`.
+  `colcon build`. **Ansible has the same problem from a different angle**:
+  interpreter auto-discovery walks `PATH` and finds uv's or PlatformIO's
+  Python, neither of which can `import apt`, so every apt task fails with a
+  module error that names nothing relevant. `ansible.cfg` pins
+  `interpreter_python = /usr/bin/python3`.
 - **The session is Wayland.** `rviz2` renders through GLX and needs
   `QT_QPA_PLATFORM=xcb`; it was measured working with hardware GL (4.6) on
   driver 595.84 as of 2026-08-31, so the old software-GL workaround is obsolete.
@@ -192,6 +209,13 @@ strong priors, re-verify before quoting a number as this project's own.
   `launch/*.launch.py`. A key that does not match the node name silently applies
   nothing — a trap that has cost this project's predecessor real time. Declare
   every parameter with a description and validate ranges at declaration.
+- **The Pi is configured by `ansible/`, and by nothing else.** One managed host
+  (`pi`), the dev box as control node, roles forked from the predecessor's tree.
+  `ros_distro` is a per-host variable and is **never spelled into a role** — the
+  two machines are on different distros, so a hardcoded `jazzy` installs the
+  wrong ROS the moment the dev box joins. Changes are applied with
+  `just provision` and proved by `just gate-provision`, whose central assertion
+  is that a second run reports `changed=0`.
 - Build with `colcon build --symlink-install`. Day-to-day commands are `just`
   recipes; add a recipe rather than documenting a long one-off command, and keep
   recipes and docs in agreement.
@@ -276,6 +300,7 @@ somebody once.
 | [docs/info/dashboard.md](docs/info/dashboard.md) | The web dashboard: transport, payloads, mesh streaming, layout |
 | [docs/info/hardware.md](docs/info/hardware.md) | Measured specs of both machines, the camera, and the GPU |
 | [docs/info/setup.md](docs/info/setup.md) | Getting both machines to build and run this, including the GPU stack |
+| [docs/info/ansible.md](docs/info/ansible.md) | Provisioning the Pi: what the playbook owns, what the justfile owns, and the traps |
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause, mostly inherited and worth reading before debugging |
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones and their status |
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: stable phases, a command for a test, executable-only, and the future file |
@@ -284,4 +309,6 @@ somebody once.
 
 When hardware facts change (camera replugged, Pi reflashed, IP moved), update
 [docs/info/hardware.md](docs/info/hardware.md) from real command output and note
-the date.
+the date. If the change is something the Pi *needs* — a package, a group, a
+sysctl — it belongs in an Ansible role in the same edit, or the next reflash
+loses it.

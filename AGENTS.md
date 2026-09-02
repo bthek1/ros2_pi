@@ -13,6 +13,11 @@ Short version:
   put raw images on the LAN.
 - **Two different ROS distros** (Lyrical here, Jazzy on the Pi) — everything
   builds from source on both machines, nothing is shipped as a binary.
+- **The Pi is configured by Ansible**, not by hand. Never `apt install` on the
+  Pi in an ad-hoc command — add it to a role in `ansible/` and re-run the
+  playbook, or the next reflash loses it. Ansible owns machine state; `just
+  sync-pi` / `just build-pi` own the code. The tree does not exist yet — P9
+  builds it. See [docs/info/ansible.md](docs/info/ansible.md).
 - **Nothing is built yet.** `docs/` describes intent. Do not write it up as if
   it runs until you have watched it run.
 - **Clean up after yourself**: no orphaned nodes on either machine, and a leaked

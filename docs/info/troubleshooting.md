@@ -123,6 +123,43 @@ Two more, both measured here on 2026-09-01 while building the P0 gate:
   entirely (144). Inside a justfile recipe the body is a temp file so the
   pattern is not on any command line; typed at a prompt it is.
 
+## Something that worked on the Pi last week is gone
+
+**It was installed by hand and the Pi was reflashed.** Anything the project
+needs on the Pi is a task in `ansible/roles/*`; if it is not, it survives
+exactly until the next reflash and then vanishes with no record that it was ever
+required. `v4l-utils` is the standing example — Ubuntu Server does not ship it.
+The fix is to add it to a role and `just provision`, not to `apt install` it
+again. See [ansible.md](ansible.md).
+
+## An Ansible apt task fails with a Python module error
+
+**Interpreter auto-discovery found the wrong Python.** It walks `PATH`, and on
+this box that finds uv's or PlatformIO's interpreter, neither of which can
+`import apt`. The error names the module, not the cause. `ansible.cfg` pins
+`interpreter_python = /usr/bin/python3`; if you are running Ansible from
+somewhere else, pin it there too. Same root cause as the `No module named 'em'`
+build failure above.
+
+## `~/.profile` on the Pi has two ROS blocks
+
+**Two Ansible trees own the same host.** This repo's playbook and the
+predecessor's at `~/Documents/piros2/ansible` both write `blockinfile` blocks
+exporting `ROS_DOMAIN_ID`, `ROS_LOCALHOST_ONLY` and `RMW_IMPLEMENTATION`. Two
+blocks are harmless right up until they disagree, at which point the last one
+sourced wins and neither file looks wrong. This repo is the sole owner — stop
+running the predecessor's playbook against the Pi, including `--limit robot`.
+`just gate-provision` asserts there is exactly one block.
+
+## The playbook reports `changed` on every run
+
+Something in a role is **not idempotent**. The usual suspects: a `command` or
+`shell` task without `creates:`/`changed_when:`, `rosdep init` (which also exits
+non-zero the second time), or a template whose rendered output differs run to
+run. A second run reporting `changed=0` is the whole claim `just gate-provision`
+makes — if it never settles, the role is describing an action rather than a
+state.
+
 ## Parameters in the YAML seem to do nothing
 
 The file is keyed by **node name**, and a key that does not match applies

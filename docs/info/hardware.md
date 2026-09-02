@@ -55,13 +55,18 @@ this project's predecessor down a wrong path more than once.
 | Kernel | `6.8.0-1060-raspi` |
 | CPU / RAM | 4 cores / 8 GB (7937 MiB) |
 | ROS | **Jazzy**, `/opt/ros/jazzy`, `ros-jazzy-ros-base` from apt |
+| Toolchain | g++ **13.3.0**, cmake **3.28.3** — measured 2026-09-02. g++ 13 is why the Pi's packages are C++17 |
 | LAN | **`wlan0` — Wi-Fi.** `eth0` has no carrier; there is no cable |
 | `sudo` | passwordless |
+| Configured by | **Ansible** — [ansible.md](ansible.md). Nothing is installed on it by hand |
 
 The Pi is on Wi-Fi, and that is a design input, not a detail: bandwidth is
 shared and lossy, the link has died twice while the OS kept running, and a bad
 network change leaves the machine needing a keyboard and a monitor. Treat
-network changes on the Pi as higher-risk than they look.
+network changes on the Pi as higher-risk than they look. It is also the second
+reason the Pi's configuration is a playbook rather than a shell history: the
+recovery from a bad network change is a reflash, and a reflash loses everything
+that was not written down as a role.
 
 ## Camera
 
@@ -70,7 +75,8 @@ network changes on the Pi as higher-risk than they look.
 | | |
 | --- | --- |
 | Capture node | **`/dev/video0`** — `crw-rw---- root video` |
-| `/dev/video1` | **Not a capture device.** It is the C922's UVC metadata node |
+| Stable path | `/dev/v4l/by-id/usb-046d_C922_Pro_Stream_Webcam_5461327F-video-index0` — survives replugs; prefer it over `/dev/video0` in config |
+| `/dev/video1` | **Not a capture device.** It is the C922's UVC metadata node (`…-video-index1`) |
 | Formats | `YUYV 4:2:2` and `MJPG`, both at 640×480 and 1280×720 |
 | Permissions | The Pi's user is in `video`, so no `sudo` is needed |
 

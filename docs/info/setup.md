@@ -1,7 +1,11 @@
 # Setup
 
-Getting both machines to build and run this. Nothing here is installed by the
-repo — read [hardware.md](hardware.md) for what is already present.
+Getting both machines to build and run this. Read [hardware.md](hardware.md) for
+what is already present. **The Pi's half of this is automated** — it is an
+Ansible playbook in this repo ([ansible.md](ansible.md)), and the commands below
+are shown so the roles are readable, not so you run them by hand. The dev box's
+half is manual, deliberately: it is the control node and its GPU stack is a
+one-off.
 
 ## Dev box
 
@@ -67,18 +71,38 @@ inference is dev-box-only, so any sync to the Pi excludes it.
 
 ## Raspberry Pi
 
-The Pi already runs `ros-jazzy-ros-base` with the environment provisioned by the
-predecessor's Ansible tree. For this project it additionally needs a C++
-toolchain and V4L2 headers:
+**The Pi is provisioned by Ansible, not by hand** — design, roles and traps in
+[ansible.md](ansible.md). The one command is:
+
+```bash
+just provision          # ansible-playbook site.yml  (the Pi is the only host)
+just gate-provision     # applies it twice; the second run must report changed=0
+```
+
+Both recipes are built by **P9**; until then the Pi is still provisioned by the
+predecessor's tree at `~/Documents/piros2/ansible`.
+
+The plain-`apt` equivalent, so the roles are not a black box — this is what the
+`toolchain` and `camera` roles assert:
 
 ```bash
 ssh pi "bash -lc 'sudo apt install -y build-essential cmake \
-  ros-jazzy-rclcpp-components ros-jazzy-image-transport v4l-utils libv4l-dev'"
+  ros-jazzy-rclcpp-components ros-jazzy-image-transport \
+  ros-jazzy-camera-info-manager v4l-utils'"
 ```
 
-`v4l-utils` comes from provisioning, not from the OS image — Ubuntu Server does
-not ship it, and a fresh reflash loses it. Check before reporting a camera
-command as broken.
+**Run it through the playbook, not this line.** A package installed by hand
+survives until the next reflash and then vanishes, and nothing records that the
+project depended on it. `v4l-utils` is exactly that case: it is on the Pi today
+because the predecessor's playbook put it there, and Ubuntu Server does not ship
+it.
+
+Measured **2026-09-02**: everything in that list is already installed, and
+`linux/videodev2.h` is present from `linux-libc-dev` — which is all a raw-ioctl
+V4L2 node compiles against, so **`libv4l-dev` is not needed**. (It provides the
+`libv4l2` format-conversion wrapper; `camera_node` does MJPEG passthrough and
+never converts.) The toolchain is g++ 13.3.0 and cmake 3.28.3 — g++ 13 is also
+why the Pi's packages are held at **C++17**.
 
 ## Building
 
@@ -114,10 +138,10 @@ just gate-build   # the P0 gate
 just stragglers   # sweep both machines for leftovers
 ```
 
-Later phases add `just cam` (Pi-side camera, P1), `just dev` (the whole
-session), `just dash` (P8), and one `just gate-*` per phase. **Keep this list
-and the justfile in agreement** — a recipe documented but absent is worse than
-one that was never mentioned.
+Later phases add `just provision` / `just provision-check` (P9), `just cam`
+(Pi-side camera, P1), `just dev` (the whole session), `just dash` (P8), and one
+`just gate-*` per phase. **Keep this list and the justfile in agreement** — a
+recipe documented but absent is worse than one that was never mentioned.
 
 Every session recipe **tears itself down on both machines**: the viewer runs in
 the foreground and a `trap … EXIT` `pkill -f`s each node pattern the recipe
@@ -141,7 +165,10 @@ before walking away.
   otherwise show a stale graph — which masks fixes that actually worked.
 - **`python3` here is PlatformIO's venv**, which shadows the system Python for
   `#!/usr/bin/env python3` shebangs. rqt tools crash with
-  `No module named 'yaml'`; prefix `PATH=/usr/bin:$PATH`.
+  `No module named 'yaml'`; prefix `PATH=/usr/bin:$PATH`. The same shadowing
+  breaks Ansible from the other end — interpreter auto-discovery finds a Python
+  that cannot `import apt` — which is why `ansible.cfg` pins
+  `interpreter_python = /usr/bin/python3`.
 - **`rviz2` needs `QT_QPA_PLATFORM=xcb`** on this Wayland session. It was
   measured running on hardware GL (4.6) with driver 595.84, so the old
   software-GL workaround is obsolete.

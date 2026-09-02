@@ -20,6 +20,10 @@ under Lyrical here and Jazzy on the Pi, the generated interfaces are
 byte-identical across the two distros, and the static frame tree comes up. There
 are no pipeline nodes yet; the container launches empty.
 
+**P9 is next**: the Pi's configuration becomes a playbook in this repo — see
+[docs/info/ansible.md](docs/info/ansible.md). Nothing on the Pi is installed by
+hand.
+
 Everything else in `docs/` is design intent.
 [docs/info/roadmap.md](docs/info/roadmap.md) tracks what has actually been
 built. The pipeline numbers quoted below are measured, but they were measured on
@@ -55,6 +59,7 @@ that uses it.
 | ROS | Lyrical | Jazzy |
 | GPU | GTX 1660 SUPER, 6 GB | — |
 | Runs | decode, keypoints, depth, fusion, meshing, dashboard | capture only |
+| Configured | by hand (control node) | by **Ansible**, from `ansible/` in this repo |
 
 Two different ROS distros, deliberately — there is no ABI compatibility across
 them, so every package builds from source on the machine that runs it.
@@ -83,10 +88,11 @@ Measured on this hardware, via the predecessor:
 | [docs/info/dashboard.md](docs/info/dashboard.md) | The web dashboard |
 | [docs/info/hardware.md](docs/info/hardware.md) | Measured specs of both machines and the camera |
 | [docs/info/setup.md](docs/info/setup.md) | Getting both machines to build and run this |
+| [docs/info/ansible.md](docs/info/ansible.md) | Provisioning the Pi — the playbook owns the machine, the justfile owns the code |
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause |
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones |
 | [docs/plans/README.md](docs/plans/README.md) | How plans are written here: stable phases, a command for a test, executable phases only |
-| [docs/plans/in-progress/bootstrap-plan.md](docs/plans/in-progress/bootstrap-plan.md) | The build order, P0–P8, each ending in a `just gate-*` test |
+| [docs/plans/in-progress/bootstrap-plan.md](docs/plans/in-progress/bootstrap-plan.md) | The build order, P0–P9, each ending in a `just gate-*` test |
 | [docs/plans/future/bootstrap-future.md](docs/plans/future/bootstrap-future.md) | Deferred work, each entry with the trigger that promotes it into the plan |
 
 ## What one webcam can honestly do

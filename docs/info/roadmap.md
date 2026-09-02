@@ -1,9 +1,10 @@
 # Roadmap
 
-Status as of **2026-09-01**. The build order and per-phase tests live in
+Status as of **2026-09-02**. The build order and per-phase tests live in
 [../plans/in-progress/bootstrap-plan.md](../plans/in-progress/bootstrap-plan.md);
 this page is the one-line status view. Milestones map to plan phases: M1 = P0,
-M2 = P1, and so on through M9 = P8.
+M2 = P1, and so on through M9 = P8, plus **M11 = P9**. M10 is not a phase — it
+is the loop-closure work, still deferred.
 
 | # | Milestone | Status |
 | --- | --- | --- |
@@ -17,7 +18,8 @@ M2 = P1, and so on through M9 = P8.
 | M7 | `mesh_node` — marching cubes, cleanup, Marker + PLY export | not started |
 | M8 | 6-DoF odometry from RGB-D keypoints, so the surface stops smearing | not started |
 | M9 | `dashboard_node` — the web view | not started |
-| M10 | Loop closure + pose graph + volume rebuild | not started |
+| M10 | Loop closure + pose graph + volume rebuild | not started — deferred, not a phase |
+| M11 | The Pi's configuration as code: `ansible/`, applied and idempotent (**P9**) | **next** — nothing built |
 
 ## What "done" means here
 
@@ -37,9 +39,10 @@ recording that would turn them into a replayable gate.
 Work that is real but not executable yet is **not** in the plan. It sits in
 [../plans/future/bootstrap-future.md](../plans/future/bootstrap-future.md), each
 entry with the trigger that would make it executable — CUDA TSDF kernels, the
-TensorRT provider, relocalisation, a CUDA OpenCV build, and the loop-closure
-work that becomes M10. When a trigger fires, the entry moves into the plan as
-the next phase number. Nothing waits in both places.
+TensorRT provider, relocalisation, a CUDA OpenCV build, bringing the dev box
+under this repo's playbook, and the loop-closure work that becomes M10. When a
+trigger fires, the entry moves into the plan as the next phase number. Nothing
+waits in both places.
 
 ## Never in scope
 
@@ -51,3 +54,5 @@ either:
 - **Autonomy of any kind** — navigation, planning, control. This is perception
   and reconstruction.
 - **Running inference on the Pi.** The Pi is a sensor head. That is the design.
+- **Configuring the Pi by hand.** Machine state is a role in `ansible/` or it
+  does not survive the next reflash. This is a rule, not a milestone.

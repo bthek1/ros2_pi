@@ -35,8 +35,13 @@ means:
 **Job:** get frames off the sensor, stamp them honestly, put them on the wire.
 Nothing else. No decode, no re-encode, no processing.
 
-- Open `/dev/video0` (the C922's only capture node — `/dev/video1` is its UVC
-  metadata node), `V4L2_PIX_FMT_MJPEG`, 1280×720, request 60 fps.
+- Open the camera by its **serial-keyed `by-id` path**
+  (`/dev/v4l/by-id/usb-046d_C922_…-video-index0`), which is stable across
+  replugs and reboots — it resolves to `/dev/video0`, the C922's only capture
+  node, while `…-index1`/`/dev/video1` is its UVC metadata node. The path is a
+  parameter, defaulted from the Ansible variable `camera_device`
+  ([ansible.md](ansible.md)). Then `V4L2_PIX_FMT_MJPEG`, 1280×720, request
+  60 fps.
 - `mmap` buffer pool, 4 buffers, `VIDIOC_DQBUF` → publish the JPEG bytes
   verbatim as `CompressedImage` with `format: "jpeg"`.
 - **Stamp at dequeue from the buffer's own timestamp.** `usb_cam` 0.8.1 has a

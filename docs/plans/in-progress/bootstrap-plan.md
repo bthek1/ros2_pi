@@ -1,6 +1,7 @@
 # Bootstrap plan — one webcam to a live mesh, in C++
 
-**Started 2026-09-01.** The build order for the whole pipeline.
+**Started 2026-09-01. Last updated 2026-09-02.** The build order for the whole
+pipeline.
 
 Written to the rules in [../README.md](../README.md): **stable phase numbers**,
 **every phase ends in a test that is a command**, and **every phase is
@@ -8,8 +9,9 @@ executable** — startable the moment the plan reaches it, with nothing to wait
 for. Work that is not executable yet lives in
 [../future/bootstrap-future.md](../future/bootstrap-future.md), never here.
 
-Each phase's test recipe is written **in the same change as its code**. The
-recipes named below do not exist yet; creating them is part of the phase.
+Each phase's test recipe is written **in the same change as its code**. Only
+`just gate-build` exists so far; every other recipe named below is written by
+the phase that needs it.
 
 The predecessor [`~/Documents/piros2`](../../../../piros2) already does all of
 this in Python. **It is the reference and the yardstick** — where a number exists
@@ -19,6 +21,52 @@ stays a measurement rather than an article of faith.
 **Status legend:** ☐ not started · ▶ in progress · ✓ done (annotated with the
 date and what the test printed).
 
+## Progress
+
+| Phase | Delivers | Test | Status |
+| --- | --- | --- | --- |
+| **P0** | `pimesh_msgs`, `pimesh_bringup`, the justfile | `just gate-build` | **✓ 2026-09-01** — PASS ×3, both machines clean (`b96f63c`) |
+| **P1** | `camera_node` on the Pi | `just gate-capture` | ☐ after P9 |
+| **P2** | `decode_node` + the container | `just gate-ipc` | ☐ |
+| **P3** | `keypoint_node`, `bags/desk1` | `just gate-keypoints` | ☐ |
+| **P4** | `depth_node` on the GPU | `just gate-depth` | ☐ |
+| **P5** | `fusion_node` (TSDF) | `just gate-fusion` | ☐ |
+| **P6** | `mesh_node` (marching cubes) | `just gate-mesh` | ☐ |
+| **P7** | 6-DoF odometry | `just gate-odom` | ☐ |
+| **P8** | `dashboard_node` | `just gate-dashboard` | ☐ |
+| **P9** | `ansible/` — the Pi's configuration as code | `just gate-provision` | ☐ **next** |
+
+**1 of 10 phases done.** No phase has been abandoned or rescoped; no entry has
+been promoted out of
+[../future/bootstrap-future.md](../future/bootstrap-future.md) yet.
+
+**Phase numbers are identities, not an execution order.** P9 was added on
+2026-09-02 and is the **next phase to execute**, ahead of P1 — it puts the Pi's
+toolchain and environment under version control before P1 starts building
+against them. Rule 1 says a plan never grows a phase in the middle, so it is
+appended at the next unused number and the table's Status column carries the
+ordering. That is the rule working, not a wart: "P1" still means the same thing
+it meant yesterday.
+
+## House rules for gate recipes
+
+Learned at P0, and they apply to every `gate-*` recipe from here on — writing
+one without them repeats a debugging session that has already happened.
+
+- **Put `/usr/bin` first on `PATH`** in any recipe that builds. This box's
+  `python3` is PlatformIO's venv, and `rosidl` generates message code in
+  Python. If a build still fails after that, CMake cached the wrong interpreter
+  — `rm -rf build install`, not another `colcon build`.
+- **Run the launch in the foreground under `timeout -s INT`, background the
+  probe.** A shell without job control sets SIGINT to `SIG_IGN` for background
+  children, which leaves the launch un-interruptible and its children orphaned.
+- **Detect leaks, do not `pkill` them.** A `pkill -f` pattern broad enough to
+  catch a launch also matches any shell whose command line contains that
+  pattern — including the one running the gate. Every gate ends by asserting
+  the session tore itself down; `just stragglers` is the sweep.
+- **Every gate prints its numbers**, passing or failing, so a run is evidence
+  on its own and not just a green tick.
+
 ---
 
 ## ✓ P0 — Workspace skeleton
@@ -26,9 +74,9 @@ date and what the test printed).
 **Done 2026-09-01.** `just gate-build` PASS: both distros build, all five
 interface definitions byte-identical across them, `camera_link →
 camera_optical_frame` resolving to the expected `[-0.5, 0.5, -0.5, 0.5]`, the
-container up, and no stragglers on either machine afterwards. Run twice for
-determinism. What it cost, and what it taught, is annotated at the end of the
-phase.
+container up, and no stragglers on either machine afterwards. Run three times
+for determinism, including once after a `rm -rf build install` clean rebuild.
+What it cost, and what it taught, is annotated at the end of the phase.
 
 **Goal:** the same source builds under two different ROS distros.
 
@@ -266,3 +314,76 @@ headless browser client attached, and asserts every pipeline rate is within 2% o
 the no-client run; kills the client mid-clip and asserts no rate change; stops a
 publisher and asserts the STALE flag appears within 2 s. Prints the two rate
 tables side by side.
+
+---
+
+## ☐ P9 — Provision the Pi with Ansible
+
+**Added 2026-09-02, and it is the next phase to execute — before P1.** It is
+numbered 9 because rule 1 forbids growing a plan in the middle, not because it
+comes last. Reference: [../../info/ansible.md](../../info/ansible.md).
+
+**Goal:** the Pi's configuration is a file in this repo, and re-asserting it is
+one command that reports how much it had to change.
+
+Today it is not. Measured 2026-09-02, the Pi is already in the state P1 needs —
+`ROS_DOMAIN_ID=42`, `rmw_cyclonedds_cpp`, `CYCLONEDDS_URI` pinned, `v4l-utils`,
+`build-essential`, `ros-jazzy-rclcpp-components`, `-image-transport` and
+`-camera-info-manager` all installed, and `linux/videodev2.h` present from
+`linux-libc-dev`, which is all a raw-ioctl V4L2 node compiles against.
+(`libv4l-dev` is *not* installed and is **not** needed: it provides the
+`libv4l2` conversion wrapper, and `camera_node` does MJPEG passthrough with
+plain ioctls. If P1 ever reaches for `libv4l2.h`, that is the moment it becomes
+a role task — not before.)
+
+So this phase changes almost nothing on the machine, and that is the point. The
+Pi is correct **because the predecessor's playbook put it that way**, and
+nothing in this repo records which of those facts this project depends on. P9's
+deliverable is that the list becomes re-assertable and survives a reflash, not
+that it is long. Expect the first apply to report a small `changed` count and
+the second to report zero — and if the first is large, the roles have drifted
+from what the machine actually needs, which is itself the finding.
+
+**Work**
+
+- `ansible/` at the repo root: `ansible.cfg` (with
+  `interpreter_python = /usr/bin/python3` — same shadowed-Python trap as the
+  build), `inventory.yml` with the single managed host `pi`,
+  `requirements.yml` pinning `ansible.posix >= 2.0`, `site.yml`, and
+  `group_vars/robot.yml`.
+- Roles **forked from `~/Documents/piros2/ansible` and trimmed**, not written
+  fresh — they have run against this Pi for weeks: `ros2_apt`, `ros2_install`,
+  `ros2_env`, `toolchain` (new: `build-essential`, `cmake`, and the
+  `ros-jazzy-*` build dependencies P1 links against), `camera`, `wifi`.
+- **No `workspace` role.** Ansible owns machine state; `just sync-pi` and
+  `just build-pi` own the code. Two mechanisms for one job is how they end up
+  disagreeing about which ran last.
+- `ros2_env` reuses the **predecessor's `blockinfile` markers** so it replaces
+  that block rather than stacking a second copy of the same three exports.
+- Recipes: `just provision`, `just provision-check` (`--check --diff`),
+  `just gate-provision`.
+
+**Test:** `just gate-provision` — runs `ansible robot -m ping`, then applies
+`site.yml` **twice** and asserts the second run reports **`changed=0` and
+`failed=0`** (idempotence is the whole claim); then asserts over
+`ssh pi "bash -lc '…'"` that `ROS_DOMAIN_ID`, `ROS_LOCALHOST_ONLY` and
+`RMW_IMPLEMENTATION` are **equal to the dev box's own values** — not merely
+non-empty, since drift is what the playbook exists to prevent — that
+`cyclonedds.xml` pins `wlan0`, that `v4l-utils` and the `ros-jazzy-*` build
+dependencies are installed and `linux/videodev2.h` exists, that the C922's
+`by-id` capture symlink resolves, and that `~/.profile` contains
+**exactly one** managed ROS block (two means the predecessor's tree also still
+owns this host). Finishes by running `just gate-build`, so a provisioning change
+that breaks the cross-distro build fails here rather than at P1. Prints both
+`changed=` counts, the three variables side by side for both machines, and
+`g++ --version`.
+
+Asserting *equality across the two machines* is the point. A gate that only
+checked the Pi would pass while the dev box drifted, which is the exact failure
+this project is most exposed to and the one that produces silence instead of an
+error.
+
+**Not in scope:** the dev box. It is the control node, it is still provisioned
+by the predecessor's tree, and bringing it under this playbook is a deferred
+entry with a trigger in
+[../future/bootstrap-future.md](../future/bootstrap-future.md).
