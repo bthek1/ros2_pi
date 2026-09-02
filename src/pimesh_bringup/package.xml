@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://relaxng.org/ns/structure/1.0"?>
+<package format="3">
+  <name>pimesh_bringup</name>
+  <version>0.0.1</version>
+  <description>
+    Launch files, parameters and the frame tree for the pimesh pipeline. The
+    dev-box stages compose into one container with intra-process comms; the
+    camera runs on the Pi from its own launch.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rclcpp_components</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>pimesh_msgs</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -14,12 +14,24 @@ where it pays.
 
 ## Status
 
-**Documentation only.** As of 2026-09-01 there is no code in this repository —
-`docs/` is the design and the working agreement, and
+**P0 done — the workspace builds on both machines.** `pimesh_msgs` and
+`pimesh_bringup` exist and `just gate-build` passes: the same source builds
+under Lyrical here and Jazzy on the Pi, the generated interfaces are
+byte-identical across the two distros, and the static frame tree comes up. There
+are no pipeline nodes yet; the container launches empty.
+
+Everything else in `docs/` is design intent.
 [docs/info/roadmap.md](docs/info/roadmap.md) tracks what has actually been
-built. The numbers quoted throughout are measured, but they were measured on the
-Python predecessor at [`~/Documents/piros2`](../piros2), which implements the
+built. The pipeline numbers quoted below are measured, but they were measured on
+the Python predecessor at [`~/Documents/piros2`](../piros2), which implements the
 same pipeline on the same hardware.
+
+```bash
+just build        # dev box
+just build-pi     # sync + build on the Pi
+just gate-build   # the P0 gate
+just stragglers   # sweep both machines
+```
 
 ## Why a rewrite
 

@@ -82,11 +82,18 @@ The apt OpenCV (4.10.0) is built without the CUDA module. ORB runs on the CPU
 here, which is fine at 500 features. Building OpenCV from source to change that
 is a decision to state out loud, not a fix to slip in.
 
-## rqt or another Python tool crashes with `No module named 'yaml'`
+## A build fails with `No module named 'em'` (or `yaml`)
 
-The dev box's `python3` is PlatformIO's venv, which shadows the system Python
-for `#!/usr/bin/env python3` shebangs. Prefix `PATH=/usr/bin:$PATH`. C++ nodes
-are immune.
+**Measured here, 2026-09-01.** The dev box's `python3` is PlatformIO's venv,
+which shadows the system Python for `#!/usr/bin/env python3` shebangs. rqt and
+other GUI tools crash with `No module named 'yaml'` — and **C++ interface
+packages are not immune**, because `rosidl` generates message code in Python:
+`pimesh_msgs` failed with `No module named 'em'` (empy lives in
+`/usr/lib/python3/dist-packages`, which the venv does not see).
+
+`just build` puts `/usr/bin` first on `PATH`, which fixes it. If it still fails
+after that, **CMake has cached the wrong interpreter** — `rm -rf build install`
+and build again; another `colcon build` will not clear it.
 
 ## `rviz2` will not start
 
@@ -100,6 +107,21 @@ reintroduced.
 Killing a background `bash -lc` wrapper orphans its ros2 grandchildren, which
 sit silent until something feeds their subscriptions again. Cleanup traps must
 `pkill -f` the node patterns, never `kill %N`.
+
+Two more, both measured here on 2026-09-01 while building the P0 gate:
+
+- **A backgrounded `ros2 launch` can be un-interruptible.** A shell without job
+  control sets SIGINT to `SIG_IGN` for background children, so
+  `timeout -s INT 20 ros2 launch … &` ran to completion and left its three
+  `static_transform_publisher`s orphaned, while the identical command in the
+  foreground shut down cleanly. Run the launch in the foreground under
+  `timeout -s INT` and background the probe instead.
+- **`pkill -f <pattern>` matches the shell that is running it** if that
+  pattern appears anywhere in its command line. `pkill -f "ros2 launch
+  pimesh_bringup"` typed in a command that also *mentions* that string kills the
+  command itself, mid-script, with an exit code that looks like something else
+  entirely (144). Inside a justfile recipe the body is a temp file so the
+  pattern is not on any command line; typed at a prompt it is.
 
 ## Parameters in the YAML seem to do nothing
 

@@ -1,0 +1,14 @@
+# Write the current surface to disk at full detail.
+
+# Empty = meshes/live_<stamp>.ply under the workspace.
+string path
+
+# Also write a Poisson-closed companion, which is watertight and therefore
+# contains assumed geometry. The honest, hole-bearing mesh is always written.
+bool watertight
+---
+bool success
+string path            # what was actually written
+string closed_path     # empty unless watertight was requested
+uint32 triangles
+string message

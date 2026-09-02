@@ -8,7 +8,7 @@ M2 = P1, and so on through M9 = P8.
 | # | Milestone | Status |
 | --- | --- | --- |
 | M0 | Docs and working agreement | **done 2026-09-01** — this tree |
-| M1 | Workspace skeleton: `pimesh_msgs`, `pimesh_bringup`, justfile, both machines build | not started |
+| M1 | Workspace skeleton: `pimesh_msgs`, `pimesh_bringup`, justfile, both machines build | **done 2026-09-01** — `just gate-build` PASS |
 | M2 | `pimesh_camera` on the Pi — V4L2 MJPEG, honest capture stamps, fails loudly | not started |
 | M3 | Dev-box container — `decode_node` with intra-process comms proven zero-copy | not started |
 | M4 | `keypoint_node` — ORB, matching, annotated preview | not started |

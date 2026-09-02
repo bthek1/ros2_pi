@@ -1,0 +1,40 @@
+# Parameters for the pimesh pipeline.
+#
+# KEYED BY NODE NAME. A top-level key that does not match a running node's name
+# applies nothing at all — no warning, no error, no effect. This trap has cost
+# the predecessor project real time more than once; check `ros2 node list`
+# against the keys here before concluding a parameter "does not work".
+#
+# Every parameter a node reads is declared in the node with a description and a
+# validated range. This file supplies values, not the schema.
+#
+# Each phase of the bootstrap plan adds its own section as its node lands.
+# Sections for nodes that do not exist yet are deliberately absent rather than
+# commented-out guesses.
+
+# --- P1, on the Pi ---------------------------------------------------------
+camera_node:
+  ros__parameters:
+    # The C922's only capture node. /dev/video1 is its UVC metadata node and
+    # produces no frames.
+    device: /dev/video0
+    # MJPEG straight from the camera, published without decode or re-encode.
+    # 1280x720 is the mode this project is designed around.
+    image_width: 1280
+    image_height: 720
+    # Ask for 60. The camera delivered 42-60 distinct frames/s at 720p MJPG
+    # once its persistent exposure control was cleared (measured in the
+    # predecessor, 2026-08-04); asking for 30 makes the grab timer beat
+    # against the camera's own cadence.
+    framerate: 60
+    # V4L2 mmap buffer pool. Four is enough to ride out a scheduling hiccup
+    # without adding latency the pipeline then has to carry.
+    buffer_count: 4
+    # Frame id stamped on every published frame. Depth, keypoints and the TSDF
+    # all do their geometry in this frame.
+    frame_id: camera_optical_frame
+    # Calibration for /camera_info, published transient-local. Empty means the
+    # node publishes an uncalibrated CameraInfo and says so loudly at startup:
+    # zero distortion is not good enough for a pipeline that unprojects every
+    # pixel.
+    camera_info_url: ''

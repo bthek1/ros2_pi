@@ -103,12 +103,21 @@ both distros. A build that only succeeds here is half a build.
 
 ## Running
 
+Recipes that exist today (P0):
+
 ```bash
-just cam        # Pi-side camera only, with teardown
-just pipeline   # the dev-box container against a running camera
-just dev        # both, plus the dashboard — the day-to-day session
-just dash       # dashboard alone, against a running pipeline
+just build        # colcon build here
+just sync-pi      # source only — no build products cross the distro boundary
+just build-pi     # sync, then build on the Pi
+just pipeline     # the dev-box container (empty until P2)
+just gate-build   # the P0 gate
+just stragglers   # sweep both machines for leftovers
 ```
+
+Later phases add `just cam` (Pi-side camera, P1), `just dev` (the whole
+session), `just dash` (P8), and one `just gate-*` per phase. **Keep this list
+and the justfile in agreement** — a recipe documented but absent is worse than
+one that was never mentioned.
 
 Every session recipe **tears itself down on both machines**: the viewer runs in
 the foreground and a `trap … EXIT` `pkill -f`s each node pattern the recipe

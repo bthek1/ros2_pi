@@ -23,15 +23,19 @@ copy its structure wholesale: the point of the rewrite is to do in one process
 with `rclcpp` components what Python needed three processes and two interpreters
 to do.
 
-### Status: nothing is built yet
+### Status: P0 done, P1 next
 
-As of 2026-09-01 this repo contains documentation only — no `src/`, no packages,
-no builds. Everything in `docs/` is **design intent**, not a description of
-running code. When you build something, change the doc that describes it from
-future tense to a measured statement, and say what you measured it with.
+As of 2026-09-01, **`pimesh_msgs` and `pimesh_bringup` are built and their gate
+passes** on both machines (`just gate-build`). There are no nodes yet — the
+container launches empty and the frame tree is static. Everything else in
+`docs/` is still **design intent**, not a description of running code.
 
-Do not write "the node publishes X at Y Hz" until a node has published X and you
-have watched it do Y.
+When you build something, change the doc that describes it from future tense to
+a measured statement, and say what you measured it with. Do not write "the node
+publishes X at Y Hz" until a node has published X and you have watched it do Y.
+Current state is tracked in [docs/info/roadmap.md](docs/info/roadmap.md) and the
+phase annotations in
+[docs/plans/in-progress/bootstrap-plan.md](docs/plans/in-progress/bootstrap-plan.md).
 
 ## The two machines
 
@@ -152,8 +156,12 @@ strong priors, re-verify before quoting a number as this project's own.
   otherwise show you a stale graph and mask a fix that worked.
 - **The dev box's `python3` is PlatformIO's venv**, which shadows the system
   Python for `#!/usr/bin/env python3` shebangs — rqt and other GUI tools crash
-  with `No module named 'yaml'`. Prefix `PATH=/usr/bin:$PATH` for those. C++
-  nodes are immune; launch files are not.
+  with `No module named 'yaml'`. **C++ is not immune, contrary to what this file
+  used to say**: `rosidl` generates message code *in Python*, so `pimesh_msgs`
+  failed to build with `No module named 'em'` (measured 2026-09-01). Every
+  build recipe puts `/usr/bin` first on `PATH`; if you hit it anyway, CMake has
+  cached the wrong interpreter and you need `rm -rf build install`, not another
+  `colcon build`.
 - **The session is Wayland.** `rviz2` renders through GLX and needs
   `QT_QPA_PLATFORM=xcb`; it was measured working with hardware GL (4.6) on
   driver 595.84 as of 2026-08-31, so the old software-GL workaround is obsolete.
@@ -192,7 +200,17 @@ strong priors, re-verify before quoting a number as this project's own.
   mechanism: viewer in the foreground, `trap … EXIT` that `pkill -f`s every node
   pattern the recipe started (bash fires EXIT on Ctrl-C too). Killing a
   background `bash -lc` wrapper orphans its grandchildren — always pattern-match
-  the node, never `kill %N`.
+  the node, never `kill %N`. Two things measured while building P0's gate:
+  - **A backgrounded `ros2 launch` may be un-interruptible.** A shell without
+    job control sets SIGINT to `SIG_IGN` for background children, so
+    `timeout -s INT … &` left the launch running and its
+    `static_transform_publisher`s orphaned. Run the launch in the **foreground**
+    under `timeout -s INT` and put the probe in the background instead.
+  - **`pkill -f <pattern>` also matches any shell whose command line contains
+    that pattern** — including the one running the cleanup. It killed the gate's
+    own wrapper twice. In a *recipe* the script body is a temp file, so this is
+    safe; typed at a prompt or in an ad-hoc command it is not. Prefer bounding
+    with `timeout` and *detecting* leaks (`just stragglers`) over broad pkills.
 - **This applies to ad-hoc runs too — that means you, Claude.** Anything you
   start by hand while verifying has no EXIT trap. Bound it up front
   (`timeout -s INT 30 …`, and on the Pi

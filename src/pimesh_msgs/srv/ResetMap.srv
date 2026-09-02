@@ -1,0 +1,7 @@
+# Clear the TSDF volume and the frame memory. Throws away the session's work,
+# so callers must pass confirm=true; the dashboard asks first.
+
+bool confirm
+---
+bool success
+string message

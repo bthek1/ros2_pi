@@ -21,7 +21,14 @@ date and what the test printed).
 
 ---
 
-## ☐ P0 — Workspace skeleton
+## ✓ P0 — Workspace skeleton
+
+**Done 2026-09-01.** `just gate-build` PASS: both distros build, all five
+interface definitions byte-identical across them, `camera_link →
+camera_optical_frame` resolving to the expected `[-0.5, 0.5, -0.5, 0.5]`, the
+container up, and no stragglers on either machine afterwards. Run twice for
+determinism. What it cost, and what it taught, is annotated at the end of the
+phase.
 
 **Goal:** the same source builds under two different ROS distros.
 
@@ -33,13 +40,41 @@ date and what the test printed).
   transforms, `config/pimesh.yaml`, an empty component-container launch.
 - Justfile: `build`, `sync-pi`, `build-pi`, `test`, `stragglers`.
 
-**Test:** `just gate-build` — runs `colcon build` here and, over SSH, on the Pi,
-then `ros2 interface show pimesh_msgs/msg/Keypoints` on both machines and
-diffs the two outputs. Exits non-zero on any build failure or if the interface
-definitions differ. Prints both distro names and both build times.
+**Test:** `just gate-build` — builds here and, over SSH, on the Pi; diffs
+`ros2 interface show` output for **all five** interfaces between the two
+machines; then launches the frame tree and asserts `camera_link →
+camera_optical_frame` resolves, the container comes up, and the session leaves
+nothing running. Exits non-zero on any of those. Prints both build times and the
+measured rotation.
 
 The cross-distro build **is** this phase; a build that only succeeds here is
 half a build.
+
+### What happened
+
+- **Built:** `pimesh_msgs` (3 messages, 2 services) and `pimesh_bringup`
+  (`pimesh.launch.py`, `frames.launch.py`, `config/pimesh.yaml`), plus the
+  justfile with `build`, `sync-pi`, `build-pi`, `test`, `pipeline`,
+  `stragglers`, `gate-build`.
+- **Build cost:** 8.2 s clean on the dev box, 23.1 s on the Pi (`pimesh_msgs`
+  alone — rosidl generation on four cores). The gate's own figures are
+  incremental rebuilds and read as 1 s / 3 s.
+- **`camera_link → camera_optical_frame` = `[-0.5, 0.5, -0.5, 0.5]`**, i.e.
+  roll −90°, yaw −90°. The standard body-to-optical rotation, confirmed by
+  `tf2_echo` rather than by reading the launch file.
+- **Trap found, in our own docs:** the dev box's `python3` is PlatformIO's venv,
+  and **rosidl generates message code with Python** — so an interface package is
+  *not* immune to it. `pimesh_msgs` failed with `No module named 'em'` until the
+  build recipe put `/usr/bin` first on `PATH`, and it needed a **clean rebuild**
+  because CMake had already cached the wrong interpreter. The docs said C++ was
+  immune; they were wrong, and are now fixed.
+- **Trap found, new:** a `pkill -f` teardown pattern also matches *any shell
+  whose command line contains that string* — including the one running the
+  gate, which killed itself twice this way. The gate now bounds the launch with
+  `timeout -s INT` in the **foreground** (a shell without job control sets
+  SIGINT to SIG_IGN for background children, which left the launch
+  un-interruptible and its `static_transform_publisher`s orphaned) and *detects*
+  leaks rather than pkilling them.
 
 ---
 

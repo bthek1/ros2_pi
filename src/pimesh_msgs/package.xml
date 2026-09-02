@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://relaxng.org/ns/structure/1.0"?>
+<package format="3">
+  <name>pimesh_msgs</name>
+  <version>0.0.1</version>
+  <description>
+    Interfaces shared by the pimesh pipeline: per-frame keypoints, per-stage
+    pipeline statistics, mesh statistics, and the two session services.
+    Builds on both machines — Lyrical on the dev box, Jazzy on the Pi.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

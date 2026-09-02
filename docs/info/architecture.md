@@ -1,7 +1,8 @@
 # Architecture
 
-*Design intent, 2026-09-01. Nothing here is built yet — see
-[roadmap.md](roadmap.md) for what exists.*
+*Design intent, 2026-09-01, except where marked **built**. `pimesh_msgs` and
+`pimesh_bringup` exist and their gate passes (P0); no pipeline nodes do yet —
+see [roadmap.md](roadmap.md).*
 
 ## The shape of it
 
@@ -67,12 +68,12 @@ process quietly falls back to serialising.
 
 | Package | Build | Runs on | Contents |
 | --- | --- | --- | --- |
-| `pimesh_msgs` | `ament_cmake` (rosidl) | both | `Keypoints.msg`, `PipelineStats.msg`, `MeshStats.msg`, `SaveMesh.srv`, `ResetMap.srv` |
+| `pimesh_msgs` | `ament_cmake` (rosidl) | both | **built** — `Keypoints.msg`, `PipelineStats.msg`, `MeshStats.msg`, `SaveMesh.srv`, `ResetMap.srv` |
 | `pimesh_camera` | `ament_cmake` | **Pi** | `camera_node` — V4L2 capture, MJPEG passthrough, capture-time stamps |
 | `pimesh_perception` | `ament_cmake` | dev box | `decode_node`, `keypoint_node`, `depth_node` |
 | `pimesh_world` | `ament_cmake` | dev box | `fusion_node` (TSDF), `mesh_node` (marching cubes, PLY export) |
 | `pimesh_dashboard` | `ament_cmake` | dev box | `dashboard_node` — HTTP + WebSocket server, vendored web UI |
-| `pimesh_bringup` | `ament_cmake` | both | launch files, `config/*.yaml`, the RViz config |
+| `pimesh_bringup` | `ament_cmake` | both | **built** — `pimesh.launch.py` (the container), `frames.launch.py` (static TF), `config/pimesh.yaml`; RViz config still to come |
 
 `pimesh_camera` and `pimesh_msgs` build on the Pi under **Jazzy**; everything
 else is dev-box-only under **Lyrical**. Keep the Pi-side pair to C++17 and to
