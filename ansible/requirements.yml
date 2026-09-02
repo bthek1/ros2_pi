@@ -1,0 +1,14 @@
+---
+# Collections for the control node:
+#   ansible-galaxy collection install -r requirements.yml
+#
+# Measured on this control node 2026-09-02: ansible-core 2.20.1,
+# ansible.posix 2.2.2, community.general 12.1.0.
+collections:
+  # >= 2.0: the 1.x synchronize plugin warns on every run under modern
+  # ansible-core.
+  - name: ansible.posix
+    version: ">=2.0.0"
+  # locale_gen, used by ros2_env.
+  - name: community.general
+    version: ">=8.0.0"

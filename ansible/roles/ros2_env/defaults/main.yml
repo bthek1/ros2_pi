@@ -1,0 +1,14 @@
+---
+# Outside the workspace on purpose. `just sync-pi` runs rsync --delete, so a
+# per-host file living under the repo would be silently removed by the next
+# sync — and a CYCLONEDDS_URI pointing at a missing file fails quietly: DDS
+# binds whatever interface it likes and discovery breaks with no error
+# anywhere.
+cyclonedds_config_path: "{{ ansible_facts.env.HOME }}/.config/cyclonedds/cyclonedds.xml"
+
+# Distros this machine may have been provisioned with before. The dotfile
+# markers used to carry the distro name, so a switch left the old block
+# orphaned beside the new one — two sets of exports, one pointing at an
+# /opt/ros that no longer exists. The markers are distro-free now; this list
+# sweeps up what the old scheme left.
+ros_legacy_distros: [foxy, humble, iron, jazzy, kilted, lyrical]

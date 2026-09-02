@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Run the Wi-Fi link watchdog every minute
+
+[Timer]
+# 90 s after boot: give a normal association time to complete so the
+# watchdog's first look is at a settled link.
+OnBootSec=90
+OnUnitActiveSec=60
+AccuracySec=10
+
+[Install]
+WantedBy=timers.target

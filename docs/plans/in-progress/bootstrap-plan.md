@@ -26,7 +26,7 @@ date and what the test printed).
 | Phase | Delivers | Test | Status |
 | --- | --- | --- | --- |
 | **P0** | `pimesh_msgs`, `pimesh_bringup`, the justfile | `just gate-build` | **✓ 2026-09-01** — PASS ×3, both machines clean (`b96f63c`) |
-| **P1** | `camera_node` on the Pi | `just gate-capture` | ☐ after P9 |
+| **P1** | `camera_node` on the Pi | `just gate-capture` | ☐ **next** |
 | **P2** | `decode_node` + the container | `just gate-ipc` | ☐ |
 | **P3** | `keypoint_node`, `bags/desk1` | `just gate-keypoints` | ☐ |
 | **P4** | `depth_node` on the GPU | `just gate-depth` | ☐ |
@@ -34,16 +34,16 @@ date and what the test printed).
 | **P6** | `mesh_node` (marching cubes) | `just gate-mesh` | ☐ |
 | **P7** | 6-DoF odometry | `just gate-odom` | ☐ |
 | **P8** | `dashboard_node` | `just gate-dashboard` | ☐ |
-| **P9** | `ansible/` — the Pi's configuration as code | `just gate-provision` | ☐ **next** |
+| **P9** | `ansible/` — the Pi's configuration as code | `just gate-provision` | **✓ 2026-09-02** — PASS ×2, idempotent (11 → 0) |
 
-**1 of 10 phases done.** No phase has been abandoned or rescoped; no entry has
+**2 of 10 phases done.** No phase has been abandoned or rescoped; no entry has
 been promoted out of
 [../future/bootstrap-future.md](../future/bootstrap-future.md) yet.
 
 **Phase numbers are identities, not an execution order.** P9 was added on
-2026-09-02 and is the **next phase to execute**, ahead of P1 — it puts the Pi's
+2026-09-02 and **executed the same day, ahead of P1** — it put the Pi's
 toolchain and environment under version control before P1 starts building
-against them. Rule 1 says a plan never grows a phase in the middle, so it is
+against them. **Next is P1.** Rule 1 says a plan never grows a phase in the middle, so it is
 appended at the next unused number and the table's Status column carries the
 ordering. That is the rule working, not a wart: "P1" still means the same thing
 it meant yesterday.
@@ -317,9 +317,16 @@ tables side by side.
 
 ---
 
-## ☐ P9 — Provision the Pi with Ansible
+## ✓ P9 — Provision the Pi with Ansible
 
-**Added 2026-09-02, and it is the next phase to execute — before P1.** It is
+**Done 2026-09-02.** `just gate-provision` PASS, twice: the playbook is
+idempotent, the Pi's three ROS variables equal the dev box's, `cyclonedds.xml`
+pins `wlan0`, the six build dependencies are installed, `linux/videodev2.h` is
+present, the C922 by-id symlink resolves to `/dev/video0`, `~/.profile` carries
+**exactly one** managed block, and `just gate-build` still passes. g++ 13.3.0.
+What it changed, and what it taught, is annotated at the end of the phase.
+
+**Added 2026-09-02, and it was the next phase to execute — before P1.** It is
 numbered 9 because rule 1 forbids growing a plan in the middle, not because it
 comes last. Reference: [../../info/ansible.md](../../info/ansible.md).
 
@@ -387,3 +394,43 @@ error.
 by the predecessor's tree, and bringing it under this playbook is a deferred
 entry with a trigger in
 [../future/bootstrap-future.md](../future/bootstrap-future.md).
+
+### What happened
+
+- **Built:** `ansible/` — `ansible.cfg`, `inventory.yml` (one host),
+  `requirements.yml`, `site.yml`, `group_vars/robot.yml`, and six roles forked
+  from the predecessor and trimmed: `ros2_apt`, `ros2_install`, `ros2_env`,
+  `toolchain` (new), `camera`, `wifi`. Recipes: `just provision`,
+  `just provision-check`, `just gate-provision`.
+- **First apply changed 11 tasks; the second changed 0**, which is the
+  idempotence claim. Those 11 were the ownership hand-off, *not* drift in what
+  the machine had installed — every apt package the roles name was already
+  present, exactly as the phase predicted.
+- **Trimmed, deliberately:** no `usb_cam` (this project replaces it, and a
+  second thing able to open the exclusive `/dev/video0` is a liability), no
+  `workspace` role (`just sync-pi` owns the code), no fish (the Pi has bash),
+  no `libv4l-dev` (MJPEG passthrough uses plain ioctls, and
+  `linux/videodev2.h` from `linux-libc-dev` is all it compiles against).
+- **The hand-off is real and worth knowing about.** The Pi's login shells now
+  source **this repo's** overlay (`~/ros2_pi/install`) instead of the
+  predecessor's (`~/piros2/install`), so `ssh pi "bash -lc 'ros2 …'"` sees
+  `pimesh_*` and no longer sees `piros2_*`. The predecessor's playbook must not
+  be run against the Pi again — its `workspace` role would point it back.
+- **Bug found in the fork, before it bit.** The shell snippet reads a *cached*
+  copy of the ROS environment, invalidated by the mtime of the underlay and of
+  the workspace's `local_setup.bash` — **neither of which changes when the
+  snippet itself does**. Moving the overlay path would therefore have left every
+  login shell sourcing a cache built against the old workspace, with nothing
+  visibly wrong anywhere. The role now drops the cache whenever the snippet
+  changes. The predecessor has the same latent gap; it never surfaced there
+  because its overlay path never moved.
+- **A `--check` diff is not the apply.** The dry run showed a *second*
+  `.profile` block being added, because in check mode the "remove legacy
+  distro-named blocks" task removes nothing, so the task after it still sees the
+  old block. The real apply removed, then added, leaving one. Read a check diff
+  as "what each task would do given the state it sees", never as "what the file
+  will look like".
+- **The Pi was still on the older distro-named marker scheme**
+  (`— ROS 2 jazzy environment`) while the predecessor's tree had moved to
+  distro-free markers. The legacy-sweep loop this role inherited is what made
+  the hand-off a replacement rather than a second block.

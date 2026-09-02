@@ -1,0 +1,28 @@
+---
+# reenable, not enable: the unit's [Install] WantedBy list changes over
+# time and `systemctl enable` on an already-enabled unit refreshes nothing.
+- name: Restart the power-save unit
+  become: true
+  ansible.builtin.command: systemctl reenable wifi-powersave.service
+  changed_when: true
+  notify: Really restart the power-save unit
+
+- name: Really restart the power-save unit
+  become: true
+  ansible.builtin.systemd_service:
+    name: wifi-powersave.service
+    state: restarted
+    daemon_reload: true
+
+- name: Reload systemd units
+  become: true
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# Reload, not restart: existing sessions (including the one Ansible is on)
+# survive, and a broken config keeps the old one rather than locking us out.
+- name: Reload sshd
+  become: true
+  ansible.builtin.systemd_service:
+    name: ssh.service
+    state: reloaded

@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Wi-Fi link watchdog (escalation ladder)
+# Deliberately NOT After=network-online.target — the whole point of this
+# unit is to run when the network is broken.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-watchdog.sh

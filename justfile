@@ -17,6 +17,9 @@ pi_ws    := "~/ros2_pi"
 # What the Pi builds. It is a sensor head: this list grows by exactly one
 # package (pimesh_camera, at P1) and then stops.
 pi_pkgs  := "pimesh_msgs"
+# The camera's serial-keyed symlink — stable across replugs, unlike /dev/video0.
+# Same value as ansible/group_vars/robot.yml's camera_device; the gate checks it.
+camera_by_id := "/dev/v4l/by-id/usb-046d_C922_Pro_Stream_Webcam_5461327F-video-index0"
 # A bare ssh hangs ~2 minutes against a dead Wi-Fi link and wedges whatever
 # trap it sits in. Never drop these two options.
 ssh_opts := "-o BatchMode=yes -o ConnectTimeout=5"
@@ -198,4 +201,131 @@ gate-build:
     echo
     echo "dev-box build: ${dev_secs}s   pi build: ${pi_secs}s"
     if [ "${fail}" -eq 0 ]; then echo "P0 GATE PASS"; else echo "P0 GATE FAIL"; fi
+    exit "${fail}"
+
+# ----------------------------------------------------------- provisioning ---
+
+# Read the diff before the first real apply — the blockinfile and template
+# tasks are where you see exactly what changes in ~/.profile.
+#
+# Dry-run the playbook against the Pi.
+[group('provision')]
+provision-check *args:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    cd "{{ws}}/ansible"
+    ansible-playbook site.yml --check --diff {{args}}
+
+# Apply the playbook to the Pi. sudo is passwordless there.
+[group('provision')]
+provision *args:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    cd "{{ws}}/ansible"
+    ansible-playbook site.yml {{args}}
+
+# Asserts: the playbook is idempotent (second apply changed=0), the Pi's ROS
+# environment EQUALS the dev box's, the build dependencies are present, the
+# camera is where group_vars says, exactly one managed block owns ~/.profile,
+# and the cross-distro build still passes.
+#
+# P9 gate — the Pi's configuration is re-assertable and matches this machine.
+[group('gate')]
+gate-provision:
+    #!/usr/bin/env bash
+    set -o pipefail
+    fail=0
+    out=$(mktemp -d)
+    trap 'rm -rf "${out}"' EXIT
+    cd "{{ws}}/ansible"
+
+    echo "== P9 gate: provisioning =="
+
+    echo "-- reachability --"
+    if ansible robot -m ping > "${out}/ping.log" 2>&1; then
+        echo "  ok    ansible robot -m ping"
+    else
+        echo "  FAIL  the Pi is not reachable"; tail -5 "${out}/ping.log"
+        echo "P9 GATE FAIL"; exit 1
+    fi
+
+    echo "-- idempotence --"
+    for run in 1 2; do
+        ansible-playbook site.yml > "${out}/apply${run}.log" 2>&1 || true
+        recap=$(grep -E '^pi +:' "${out}/apply${run}.log" | tail -1)
+        eval "changed${run}=$(echo "${recap}" | sed -n 's/.*changed=\([0-9]*\).*/\1/p')"
+        eval "failed${run}=$(echo "${recap}" | sed -n 's/.*failed=\([0-9]*\).*/\1/p')"
+        eval "unreach${run}=$(echo "${recap}" | sed -n 's/.*unreachable=\([0-9]*\).*/\1/p')"
+    done
+    echo "  run 1: changed=${changed1} failed=${failed1} unreachable=${unreach1}"
+    echo "  run 2: changed=${changed2} failed=${failed2} unreachable=${unreach2}"
+    if [ "${failed1:-1}" -ne 0 ] || [ "${failed2:-1}" -ne 0 ] || \
+       [ "${unreach1:-1}" -ne 0 ] || [ "${unreach2:-1}" -ne 0 ]; then
+        echo "  FAIL  a task failed — see the log above"
+        grep -B2 -A8 'fatal:' "${out}/apply2.log" | head -40; fail=1
+    fi
+    if [ "${changed2:-1}" -eq 0 ]; then
+        echo "  ok    second apply changed nothing — the playbook is idempotent"
+    else
+        echo "  FAIL  second apply reported changed=${changed2}; idempotence is the whole claim"
+        grep -E '^changed:' "${out}/apply2.log" | head -10; fail=1
+    fi
+
+    echo "-- environment parity --"
+    # The dev box's own values, from a login shell — the same source the Pi's
+    # come from. Equality is the assertion: a gate that only checked the Pi
+    # would pass while this machine drifted, which is the failure that produces
+    # silence instead of an error.
+    for var in ROS_DOMAIN_ID ROS_LOCALHOST_ONLY RMW_IMPLEMENTATION; do
+        dev=$(bash -lc "echo \${${var}:-UNSET}" 2>/dev/null | tail -1)
+        pi=$(ssh {{ssh_opts}} {{pi_host}} "bash -lc 'echo \${${var}:-UNSET}'" 2>/dev/null | tail -1)
+        printf "  %-20s dev=%-22s pi=%s\n" "${var}" "${dev}" "${pi}"
+        if [ "${dev}" != "${pi}" ] || [ "${dev}" = "UNSET" ]; then
+            echo "  FAIL  ${var} differs between the machines (or is unset)"; fail=1
+        fi
+    done
+
+    echo "-- the Pi's own state --"
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc '
+        printf \"dds_iface=%s\n\" \"\$(grep -o \"NetworkInterface name=\\\"[a-z0-9]*\\\"\" ~/.config/cyclonedds/cyclonedds.xml | head -1 | sed \"s/.*name=\\\"//;s/\\\"//\")\"
+        printf \"profile_blocks=%s\n\" \"\$(grep -c \"BEGIN ANSIBLE MANAGED — ROS 2 environment\" ~/.profile)\"
+        printf \"videodev2=%s\n\" \"\$([ -f /usr/include/linux/videodev2.h ] && echo yes || echo no)\"
+        printf \"camera=%s\n\" \"\$([ -e {{camera_by_id}} ] && readlink -f {{camera_by_id}} || echo missing)\"
+        printf \"gpp=%s\n\" \"\$(g++ -dumpfullversion)\"
+        for p in v4l-utils build-essential cmake ros-jazzy-rclcpp-components ros-jazzy-image-transport ros-jazzy-camera-info-manager; do
+            printf \"pkg:%s=%s\n\" \"\$p\" \"\$(dpkg-query -W -f=\"\\\${db:Status-Status}\" \$p 2>/dev/null || echo absent)\"
+        done
+    '" > "${out}/state.txt" 2>/dev/null
+    get() { sed -n "s/^$1=//p" "${out}/state.txt" | tail -1; }
+
+    if [ "$(get dds_iface)" = "wlan0" ]; then echo "  ok    cyclonedds.xml pins wlan0"
+    else echo "  FAIL  cyclonedds.xml pins '$(get dds_iface)', expected wlan0"; fail=1; fi
+
+    if [ "$(get profile_blocks)" = "1" ]; then echo "  ok    exactly one managed ROS block in ~/.profile"
+    else echo "  FAIL  ~/.profile has $(get profile_blocks) managed ROS blocks — two means another tree still owns this host"; fail=1; fi
+
+    if [ "$(get videodev2)" = "yes" ]; then echo "  ok    linux/videodev2.h present"
+    else echo "  FAIL  linux/videodev2.h missing — pimesh_camera cannot compile"; fail=1; fi
+
+    cam=$(get camera)
+    if [ "${cam}" != "missing" ]; then echo "  ok    camera by-id → ${cam}"
+    else echo "  FAIL  the C922 by-id symlink does not resolve"; fail=1; fi
+
+    while IFS= read -r line; do
+        pkg=${line#pkg:}; name=${pkg%%=*}; status=${pkg#*=}
+        if [ "${status}" = "installed" ]; then echo "  ok    ${name}"
+        else echo "  FAIL  ${name} is ${status}"; fail=1; fi
+    done < <(grep '^pkg:' "${out}/state.txt")
+
+    echo "-- the build still works --"
+    if just gate-build > "${out}/build.log" 2>&1; then
+        echo "  ok    just gate-build PASS"
+    else
+        echo "  FAIL  just gate-build failed after provisioning"
+        tail -20 "${out}/build.log"; fail=1
+    fi
+
+    echo
+    echo "g++ on the Pi: $(get gpp)   apply: changed ${changed1} → ${changed2}"
+    if [ "${fail}" -eq 0 ]; then echo "P9 GATE PASS"; else echo "P9 GATE FAIL"; fi
     exit "${fail}"

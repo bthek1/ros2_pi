@@ -1,0 +1,50 @@
+---
+# What pimesh_camera compiles and links against on this machine. Kept separate
+# from ros2_install because that role installs *ROS*; this one installs the
+# reason the Pi is a build host at all.
+#
+# There is no cross-compilation and no shipped install/ tree: ROS 2 gives no ABI
+# guarantee across distros, the dev box is on Lyrical and this machine is on
+# Jazzy, so the Pi builds its own binaries from source. g++ 13.3.0 is what has
+# to accept the code, which is why the Pi's packages are C++17 and not C++20.
+
+- name: Install the C++ toolchain
+  become: true
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - cmake
+      - git
+    state: present
+
+- name: Install the ROS build dependencies pimesh_camera links against
+  become: true
+  ansible.builtin.apt:
+    name:
+      # The node is an rclcpp component so it can be composed, not just run.
+      - "ros-{{ ros_distro }}-rclcpp-components"
+      # Publishing CompressedImage and, later, negotiating transports.
+      - "ros-{{ ros_distro }}-image-transport"
+      # /camera_info from a calibration YAML.
+      - "ros-{{ ros_distro }}-camera-info-manager"
+    state: present
+
+# linux/videodev2.h comes from linux-libc-dev, which build-essential pulls in.
+# It is ALL a raw-ioctl V4L2 node needs. libv4l-dev is deliberately absent: it
+# provides the libv4l2 conversion wrapper, and camera_node does MJPEG
+# passthrough with plain ioctls. If P1 ever reaches for libv4l2.h, that is the
+# moment it becomes a task here — not before.
+- name: Check the V4L2 kernel headers are present
+  ansible.builtin.stat:
+    path: /usr/include/linux/videodev2.h
+  register: videodev2_header
+
+- name: Assert the V4L2 headers exist
+  ansible.builtin.assert:
+    that: videodev2_header.stat.exists
+    fail_msg: >-
+      /usr/include/linux/videodev2.h is missing, so pimesh_camera cannot
+      compile. It ships in linux-libc-dev, which build-essential depends on —
+      if it is absent after this role has run, apt is in a broken state rather
+      than merely incomplete.
+    quiet: true

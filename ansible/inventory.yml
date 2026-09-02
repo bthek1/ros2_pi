@@ -1,0 +1,13 @@
+---
+# One managed host. The dev box is deliberately absent: it is the control node,
+# it is still provisioned by the predecessor's tree, and two playbooks writing
+# the same ~/.profile is the ownership collision this repo's gate exists to
+# detect. Bringing it in has a trigger in
+# docs/plans/future/bootstrap-future.md.
+all:
+  children:
+    robot:
+      hosts:
+        pi:
+          ansible_host: 192.168.2.17
+          ansible_user: bthek1

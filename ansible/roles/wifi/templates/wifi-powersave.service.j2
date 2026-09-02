@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Disable Wi-Fi power management on {{ wifi_interface }}
+# The device unit guarantees the interface exists before iw touches it —
+# network-online alone can fire while a slow association is still pending.
+After=network-online.target sys-subsystem-net-devices-{{ wifi_interface }}.device
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/iw dev {{ wifi_interface }} set power_save off
+
+[Install]
+# Wanted by the *device*, not just boot: a brcmfmac reload (watchdog rung 2)
+# recreates wlan0 with power-save back at its default ON, and the device
+# reappearing is what re-runs this unit. No RemainAfterExit for the same
+# reason — a "still active" oneshot would swallow the re-trigger.
+WantedBy=multi-user.target sys-subsystem-net-devices-{{ wifi_interface }}.device

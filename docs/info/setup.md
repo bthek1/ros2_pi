@@ -127,15 +127,18 @@ both distros. A build that only succeeds here is half a build.
 
 ## Running
 
-Recipes that exist today (P0):
+Recipes that exist today (P0 and P9):
 
 ```bash
-just build        # colcon build here
-just sync-pi      # source only — no build products cross the distro boundary
-just build-pi     # sync, then build on the Pi
-just pipeline     # the dev-box container (empty until P2)
-just gate-build   # the P0 gate
-just stragglers   # sweep both machines for leftovers
+just build              # colcon build here
+just sync-pi            # source only — no build products cross the distro boundary
+just build-pi           # sync, then build on the Pi
+just provision-check    # dry-run the Pi's playbook, with diffs
+just provision          # apply it
+just pipeline           # the dev-box container (empty until P2)
+just gate-build         # the P0 gate
+just gate-provision     # the P9 gate
+just stragglers         # sweep both machines for leftovers
 ```
 
 Later phases add `just provision` / `just provision-check` (P9), `just cam`

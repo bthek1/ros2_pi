@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+# Dead-connection detection. A silent Wi-Fi death used to leave camera
+# sessions orphaned, streaming to nobody and holding /dev/video0
+# (troubleshooting.md: "unreachable but the camera LED is still on").
+# 15 s x 4: sshd notices a dead connection within ~60 s, tears the session
+# down, and the pty sessions the justfile recipes use get SIGHUP — the
+# remote ros2 launch exits and releases the camera.
+ClientAliveInterval 15
+ClientAliveCountMax 4

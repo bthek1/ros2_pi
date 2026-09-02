@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- {{ ansible_managed }} — rendered per host from dds_interface in group_vars.
+     The Pi pins wlan0 because eth0 has no carrier. The dev box, when it joins
+     this playbook, must pin ens18: it has three Docker bridges and a Tailscale
+     interface that DDS will otherwise bind and advertise, giving the Pi an
+     address it cannot route to. -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="{{ dds_interface }}" priority="default" multicast="default" />
+      </Interfaces>
+      <AllowMulticast>true</AllowMulticast>
+    </General>
+  </Domain>
+</CycloneDDS>

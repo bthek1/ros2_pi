@@ -23,14 +23,17 @@ copy its structure wholesale: the point of the rewrite is to do in one process
 with `rclcpp` components what Python needed three processes and two interpreters
 to do.
 
-### Status: P0 done, P1 next
+### Status: P0 and P9 done, P1 next
 
-As of 2026-09-01, **`pimesh_msgs` and `pimesh_bringup` are built and their gate
-passes** on both machines (`just gate-build`). There are no nodes yet — the
-container launches empty and the frame tree is static. There is **no `ansible/`
-tree yet either** — P9 builds it, and it is the next phase to execute.
-Everything else in `docs/` is still **design intent**, not a description of
-running code.
+As of 2026-09-02, **`pimesh_msgs` and `pimesh_bringup` build on both machines**
+(`just gate-build`) and **`ansible/` provisions the Pi** (`just gate-provision`,
+idempotent). There are no pipeline nodes yet — the container launches empty and
+the frame tree is static. Everything else in `docs/` is still **design intent**,
+not a description of running code.
+
+**This repo now owns the Pi's configuration.** Its login shells source
+`~/ros2_pi/install`, not the predecessor's workspace, and
+`~/Documents/piros2/ansible` must not be run against it again.
 
 When you build something, change the doc that describes it from future tense to
 a measured statement, and say what you measured it with. Do not write "the node

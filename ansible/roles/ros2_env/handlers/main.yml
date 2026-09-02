@@ -1,0 +1,12 @@
+---
+# Deliberately a reminder, not automation: restarting the daemon needs ROS
+# sourced as the login user, which is fragile to drive from Ansible. The daemon
+# caches discovery state, so skipping it after an environment change makes a
+# correct fix look like it did nothing — this exists to keep that failure mode
+# visible rather than to hide it.
+- name: Remind about the ROS daemon
+  ansible.builtin.debug:
+    msg: >-
+      ROS environment changed on {{ inventory_hostname }} — open a fresh shell
+      there and run 'ros2 daemon stop && ros2 daemon start', or ros2 CLI output
+      will keep reflecting the stale pre-change discovery state.

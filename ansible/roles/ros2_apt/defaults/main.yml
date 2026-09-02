@@ -1,0 +1,7 @@
+---
+# Bootstrap version of the ros2-apt-source .deb, fetched from GitHub only on a
+# machine that does not have the package yet. Once installed, packages.ros.org
+# serves updates to it, so the signing key stays current through ordinary apt
+# upgrades. Bump when
+# https://github.com/ros-infrastructure/ros-apt-source/releases moves on.
+ros_apt_source_version: "1.2.0"

@@ -1,0 +1,85 @@
+---
+# Keep the Wi-Fi link alive. The Pi's link has died twice while the OS ran on
+# undisturbed — once with the mesh AP rejecting re-association 100 times, once
+# silently for 15 hours. This role removes one known cause (radio power-save)
+# and installs the escalation-ladder watchdog that repairs the link when it
+# dies anyway. Drilled to unaided recovery in ~7 minutes on the predecessor.
+
+- name: Install wireless tooling
+  become: true
+  ansible.builtin.apt:
+    name: iw  # Ubuntu Server ships without it — the same gap as v4l-utils
+    state: present
+
+# Power-save is a documented contributor to brcmfmac links dying silently. The
+# setting does not survive a reboot, so it is a boot-time unit rather than a
+# one-off command.
+- name: Install the power-save-off unit
+  become: true
+  ansible.builtin.template:
+    src: wifi-powersave.service.j2
+    dest: /etc/systemd/system/wifi-powersave.service
+    mode: "0644"
+  notify: Restart the power-save unit
+
+# enabled only, no `state: started`: it is a plain oneshot without
+# RemainAfterExit (the device re-trigger needs it restartable), so it always
+# reads inactive and a `started` here would re-fire every run and break
+# idempotency. Boot and device-appearance start it; the handler covers first
+# install and template changes.
+- name: Enable the power-save-off unit
+  become: true
+  ansible.builtin.systemd_service:
+    name: wifi-powersave.service
+    enabled: true
+    daemon_reload: true
+
+# The ladder: gateway ping every minute, then reassociate → driver reload →
+# guarded reboot. Thresholds are in group_vars; the script documents each rung
+# and its guards. Flight recorder: journalctl -t wifi-watchdog.
+- name: Install the watchdog script
+  become: true
+  ansible.builtin.template:
+    src: wifi-watchdog.sh.j2
+    dest: /usr/local/sbin/wifi-watchdog.sh
+    mode: "0755"
+
+- name: Install the watchdog service and timer
+  become: true
+  ansible.builtin.template:
+    src: "wifi-watchdog.{{ item }}.j2"
+    dest: "/etc/systemd/system/wifi-watchdog.{{ item }}"
+    mode: "0644"
+  loop: [service, timer]
+  notify: Reload systemd units
+
+- name: Enable the watchdog timer
+  become: true
+  ansible.builtin.systemd_service:
+    name: wifi-watchdog.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# Without this, a silent link death leaves ssh-launched sessions orphaned for
+# hours (sshd waits on dead TCP); with it they are reaped in ~60 s, which is
+# what releases /dev/video0. The other half of the contract lives on the
+# justfile's launchers.
+- name: Reap dead ssh sessions promptly (ClientAlive)
+  become: true
+  ansible.builtin.template:
+    src: sshd-clientalive.conf.j2
+    dest: /etc/ssh/sshd_config.d/50-pimesh-clientalive.conf
+    mode: "0644"
+  notify: Reload sshd
+
+# Ownership hand-off: the predecessor's playbook wrote the identical settings
+# under its own name. Two drop-ins with the same keys are harmless (sshd takes
+# the first) but leave it ambiguous which tree owns this host — and ownership
+# is exactly what P9 is establishing. Remove the old one rather than racing it.
+- name: Remove the predecessor's ClientAlive drop-in
+  become: true
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/50-piros2-clientalive.conf
+    state: absent
+  notify: Reload sshd

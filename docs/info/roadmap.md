@@ -19,7 +19,7 @@ is the loop-closure work, still deferred.
 | M8 | 6-DoF odometry from RGB-D keypoints, so the surface stops smearing | not started |
 | M9 | `dashboard_node` — the web view | not started |
 | M10 | Loop closure + pose graph + volume rebuild | not started — deferred, not a phase |
-| M11 | The Pi's configuration as code: `ansible/`, applied and idempotent (**P9**) | **next** — nothing built |
+| M11 | The Pi's configuration as code: `ansible/`, applied and idempotent (**P9**) | **done 2026-09-02** — `just gate-provision` PASS, first apply 11 changes then 0 |
 
 ## What "done" means here
 

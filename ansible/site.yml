@@ -1,0 +1,29 @@
+---
+# Provision the Pi. One play, one host, six roles.
+#
+#   ansible-playbook site.yml --check --diff   # read this before the first apply
+#   ansible-playbook site.yml                  # sudo is passwordless on the Pi
+#   ansible-playbook site.yml --tags env       # re-sync the ROS environment only
+#
+# Or, the same through the justfile: `just provision-check`, `just provision`,
+# `just gate-provision`.
+#
+# Ansible owns machine state. The code is `just sync-pi` and `just build-pi` —
+# there is deliberately no workspace role, because two mechanisms for one job is
+# how they end up disagreeing about which ran last (docs/info/ansible.md).
+
+- name: Provision the sensor head
+  hosts: robot
+  roles:
+    - role: ros2_apt      # the ROS apt source must exist before anything else
+      tags: [apt]
+    - role: ros2_install  # ros-jazzy-ros-base and the colcon/rosdep tooling
+      tags: [ros]
+    - role: ros2_env      # the three shared variables, cyclonedds.xml, shell integration
+      tags: [env]
+    - role: toolchain     # what pimesh_camera compiles and links against
+      tags: [build]
+    - role: camera        # v4l-utils, the video group, the C922 by-id check
+      tags: [camera]
+    - role: wifi          # power-save off, link watchdog, sshd ClientAlive
+      tags: [wifi]

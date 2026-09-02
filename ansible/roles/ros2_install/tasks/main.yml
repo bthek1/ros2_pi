@@ -1,0 +1,44 @@
+---
+# ROS itself, plus the tooling a colcon workspace needs. Which metapackage
+# arrives is ros_metapackage from group_vars — ros-base here, because a sensor
+# head has no display and no reason to carry Qt.
+
+- name: Install ROS 2 and the build tooling
+  become: true
+  ansible.builtin.apt:
+    name:
+      - "{{ ros_metapackage }}"
+      - "ros-{{ ros_distro }}-rmw-cyclonedds-cpp"
+      # Compressed image transport is negotiated per endpoint, so the Pi needs
+      # this to *publish* compressed exactly as much as the dev box needs it to
+      # subscribe. Without it the only option is raw — ~83 MB/s at 720p30 over
+      # Wi-Fi, which does not fit.
+      - "ros-{{ ros_distro }}-image-transport-plugins"
+      - python3-colcon-common-extensions
+      - python3-rosdep
+      - python3-vcstool
+    state: present
+
+# ros-base has no demo nodes. A talker/listener across the LAN is the first
+# diagnostic when Jazzy and Lyrical stop seeing each other.
+- name: Install the demo nodes for the cross-LAN check
+  become: true
+  ansible.builtin.apt:
+    name: "ros-{{ ros_distro }}-demo-nodes-cpp"
+    state: present
+  when: install_demo_nodes | default(false)
+
+# rosdep init exits non-zero the second time; without the guard, a rerun on a
+# correct machine fails.
+- name: Initialise rosdep (system-wide, once)
+  become: true
+  ansible.builtin.command: rosdep init
+  args:
+    creates: /etc/ros/rosdep/sources.list.d/20-default.list
+
+# The opposite trap: rosdep update must run as the LOGIN user. Under become it
+# writes the cache into root's home and every later rosdep call misses it.
+- name: Update the rosdep cache (login user, once)
+  ansible.builtin.command: rosdep update
+  args:
+    creates: "{{ ansible_facts.env.HOME }}/.ros/rosdep/sources.cache"

@@ -1,0 +1,49 @@
+---
+# The C922 and the access to it. Deliberately NOT usb_cam: this project
+# replaces that driver with its own pimesh_camera, partly because usb_cam 0.8.1
+# stamps every frame a random sub-second amount in the past (a once-per-process
+# epoch bug, redrawn at each launch) and partly because it decodes frames the
+# Pi has no reason to decode. Installing it here would leave a second thing
+# able to open /dev/video0, which is exclusive.
+
+- name: Install the V4L2 tooling
+  become: true
+  ansible.builtin.apt:
+    name:
+      # Ubuntu Server does not ship it, and every v4l2-ctl command in the docs
+      # needs it — including the control reset that fixes a black image or a
+      # frame rate stuck at 18 fps.
+      - v4l-utils
+    state: present
+
+# Already true via cloud-init on the current install; kept so the role is still
+# correct after a reflash rather than silently assuming it.
+- name: User can read video devices
+  become: true
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: video
+    append: true
+
+# A group change does not affect the session that made it, so the device check
+# below would otherwise run against a stale login. Unconditional, because
+# reset_connection ignores `when:`; it costs one SSH handshake.
+- name: Reset the connection so the video group takes effect
+  ansible.builtin.meta: reset_connection
+
+- name: Look for the camera at its serial-keyed symlink
+  ansible.builtin.stat:
+    path: "{{ camera_device }}"
+  register: camera_symlink
+
+# Fail here, loudly and with the fix, rather than later and cryptically when a
+# node logs nothing into an empty topic.
+- name: Assert the camera is plugged in
+  ansible.builtin.assert:
+    that: camera_symlink.stat.exists
+    fail_msg: >-
+      {{ camera_device }} does not exist — the C922 is unplugged, on a
+      different port that renumbered it, or replaced. Check
+      'ls /dev/v4l/by-id/' on the Pi and update camera_device in
+      group_vars/robot.yml if the serial has changed.
+    quiet: true

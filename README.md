@@ -20,9 +20,14 @@ under Lyrical here and Jazzy on the Pi, the generated interfaces are
 byte-identical across the two distros, and the static frame tree comes up. There
 are no pipeline nodes yet; the container launches empty.
 
-**P9 is next**: the Pi's configuration becomes a playbook in this repo — see
-[docs/info/ansible.md](docs/info/ansible.md). Nothing on the Pi is installed by
-hand.
+**P9 done — the Pi's configuration is a playbook in this repo.** `ansible/`
+provisions it and `just gate-provision` passes: idempotent (first apply changed
+11 tasks, every apply since changes nothing), the Pi's ROS environment equal to
+this machine's, and the build dependencies asserted rather than assumed. Nothing
+on the Pi is installed by hand — see
+[docs/info/ansible.md](docs/info/ansible.md).
+
+**P1 is next**: `camera_node` on the Pi.
 
 Everything else in `docs/` is design intent.
 [docs/info/roadmap.md](docs/info/roadmap.md) tracks what has actually been
@@ -31,10 +36,12 @@ the Python predecessor at [`~/Documents/piros2`](../piros2), which implements th
 same pipeline on the same hardware.
 
 ```bash
-just build        # dev box
-just build-pi     # sync + build on the Pi
-just gate-build   # the P0 gate
-just stragglers   # sweep both machines
+just build            # dev box
+just build-pi         # sync + build on the Pi
+just provision        # apply the playbook to the Pi
+just gate-build       # the P0 gate
+just gate-provision   # the P9 gate
+just stragglers       # sweep both machines
 ```
 
 ## Why a rewrite

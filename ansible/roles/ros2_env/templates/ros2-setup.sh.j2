@@ -1,0 +1,57 @@
+# {{ ansible_managed }} — ROS 2 {{ ros_distro }} for bash on {{ inventory_hostname }}
+#
+# Sourced twice over: from ~/.profile (every login shell, including the
+# `ssh pi "bash -lc '...'"` idiom this project verifies with) and from ~/.bashrc
+# (interactive non-login shells). ROS_DISTRO makes the second visit a no-op.
+#
+# Sourcing ROS puts its Python and library paths into every shell, which is a
+# real cost for unrelated projects on the same machine — set ROS_AUTO_SOURCE=0
+# to opt a shell out.
+
+[ "${ROS_AUTO_SOURCE:-1}" = 0 ] && return 0
+[ -n "${ROS_DISTRO:-}" ] && return 0
+# .profile is also read by /bin/sh; setup.bash is bash-only.
+[ -n "${BASH_VERSION:-}" ] || return 0
+
+__ros_underlay=/opt/ros/{{ ros_distro }}/setup.bash
+# This repo's workspace overlay: the pimesh_* packages, absent until the first
+# `just build-pi`. Ansible does not put the workspace there — the justfile does.
+__ros_overlay="{{ workspace_path }}/install/setup.bash"
+# colcon rewrites this on every build, so a newly built package invalidates the
+# cache by itself; there is no stale overlay to debug.
+__ros_stamp="{{ workspace_path }}/install/local_setup.bash"
+__ros_cache="${XDG_CACHE_HOME:-$HOME/.cache}/ros2/{{ ros_distro }}-env.sh"
+__ros_gen="$HOME/.config/ros2/env-delta"
+
+if [ -r "$__ros_underlay" ]; then
+    # Sourcing the real scripts costs ~0.4 s of Python — too much for every
+    # terminal — so a shell sources the environment they produce instead.
+    if [ ! -r "$__ros_cache" ] || [ "$__ros_underlay" -nt "$__ros_cache" ] ||
+       { [ -r "$__ros_stamp" ] && [ "$__ros_stamp" -nt "$__ros_cache" ]; }; then
+        mkdir -p "$(dirname "$__ros_cache")"
+        if [ -x "$__ros_gen" ] &&
+           "$__ros_gen" --format sh "$__ros_underlay" "$__ros_overlay" \
+               > "$__ros_cache.tmp" 2>/dev/null; then
+            mv -f "$__ros_cache.tmp" "$__ros_cache"
+        else
+            rm -f "$__ros_cache.tmp"
+        fi
+    fi
+
+    if [ -r "$__ros_cache" ]; then
+        . "$__ros_cache"
+    else
+        . "$__ros_underlay"                      # no cache: the slow way still works
+        [ -r "$__ros_overlay" ] && . "$__ros_overlay"
+    fi
+
+    # The one thing an environment cache cannot carry: `complete` registrations.
+    # Only interactive shells care, and it costs ~35 ms.
+    case $- in
+        *i*) [ -r /opt/ros/{{ ros_distro }}/share/ros2cli/environment/ros2-argcomplete.bash ] &&
+                 . /opt/ros/{{ ros_distro }}/share/ros2cli/environment/ros2-argcomplete.bash ;;
+    esac
+fi
+
+unset __ros_underlay __ros_overlay __ros_stamp __ros_cache __ros_gen
+return 0

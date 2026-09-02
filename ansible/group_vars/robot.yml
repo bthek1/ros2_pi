@@ -1,0 +1,53 @@
+---
+# The Pi: a sensor head on Wi-Fi, running Jazzy.
+
+# --- the three that must be byte-identical on both machines -----------------
+#
+# A mismatch here produces SILENCE, not an error — the two hosts simply never
+# see each other's topics, and half of docs/info/troubleshooting.md is what that
+# looks like from the outside. One definition, applied by one role.
+#
+# They live in this file rather than group_vars/all.yml only because there is
+# exactly one managed host today. When the dev box joins the playbook (see
+# docs/plans/future/bootstrap-future.md), these three move to all.yml and
+# everything below stays here — that is the whole point of the split.
+ros_domain_id: 42
+ros_localhost_only: 0
+rmw_implementation: rmw_cyclonedds_cpp
+
+# --- per-host --------------------------------------------------------------
+
+# NEVER spell a distro into a role. The dev box is on Lyrical and this machine
+# is on Jazzy; a hardcoded `jazzy` would install the wrong ROS the moment the
+# dev box joins. Package names derive from this variable.
+ros_distro: jazzy
+# ros-base, not desktop: there is no display here and no reason to carry Qt.
+ros_metapackage: "ros-{{ ros_distro }}-ros-base"
+
+# eth0 is NO-CARRIER — there is no cable. DDS pins this interface, and the
+# wifi role keeps the same radio alive; two concerns, two names, one device.
+dds_interface: wlan0
+wifi_interface: wlan0
+
+# Watchdog ladder (wifi role). One rung per `threshold` consecutive
+# minute-spaced gateway-ping failures: reassociate at 3, driver reload at 6,
+# reboot at 9 — never within min_uptime of boot, at most one per cooldown.
+# A watchdog, not a boot loop.
+wifi_fail_threshold: 3
+wifi_reboot_min_uptime: 600
+wifi_reboot_cooldown: 3600
+
+# The camera by its serial-keyed symlink, stable across replugs and reboots
+# unlike /dev/video0. index0 is capture; index1 is the C922's UVC metadata
+# node and produces no frames.
+camera_device: /dev/v4l/by-id/usb-046d_C922_Pro_Stream_Webcam_5461327F-video-index0
+
+# Where this repo lives on the Pi. Ansible does NOT put it there — `just
+# sync-pi` does. The path is here only so the shell snippet knows which
+# overlay to source.
+workspace_path: "{{ ansible_facts.env.HOME }}/ros2_pi"
+
+# demo_nodes_cpp ships with `desktop` but not `ros-base`. Worth its 2 MB: a
+# talker/listener across the LAN is the first diagnostic when two ROS distros
+# stop seeing each other, which is this project's sharpest failure mode.
+install_demo_nodes: true

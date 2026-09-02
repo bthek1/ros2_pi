@@ -1,0 +1,115 @@
+---
+# The project's actual risk lives in this role. ROS_DOMAIN_ID,
+# ROS_LOCALHOST_ONLY and RMW_IMPLEMENTATION must be byte-identical on both
+# hosts — a mismatch produces silence, not an error. They have one definition
+# (group_vars) and this role is the only thing that writes them onto a machine.
+#
+# HAND-OFF NOTE: the markers below are deliberately the SAME strings the
+# predecessor's playbook (~/Documents/piros2/ansible) used. Different markers
+# would leave the Pi with two managed blocks exporting the same variables —
+# harmless until they disagree, at which point the last one sourced wins and
+# neither file looks wrong. `just gate-provision` asserts there is exactly one.
+
+# Ubuntu Server generates only C.UTF-8, and every ssh session from the dev box
+# forwards LC_ALL=en_US.UTF-8 and warns. Harmless but noisy — fix it at source.
+- name: Generate the en_US.UTF-8 locale
+  become: true
+  community.general.locale_gen:
+    name: en_US.UTF-8
+    state: present
+
+- name: Directory for the per-host Cyclone DDS config
+  ansible.builtin.file:
+    path: "{{ cyclonedds_config_path | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: Render cyclonedds.xml pinned to {{ dds_interface }}
+  ansible.builtin.template:
+    src: cyclonedds.xml.j2
+    dest: "{{ cyclonedds_config_path }}"
+    mode: "0644"
+  notify: Remind about the ROS daemon
+
+- name: Directory for the shell-integration files
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.config/ros2"
+    state: directory
+    mode: "0755"
+
+# Shells read a cached copy of what sourcing ROS produces rather than paying
+# ~0.4 s of Python each; this script generates it.
+- name: Shell-environment generator
+  ansible.builtin.copy:
+    src: env-delta
+    dest: "{{ ansible_facts.env.HOME }}/.config/ros2/env-delta"
+    mode: "0755"
+
+- name: Sourcing snippet for bash
+  ansible.builtin.template:
+    src: ros2-setup.sh.j2
+    dest: "{{ ansible_facts.env.HOME }}/.config/ros2/setup.sh"
+    mode: "0644"
+  register: ros2_setup_snippet
+
+# The snippet reads a CACHED copy of the environment ROS produces, invalidated
+# by the mtime of the underlay and of the workspace's local_setup.bash. Neither
+# changes when the snippet itself changes — so switching the overlay path (as
+# this repo does, from the predecessor's workspace to its own) would leave every
+# login shell sourcing a cache built against the OLD overlay, with nothing
+# obviously wrong anywhere. Drop the cache whenever the snippet moves; the next
+# shell regenerates it.
+- name: Invalidate the environment cache when the snippet changes
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.cache/ros2/{{ ros_distro }}-env.sh"
+    state: absent
+  when: ros2_setup_snippet is changed
+
+# Sweep blocks the old distro-named marker scheme left behind. blockinfile with
+# state: absent on a missing marker is a no-op, so this stays idempotent
+# forever.
+- name: Remove legacy distro-named ROS blocks from .profile
+  ansible.builtin.blockinfile:
+    path: "{{ ansible_facts.env.HOME }}/.profile"
+    marker: "# {mark} ANSIBLE MANAGED — ROS 2 {{ item }} environment"
+    state: absent
+  loop: "{{ ros_legacy_distros }}"
+
+- name: Remove legacy distro-named ROS blocks from .bashrc
+  ansible.builtin.blockinfile:
+    path: "{{ ansible_facts.env.HOME }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED — ROS 2 {{ item }}"
+    state: absent
+  loop: "{{ ros_legacy_distros }}"
+
+- name: Remove env caches belonging to other distros
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.cache/ros2/{{ item }}-env.sh"
+    state: absent
+  loop: "{{ ros_legacy_distros | difference([ros_distro]) }}"
+
+# The exports go in .profile, NOT .bashrc: Ubuntu's .bashrc opens with an
+# interactivity guard that returns early, so anything appended there is
+# invisible to every non-interactive shell — including the `bash -lc` login
+# shells this project verifies over SSH.
+- name: ROS environment variables in .profile
+  ansible.builtin.blockinfile:
+    path: "{{ ansible_facts.env.HOME }}/.profile"
+    marker: "# {mark} ANSIBLE MANAGED — ROS 2 environment"
+    block: |
+      export ROS_DOMAIN_ID={{ ros_domain_id }}
+      export ROS_LOCALHOST_ONLY={{ ros_localhost_only }}
+      export RMW_IMPLEMENTATION={{ rmw_implementation }}
+      export CYCLONEDDS_URI=file://{{ cyclonedds_config_path }}
+      [ -r "$HOME/.config/ros2/setup.sh" ] && . "$HOME/.config/ros2/setup.sh"
+  notify: Remind about the ROS daemon
+
+# .bashrc catches the interactive shells .profile misses (a new terminal tab is
+# non-login). The alias stays useful for re-sourcing after a colcon build.
+- name: ROS sourcing in .bashrc
+  ansible.builtin.blockinfile:
+    path: "{{ ansible_facts.env.HOME }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED — ROS 2 sourcing"
+    block: |
+      alias ros{{ ros_distro }}='source /opt/ros/{{ ros_distro }}/setup.bash'
+      [ -r "$HOME/.config/ros2/setup.sh" ] && . "$HOME/.config/ros2/setup.sh"

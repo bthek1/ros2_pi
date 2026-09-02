@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# The escalation ladder (Wi-Fi watchdog plan P2). Fired every 60 s by
+# wifi-watchdog.timer; pings the gateway through {{ wifi_interface }} and,
+# after every {{ wifi_fail_threshold }} consecutive failures, takes the
+# next rung:
+#   1  reassociate — clears wpa_supplicant's temp-disable doom loop
+#      (incident 1: 100 ASSOC-REJECTs, 5-minute SSID-TEMP-DISABLED cycles)
+#   2  reload the brcmfmac driver — a fresh firmware session without a
+#      reboot, the strongest medicine short of one
+#   3  reboot — guarded: never within {{ wifi_reboot_min_uptime }} s of
+#      boot, at most one per {{ wifi_reboot_cooldown }} s. Both incidents
+#      ended only at reboot; the guard is what separates a watchdog from
+#      a boot loop.
+# Failure count lives in /run (tmpfs — resets on boot, deliberately); the
+# reboot marker in /var/lib (must survive the reboot it causes).
+# Flight recorder: journalctl -t wifi-watchdog
+set -u
+
+IFACE="{{ wifi_interface }}"
+THRESHOLD={{ wifi_fail_threshold }}
+MIN_UPTIME={{ wifi_reboot_min_uptime }}
+COOLDOWN={{ wifi_reboot_cooldown }}
+FAILS_FILE=/run/wifi-watchdog.fails
+MARKER_DIR=/var/lib/wifi-watchdog
+MARKER="$MARKER_DIR/last-reboot"
+
+log() { logger -t wifi-watchdog "$*"; }
+
+link_ok() {
+    local gw
+    gw=$(ip route show default dev "$IFACE" 2>/dev/null | awk '{print $3; exit}')
+    [ -n "$gw" ] && ping -c 2 -W 2 -I "$IFACE" "$gw" >/dev/null 2>&1
+}
+
+rung1() {
+    log "rung 1: reassociating $IFACE (restart netplan-wpa-$IFACE, reconfigure)"
+    systemctl restart "netplan-wpa-$IFACE.service"
+    networkctl reconfigure "$IFACE"
+}
+
+rung2() {
+    log "rung 2: reloading brcmfmac (fresh firmware session)"
+    modprobe -r brcmfmac_wcc brcmfmac || log "rung 2: modprobe -r failed"
+    sleep 2
+    # brcmfmac_wcc is the Pi 5 variant and pulls brcmfmac as a dependency.
+    modprobe brcmfmac_wcc || log "rung 2: modprobe failed"
+    sleep 3
+    systemctl restart "netplan-wpa-$IFACE.service"
+    # A fresh driver resets power_save to ON; re-assert (the unit is also
+    # device-bound, this is the no-udev-race belt and braces).
+    systemctl restart wifi-powersave.service
+}
+
+rung3() {
+    local uptime_s last now
+    uptime_s=$(awk '{print int($1)}' /proc/uptime)
+    if [ "$uptime_s" -lt "$MIN_UPTIME" ]; then
+        log "rung 3: reboot suppressed (uptime ${uptime_s}s < ${MIN_UPTIME}s)"
+        return
+    fi
+    mkdir -p "$MARKER_DIR"
+    last=$(stat -c %Y "$MARKER" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    if [ $((now - last)) -lt "$COOLDOWN" ]; then
+        log "rung 3: reboot suppressed (last watchdog reboot $((now - last))s ago < ${COOLDOWN}s)"
+        return
+    fi
+    log "rung 3: rebooting"
+    touch "$MARKER"
+    systemctl reboot
+}
+
+# Test hook: WATCHDOG_FORCE_RUNG=<1|2|3> exercises one rung on a healthy
+# link and exits — each rung is testable without faking an outage.
+if [ -n "${WATCHDOG_FORCE_RUNG:-}" ]; then
+    log "forced rung $WATCHDOG_FORCE_RUNG (test hook)"
+    "rung$WATCHDOG_FORCE_RUNG"
+    exit 0
+fi
+
+if link_ok; then
+    if [ -s "$FAILS_FILE" ]; then
+        log "link recovered after $(cat "$FAILS_FILE") consecutive failures"
+        rm -f "$FAILS_FILE"
+    fi
+    exit 0
+fi
+
+fails=$(( $(cat "$FAILS_FILE" 2>/dev/null || echo 0) + 1 ))
+echo "$fails" > "$FAILS_FILE"
+log "gateway unreachable via $IFACE (consecutive failures: $fails)"
+
+# Act only on every THRESHOLDth failure; sit tight in between so a rung
+# gets THRESHOLD minutes to prove itself before escalation.
+if [ $((fails % THRESHOLD)) -ne 0 ]; then
+    exit 0
+fi
+case $((fails / THRESHOLD)) in
+    1) rung1 ;;
+    2) rung2 ;;
+    *) rung3 ;;
+esac

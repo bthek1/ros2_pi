@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# ANSIBLE MANAGED — deployed by ansible/roles/ros2_env in the ros2_pi repo.
+#
+# Print shell code for the environment that sourcing ROS's bash setup scripts
+# adds:
+#
+#   env-delta --format sh /opt/ros/jazzy/setup.bash [<ws>/install/setup.bash]
+#
+# Why it exists twice over: fish cannot source a bash script at all, and bash
+# can but pays ~0.4 s of Python for it on every shell.  Both read a cached copy
+# of this output instead (see ~/.config/ros2/setup.sh and the fish conf.d file),
+# regenerated only when a setup script is newer than the cache.
+#
+# Only the *delta* is printed, never a copy of the caller's PATH: the shell that
+# sources the output keeps its own paths and gets ROS's prepended.  Every
+# variable ROS touches either ends in PATH (colon-separated lists, which fish
+# stores as real lists and takes --prepend for) or is one of three scalars.
+#
+# What the delta cannot carry: `complete` registrations and shell functions.
+# The only ones that matter are ros2/rosidl tab completion, and the bash snippet
+# sources ros2-argcomplete.bash itself for that.
+#
+# No `set -u` here: setup.bash reads AMENT_TRACE_SETUP_FILES unguarded and dies
+# under it.
+
+format=fish
+case ${1-} in
+    --format) format=${2-}; shift 2 ;;
+esac
+case $format in
+    sh|fish) ;;
+    *) echo "usage: env-delta --format sh|fish <setup.bash>..." >&2; exit 2 ;;
+esac
+
+declare -A before=()
+while IFS= read -r -d '' kv; do
+    before[${kv%%=*}]=${kv#*=}
+done < <(env -0)
+
+for setup in "$@"; do
+    [ -r "$setup" ] || continue
+    # shellcheck disable=SC1090
+    . "$setup" >/dev/null
+done
+
+# fish escapes \ and ' inside single quotes; sh has no escapes there at all, so
+# a literal quote has to leave the quoting. Paths never contain either, but be
+# honest about it rather than producing code that silently mis-parses.
+quote_fish() { printf "'%s'" "${1//\'/\\\'}"; }
+quote_sh() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
+while IFS= read -r -d '' kv; do
+    key=${kv%%=*}
+    new=${kv#*=}
+    old=${before[$key]-}
+    [ "$new" = "$old" ] && continue
+    case $key in
+        *PATH)
+            # setup.bash only ever prepends; strip the tail we already had.
+            if [ -n "$old" ] && [ "$new" != "${new%":$old"}" ]; then
+                added=${new%":$old"}
+            else
+                added=$new
+            fi
+            if [ "$format" = fish ]; then
+                IFS=: read -ra parts <<< "$added"
+                printf 'set -gx --prepend %s' "$key"
+                for part in "${parts[@]}"; do
+                    [ -n "$part" ] || continue
+                    printf ' %s' "$(quote_fish "$part")"
+                done
+                printf '\n'
+            else
+                printf 'export %s=%s"${%s:+:${%s}}"\n' \
+                    "$key" "$(quote_sh "$added")" "$key" "$key"
+            fi
+            ;;
+        ROS_*|RMW_*|AMENT_*|COLCON_*)
+            if [ "$format" = fish ]; then
+                printf 'set -gx %s %s\n' "$key" "$(quote_fish "$new")"
+            else
+                printf 'export %s=%s\n' "$key" "$(quote_sh "$new")"
+            fi
+            ;;
+    esac
+done < <(env -0)

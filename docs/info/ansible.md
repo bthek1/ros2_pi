@@ -1,11 +1,12 @@
 # Provisioning the Pi with Ansible
 
-> **Status: design intent — the `ansible/` tree does not exist yet.** It is
-> built by **P9** of
+> **Status: built and gated, 2026-09-02.** `ansible/` exists and
+> `just gate-provision` passes — the playbook is idempotent (first apply
+> `changed=11`, every apply since `changed=0`), and this repo is now the sole
+> owner of the Pi's configuration. Built by **P9** of
 > [the bootstrap plan](../plans/in-progress/bootstrap-plan.md#-p9--provision-the-pi-with-ansible),
-> whose gate is `just gate-provision`. Everything below describes what P9 must
-> produce, not something you can run today. The measured facts about the Pi's
-> *current* state are marked as such and were taken **2026-09-02**.
+> whose annotation carries what the first apply actually changed. Measured facts
+> about the Pi below were taken **2026-09-02**.
 
 **The Pi's configuration is a file in this repo, not a shell history.** Anything
 the Pi needs in order to build and run `pimesh_camera` — apt packages, the ROS
@@ -104,7 +105,7 @@ are C++17**: Jazzy's baseline, and the compiler that has to accept the code.
 
 ## Layout
 
-What P9 creates:
+What P9 built (2026-09-02):
 
 ```
 ansible/
@@ -122,6 +123,11 @@ ansible/
     ├── camera/              # v4l-utils, the video group, by-id symlink check
     └── wifi/                # power-save off, link watchdog, sshd ClientAlive
 ```
+
+**Not forked:** the predecessor's `usb_cam` install (this project replaces that
+driver, and a second thing able to open the exclusive `/dev/video0` is a
+liability), its `workspace` role (see the ownership table above), and its fish
+shell integration (the Pi has bash).
 
 Roles are copied from the predecessor's tree and trimmed, not written from
 scratch — they have been run against this Pi for weeks. The `wifi` role exists
@@ -190,13 +196,24 @@ Inherited from the predecessor, where each was diagnosed the expensive way.
   **12.1.0** in `~/.ansible/collections`.
 - **`stdout_callback: yaml` is gone.** `community.general` 12 removed it; use
   `ansible.builtin.default` with `result_format: yaml`.
+- **A template change does not invalidate the environment cache.** The shell
+  snippet reads a cached copy of what sourcing ROS produces, keyed on the mtime
+  of the underlay and of the workspace's `local_setup.bash`. Neither moves when
+  the *snippet* changes — so editing the overlay path leaves every login shell
+  sourcing a cache built against the old workspace, silently. Found here on
+  2026-09-02 while forking the role, before it bit: `ros2_env` now deletes
+  `~/.cache/ros2/<distro>-env.sh` whenever the snippet task reports changed.
+- **`--check` output is not a preview of the file.** Check mode applies
+  nothing, so a task that depends on an earlier task's effect sees the *old*
+  state. The first dry run here showed a second `~/.profile` block being added,
+  because the legacy-block removal ahead of it had not actually removed
+  anything. The real apply removed, then added, leaving one. Read a check diff
+  as "what this task would do given the state it sees".
 - **Reachability is a prerequisite, not a task.** Every scripted SSH to the Pi
   in this repo carries `-o BatchMode=yes -o ConnectTimeout=5`; a bare ssh hangs
   ~2 minutes against a dead Wi-Fi link. Run `ansible robot -m ping` first.
 
 ## Running it
-
-Once P9 exists:
 
 ```bash
 just provision-check    # ansible-playbook site.yml --check --diff  — read the diff

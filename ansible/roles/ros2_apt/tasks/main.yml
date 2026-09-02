@@ -1,0 +1,42 @@
+---
+# ROS is not in Ubuntu's archive, so nothing downstream works without this
+# source present and trusted. The ros2-apt-source .deb carries the signed
+# source *and* its keyring, which is why it beats a hand-managed apt key that
+# silently expires.
+
+# Ubuntu 24.04 ships universe enabled and its deb822 sources predate Ansible's
+# apt_repository module — so assert rather than mutate, and fail loudly if a
+# future reflash changes the default.
+- name: Check which components apt actually sees
+  ansible.builtin.command: apt-cache policy
+  register: ros2_apt_policy
+  changed_when: false
+  check_mode: false  # read-only probe; must run under --check or the assert sees nothing
+
+- name: Assert the universe component is enabled
+  ansible.builtin.assert:
+    that: "'universe' in ros2_apt_policy.stdout"
+    fail_msg: >-
+      The universe component is not enabled. Ubuntu 24.04 images ship with it
+      on, so something is unusual about this machine — enable it on the
+      Components: line of /etc/apt/sources.list.d/ubuntu.sources rather than
+      letting this role guess at the right mirror URL.
+    quiet: true
+
+- name: Read the installed package list
+  ansible.builtin.package_facts:
+
+# Guarded on absence so an already-correct machine makes no network request:
+# the GitHub fetch is bootstrap-only by design.
+- name: Install ros2-apt-source {{ ros_apt_source_version }}
+  become: true
+  ansible.builtin.apt:
+    deb: "https://github.com/ros-infrastructure/ros-apt-source/releases/download/{{ ros_apt_source_version }}/ros2-apt-source_{{ ros_apt_source_version }}.{{ ansible_facts.distribution_release }}_all.deb"
+  when: "'ros2-apt-source' not in ansible_facts.packages"
+  register: ros2_apt_source_install
+
+- name: Refresh the apt cache now the ROS source exists
+  become: true
+  ansible.builtin.apt:
+    update_cache: true
+  when: ros2_apt_source_install is changed
