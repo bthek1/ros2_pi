@@ -18,3 +18,23 @@
 # The Pi builds only pimesh_msgs and pimesh_camera, so the sensor head has to
 # carry its own launch and its own configuration — it must be startable with
 # nothing from the dev box present.
+
+# --- P2, in the container --------------------------------------------------
+
+decode_node:
+  ros__parameters:
+    # The container's only network subscriber and its only JPEG decode.
+    stats_period_s: 1.0
+    # No frame for this long marks the stage stale on /pipeline/stats. Two
+    # seconds is ~60 frames at the camera's rate: long enough that a Wi-Fi
+    # hiccup does not flap the flag, short enough to notice a dead Pi.
+    stale_after_s: 2.0
+    # Address logging is a diagnostic for `just gate-ipc`, which overrides this
+    # on the command line. Zero here so a normal session logs nothing.
+    log_buffer_addresses: 0
+
+ipc_probe_node:
+  ros__parameters:
+    # Only loaded when the launch is given `probe:=true`. Ten frames is plenty
+    # to compare addresses and short enough not to bury the launch output.
+    frames: 10

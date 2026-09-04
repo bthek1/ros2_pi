@@ -41,7 +41,12 @@ build *args:
     export PATH="/usr/bin:${PATH}"
     source "{{ros}}/setup.bash"
     cd "{{ws}}"
+    # The compiled packages export a compile database (see their CMakeLists);
+    # colcon writes one per package, so they are merged into
+    # build/compile_commands.json, which .vscode/c_cpp_properties.json reads.
+    # Without it an editor guesses include paths and gets every ROS header wrong.
     colcon build --symlink-install {{args}}
+    python3 "{{ws}}/tools/merge_compile_commands.py" "{{ws}}/build"
 
 # Never the build products — there is no ABI compatibility between Lyrical and
 # Jazzy, so only source crosses.
@@ -69,6 +74,24 @@ build-pi: sync-pi
         colcon build --symlink-install --packages-select {{pi_pkgs}} 2>&1 | tail -5
     '"
 
+# A thin pointer at /usr/bin/python3, not a dependency sandbox: built with
+# --system-site-packages, so it sees the system pytest and installs nothing.
+# It exists because the editor needs ONE deterministic interpreter — this box
+# has three python3.14s and only /usr/bin/python3 works for us. Idempotent.
+#
+# Create .venv, the interpreter the editor and `just test` both use.
+[group('test')]
+venv:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    if [ -x "{{ws}}/.venv/bin/python" ]; then
+        echo ".venv exists → $("{{ws}}/.venv/bin/python" -c 'import sys; print(sys.base_prefix)')"
+    else
+        /usr/bin/python3 -m venv --system-site-packages "{{ws}}/.venv"
+        echo ".venv created from /usr/bin/python3"
+    fi
+    "{{ws}}/.venv/bin/python" -c 'import pytest, sys; print(f"pytest {pytest.__version__} via {sys.executable}")'
+
 # Two suites: the packages' own gtest via colcon, and pytest for the gate tools
 # in tools/, which are not a ROS package and so are invisible to colcon.
 #
@@ -85,11 +108,20 @@ test *args:
     colcon test {{args}} || rc=1
     colcon test-result || rc=1
     echo "── pytest (tools/) ──"
-    python3 -m pytest tools/ -q || rc=1
+    # The same interpreter the editor's Testing sidebar uses, so a green
+    # sidebar and a green `just test` cannot disagree. Falls back to the system
+    # one when .venv is absent (a fresh clone), which is the same interpreter
+    # the venv points at anyway.
+    py="{{ws}}/.venv/bin/python"
+    [ -x "${py}" ] || py=/usr/bin/python3
+    echo "   interpreter: ${py}"
+    "${py}" -m pytest tools/ -q || rc=1
     exit "${rc}"
 
-# The same tests under the OTHER distro and compiler. A test that has only ever
-# run on Lyrical says nothing about the machine that actually runs the camera.
+# A test that has only ever run on Lyrical says nothing about the machine that
+# actually runs the camera.
+#
+# Run the same tests on the Pi, under Jazzy.
 [group('test')]
 test-pi: build-pi
     #!/usr/bin/env bash
@@ -510,4 +542,97 @@ gate-capture:
     echo
     echo "hardware ${hw_fps:-?} Hz | captured ${noderate1:-?} / ${noderate2:-?} Hz | delivered ${rate1:-?} / ${rate2:-?} Hz | on-pi offset ${pidelay1:-?} / ${pidelay2:-?} s"
     if [ "${fail}" -eq 0 ]; then echo "P1 GATE PASS"; else echo "P1 GATE FAIL"; fi
+    exit "${fail}"
+
+# Asserts: every frame decode_node publishes arrives at the SAME address in the
+# probe, the same run with intra-process OFF produces DIFFERENT addresses (so
+# the check is capable of failing), exactly one subscriber reads the Pi's
+# stream, and decode keeps up.
+#
+# P2 gate — the container is really zero-copy.
+[group('gate')]
+gate-ipc:
+    #!/usr/bin/env bash
+    set -o pipefail
+    fail=0
+    out=$(mktemp -d)
+    trap 'rm -rf "${out}"' EXIT
+    export PATH="/usr/bin:${PATH}"
+    source "{{ros}}/setup.bash"
+    source "{{ws}}/install/setup.bash"
+
+    echo "== P2 gate: intra-process =="
+
+    # A leaked camera from an earlier session holds /dev/video0 exclusively and
+    # every number below would be measured against nothing.
+    before=$(ssh {{ssh_opts}} {{pi_host}} "pgrep -f '[c]amera_node' | wc -l" 2>/dev/null | tr -d ' ')
+    if [ "${before}" != "0" ]; then
+        echo "  FAIL  ${before} camera process(es) already on the Pi — run 'just stragglers'"
+        echo "P2 GATE FAIL"; exit 1
+    fi
+
+    # The decode stage needs real frames, so this is a two-machine gate. The Pi
+    # camera is bounded up front and covers both container runs.
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT 70 ros2 launch pimesh_camera camera.launch.py > /tmp/gate_ipc_cam.log 2>&1'" &
+    cam_pid=$!
+    sleep 8
+
+    # Run 1: the claim. Probe on, intra-process on.
+    #
+    # The launch runs in the FOREGROUND under `timeout -s INT` with the probes
+    # backgrounded — a shell without job control sets SIGINT to SIG_IGN for
+    # background children, which leaves a backgrounded launch un-interruptible
+    # and its components orphaned. Measured on P0's gate.
+    echo "-- run 1: intra_process:=true --"
+    ( sleep 9
+      # `topic info` does NOT create a subscriber; `topic hz` would, and would
+      # then make this assertion fail by measuring it.
+      timeout -s INT 6 ros2 topic info -v /image_raw/compressed > "${out}/info.txt" 2>&1 || true
+      # Decode's own numbers, from the node that measured them. The stats topic
+      # carries every stage, so filter to this one rather than taking whatever
+      # arrived first.
+      timeout -s INT 10 ros2 topic echo /pipeline/stats --once > "${out}/stats.txt" 2>&1 || true ) &
+    probe_pid=$!
+    timeout -s INT 22 ros2 launch pimesh_bringup pimesh.launch.py \
+        probe:=true > "${out}/on.log" 2>&1 || true
+    wait "${probe_pid}" 2>/dev/null || true
+
+    # Run 2: the control. Same everything, buffers serialised.
+    echo "-- run 2: intra_process:=false (the control) --"
+    sleep 3
+    timeout -s INT 20 ros2 launch pimesh_bringup pimesh.launch.py \
+        probe:=true intra_process:=false > "${out}/off.log" 2>&1 || true
+
+    wait "${cam_pid}" 2>/dev/null || true
+
+    subs=$(grep -c 'Endpoint type: SUBSCRIPTION' "${out}/info.txt" 2>/dev/null | tr -d ' ')
+    hz=$(grep -oE 'rate_hz: [0-9.]+' "${out}/stats.txt" | tail -1 | cut -d' ' -f2)
+    ms=$(grep -oE 'latency_ms: [0-9.]+' "${out}/stats.txt" | tail -1 | cut -d' ' -f2)
+    p95=$(grep -oE 'latency_p95_ms: [0-9.]+' "${out}/stats.txt" | tail -1 | cut -d' ' -f2)
+    bad=$(grep -oE 'dropped_transport: [0-9]+' "${out}/stats.txt" | tail -1 | cut -d' ' -f2)
+    stage=$(grep -oE '^stage: .*' "${out}/stats.txt" | tail -1 | cut -d' ' -f2)
+
+    echo "-- assertions --"
+    if [ "${stage}" != "decode" ]; then
+        echo "  FAIL  /pipeline/stats carried stage '${stage:-none}', not decode"; fail=1
+    fi
+    python3 "{{ws}}/tools/check_ipc.py" \
+        --log-on "${out}/on.log" --log-off "${out}/off.log" \
+        --subscribers "${subs:-0}" \
+        --decode-hz "${hz:-0}" --decode-ms "${ms:-0}" \
+        --decode-failures "${bad:-0}" || fail=1
+
+    echo "-- teardown --"
+    sleep 2
+    left_pi=$(ssh {{ssh_opts}} {{pi_host}} "pgrep -f '[c]amera_node' | wc -l" 2>/dev/null | tr -d ' ')
+    left_dev=$(pgrep -c -f '[c]omponent_container_mt' 2>/dev/null | tr -d ' ')
+    if [ "${left_pi}" = "0" ] && [ "${left_dev}" = "0" ]; then
+        echo "  ok    both machines clean"
+    else
+        echo "  FAIL  ${left_dev} container(s) here, ${left_pi} camera(s) on the Pi"; fail=1
+    fi
+
+    echo
+    echo "decode ${hz:-?} Hz | ${ms:-?} ms mean, ${p95:-?} ms p95 | ${subs:-?} subscriber on the Pi's stream"
+    if [ "${fail}" -eq 0 ]; then echo "P2 GATE PASS"; else echo "P2 GATE FAIL"; fi
     exit "${fail}"

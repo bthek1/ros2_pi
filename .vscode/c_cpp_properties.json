@@ -1,0 +1,25 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "pimesh (Lyrical)",
+      // The compile database is the whole configuration: every include path,
+      // define and standard comes from how the file was ACTUALLY compiled, so
+      // IntelliSense cannot drift from the build. `just build` regenerates it.
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+      // Fallbacks, used only for a file the database does not mention yet —
+      // a new .cpp before its first build.
+      "includePath": [
+        "${workspaceFolder}/src/**",
+        "/opt/ros/lyrical/include/**"
+      ],
+      "compilerPath": "/usr/bin/g++",
+      // C++17, not 20: this code also builds on the Pi under Jazzy, whose
+      // baseline is 17. Setting 20 here would let the editor accept code the
+      // Pi then refuses.
+      "cStandard": "c17",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "linux-gcc-x64"
+    }
+  ]
+}

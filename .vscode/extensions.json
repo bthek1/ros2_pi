@@ -1,0 +1,24 @@
+{
+  // Suggested when the workspace is opened. Nothing here is required to build
+  // or test — `just` does all of that from a terminal — but without cpptools
+  // there is no C++ IntelliSense at all, and this is a C++ project.
+  "recommendations": [
+    // C++ IntelliSense, driven by build/compile_commands.json. Ships its own
+    // engine, so it needs no clangd binary (there is none on this box).
+    "ms-vscode.cpptools",
+    // Already installed here; listed so a fresh machine gets them too. The
+    // pytest suite in tools/ runs from the Testing sidebar with these.
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    // The Pi is a second machine: this is how you edit and build on it
+    // directly when a Jazzy-only problem needs poking at in place.
+    "ms-vscode-remote.remote-ssh",
+    // config/*.yaml, ansible/, and every launch parameter file.
+    "redhat.vscode-yaml"
+  ],
+  "unwantedRecommendations": [
+    // clangd and cpptools fight over the same files; this project is set up
+    // for cpptools. Pick one deliberately, not by installing both.
+    "llvm-vs-code-extensions.vscode-clangd"
+  ]
+}

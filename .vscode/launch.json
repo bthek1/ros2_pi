@@ -1,0 +1,65 @@
+{
+  "version": "0.2.0",
+  // Debugging notes, because what is debuggable here is not obvious:
+  //
+  //  * `camera_node` runs on the PI. It cannot be launched from this machine —
+  //    there is no camera. To debug it in place, connect with Remote-SSH to
+  //    `pi`, open ~/ros2_pi there, and use these same configurations.
+  //  * The gtest binary IS debuggable here, and is where the timestamp
+  //    arithmetic lives. That is the useful local target.
+  //  * Nothing here sources ROS. The gtest binary is linked with RPATHs into
+  //    install/, so it runs standalone; a node would need `just`-style
+  //    sourcing, which is why nodes are launched by recipes, not by F5.
+  "configurations": [
+    {
+      "name": "gtest: v4l2_capture",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/pimesh_camera/test_v4l2_capture",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "preLaunchTask": "build",
+      "setupCommands": [
+        {
+          "description": "readable STL containers in the debugger",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "gtest: one case (prompts for a filter)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/pimesh_camera/test_v4l2_capture",
+      // e.g. ToSystemClock.* or Open.RejectsACharacterDeviceThatIsNotV4L2
+      "args": ["--gtest_filter=${input:gtestFilter}"],
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "preLaunchTask": "build",
+      "setupCommands": [
+        { "text": "-enable-pretty-printing", "ignoreFailures": true }
+      ]
+    },
+    {
+      "name": "pytest: gate tools",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["tools/", "-v"],
+      "cwd": "${workspaceFolder}",
+      "python": "/usr/bin/python3",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ],
+  "inputs": [
+    {
+      "id": "gtestFilter",
+      "type": "promptString",
+      "description": "gtest filter, e.g. ToSystemClock.*",
+      "default": "ToSystemClock.*"
+    }
+  ]
+}

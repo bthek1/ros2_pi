@@ -1,0 +1,105 @@
+{
+  "version": "2.0.0",
+  // Every task shells out to `just`, deliberately. The recipes already know
+  // how to source ROS, put /usr/bin first on PATH, reach the Pi with the right
+  // ssh options and tear themselves down — duplicating any of that here would
+  // give two ways to run the same thing that drift apart.
+  "options": {
+    "cwd": "${workspaceFolder}"
+  },
+  "presentation": {
+    "reveal": "always",
+    "panel": "dedicated",
+    "clear": true
+  },
+  "tasks": [
+    {
+      "label": "build",
+      "detail": "colcon build on the dev box, and refresh compile_commands.json",
+      "type": "shell",
+      "command": "just build",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "build: pi",
+      "detail": "sync the source to the Pi and build it there, under Jazzy",
+      "type": "shell",
+      "command": "just build-pi",
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "test",
+      "detail": "gtest via colcon + pytest for tools/ (~1 s)",
+      "type": "shell",
+      "command": "just test",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "test: pi",
+      "detail": "the same gtest cases under Jazzy on aarch64",
+      "type": "shell",
+      "command": "just test-pi",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "gate: build (P0)",
+      "detail": "both distros build, interfaces identical, frame tree comes up",
+      "type": "shell",
+      "command": "just gate-build",
+      "problemMatcher": []
+    },
+    {
+      "label": "gate: capture (P1)",
+      "detail": "the camera against real hardware — takes ~4 minutes",
+      "type": "shell",
+      "command": "just gate-capture",
+      "problemMatcher": []
+    },
+    {
+      "label": "gate: provision (P9)",
+      "detail": "the playbook is idempotent and the Pi matches this machine",
+      "type": "shell",
+      "command": "just gate-provision",
+      "problemMatcher": []
+    },
+    {
+      "label": "camera: run",
+      "detail": "the Pi's camera for 60 s, bounded so it cannot outlive the task",
+      "type": "shell",
+      "command": "just cam 60",
+      "problemMatcher": []
+    },
+    {
+      "label": "camera: controls",
+      "detail": "every V4L2 control, current vs default — read this before blaming software",
+      "type": "shell",
+      "command": "just camera",
+      "problemMatcher": []
+    },
+    {
+      "label": "camera: reset",
+      "detail": "restore the C922's known-good baseline",
+      "type": "shell",
+      "command": "just camera-reset",
+      "problemMatcher": []
+    },
+    {
+      "label": "stragglers",
+      "detail": "sweep BOTH machines for nodes an earlier session left running",
+      "type": "shell",
+      "command": "just stragglers",
+      "problemMatcher": []
+    },
+    {
+      "label": "provision (dry run)",
+      "detail": "ansible --check --diff: read this before applying",
+      "type": "shell",
+      "command": "just provision-check",
+      "problemMatcher": []
+    }
+  ]
+}

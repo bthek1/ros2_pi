@@ -17,9 +17,15 @@ maps/
 *.db3
 
 # editor / OS
+# The workspace config IS part of the project — it encodes the system-python
+# pin, the compile-database path and the task list. Only per-user state is
+# ignored.
 .vscode/*
-!.vscode/tasks.json
 !.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/c_cpp_properties.json
 .cache/
 compile_commands.json
 *.swp
@@ -28,3 +34,6 @@ compile_commands.json
 # pytest bytecode for the repo tools
 __pycache__/
 .pytest_cache/
+
+# The editor's interpreter pointer — `just venv` recreates it in a second.
+.venv/

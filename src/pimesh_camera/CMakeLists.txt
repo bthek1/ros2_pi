@@ -12,6 +12,12 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# Export a compile database so the editor can resolve ROS headers instead of
+# guessing. Set here rather than passed with --cmake-args, because a package
+# with no compiled targets (pimesh_bringup) would warn that the variable went
+# unused on every single build.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)

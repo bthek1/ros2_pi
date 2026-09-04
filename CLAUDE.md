@@ -224,6 +224,14 @@ strong priors, re-verify before quoting a number as this project's own.
   wrong ROS the moment the dev box joins. Changes are applied with
   `just provision` and proved by `just gate-provision`, whose central assertion
   is that a second run reports `changed=0`.
+- **`.vscode/` is checked in**, and `just build` refreshes
+  `build/compile_commands.json` — C++ IntelliSense reads that, so a confused
+  editor usually means an out-of-date build rather than a broken config. The
+  The editor's Python interpreter is pinned by `just venv` (a
+  `--system-site-packages` pointer at `/usr/bin/python3`, not a dependency
+  sandbox) — naming it in settings alone is overridden by the Python
+  Environments extension, which picked uv's pytest-less interpreter. Editor tasks shell out to `just`; never reimplement a recipe in
+  `tasks.json`. [docs/info/setup.md](docs/info/setup.md#working-in-vs-code).
 - Build with `colcon build --symlink-install`. Day-to-day commands are `just`
   recipes; add a recipe rather than documenting a long one-off command, and keep
   recipes and docs in agreement.

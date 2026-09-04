@@ -95,6 +95,22 @@ packages are not immune**, because `rosidl` generates message code in Python:
 after that, **CMake has cached the wrong interpreter** — `rm -rf build install`
 and build again; another `colcon build` will not clear it.
 
+## VS Code's Testing sidebar: `No module named pytest`
+
+**Measured here 2026-09-04.** The Python Environments extension picked uv's
+`~/.local/bin/python3.14`, which has no pytest, and **overrode**
+`python.defaultInterpreterPath`. Naming the interpreter in settings is not
+enough on its own — that setting is only a default.
+
+Run **`just venv`** and reload the window. It builds `.venv` from
+`/usr/bin/python3` with `--system-site-packages`, which is the first place that
+extension looks. `just test` prints the interpreter it used, so the sidebar and
+the command line can be compared directly.
+
+Related: `python-envs.alwaysUseUv` defaults to true and is *machine*-scoped, so
+it cannot be turned off from workspace settings — the fix has to work with the
+extension's discovery rather than against it.
+
 ## `rviz2` will not start
 
 It renders through GLX and needs `QT_QPA_PLATFORM=xcb` on this Wayland session.

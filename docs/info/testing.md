@@ -105,9 +105,21 @@ Python for the repo's own tools goes in `tools/test_*.py` and is picked up by
 `just test`'s pytest pass — `tools/` is not a ROS package, so colcon cannot see
 it, which is why the recipe runs both.
 
+## In the editor
+
+The pytest suite appears in VS Code's Testing sidebar once `just venv` has been
+run — the workspace points the Python extension at `.venv`, a
+`--system-site-packages` pointer at `/usr/bin/python3`, because naming the
+interpreter in settings alone was silently overridden and discovery failed with
+`No module named pytest`
+([setup.md](setup.md#working-in-vs-code)). The C++ cases run from the
+`test` task or the debugger — see
+[setup.md](setup.md#working-in-vs-code).
+
 ## Running
 
 ```bash
+just venv        # once: the interpreter the editor and pytest both use
 just test        # colcon (gtest) + pytest, dev box, ~1 s
 just test-pi     # the same gtest cases on the Pi, under Jazzy
 just gate-build      # P0: builds on both distros, interfaces identical

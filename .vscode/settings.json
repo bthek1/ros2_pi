@@ -1,0 +1,84 @@
+{
+  // ---------------------------------------------------------------- python --
+  // This box has THREE python3.14 interpreters and only one of them works for
+  // us: /usr/bin/python3 has pytest, PlatformIO's venv cannot import `em` or
+  // `yaml`, and uv's ~/.local/bin/python3.14 has no pytest. Naming the right
+  // one is not enough — `python.defaultInterpreterPath` is only a default, and
+  // the Python Environments extension overrides it (it picked uv's and the
+  // Testing sidebar failed with "No module named pytest").
+  //
+  // So the project carries a `.venv`, which is what that extension looks for
+  // first. It is NOT a dependency sandbox: `just venv` builds it with
+  // --system-site-packages from /usr/bin/python3, so it is a thin, deterministic
+  // pointer at the system interpreter and its pytest. Missing? Run `just venv`.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python-envs.pythonProjects": [
+    {
+      "path": ".",
+      "envManager": "ms-python.python:venv",
+      "packageManager": "ms-python.python:pip"
+    }
+  ],
+
+  // The pytest suite for the gate tools. `tools/` is not a ROS package, so
+  // colcon cannot see it — this is what puts it in the Testing sidebar.
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["tools"],
+
+  // ------------------------------------------------------------------- c++ --
+  // IntelliSense is configured entirely by c_cpp_properties.json, which reads
+  // build/compile_commands.json. Nothing to set here except keeping the
+  // extension from second-guessing it.
+  "C_Cpp.default.configurationProvider": "",
+  "C_Cpp.autoAddFileAssociations": false,
+
+  // ------------------------------------------------------------------ files --
+  "files.associations": {
+    "*.launch.py": "python",
+    "justfile": "makefile",
+    "*.j2": "jinja",
+    "*.repos": "yaml"
+  },
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+
+  // Build products are large, generated, and git-ignored. Hiding them keeps
+  // Ctrl-P and search results about source rather than about symlinks into
+  // install/.
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true
+  },
+  "search.exclude": {
+    "build/**": true,
+    "install/**": true,
+    "log/**": true,
+    "**/__pycache__": true
+  },
+  // Watching build/ during a colcon run is a good way to melt a CPU.
+  "files.watcherExclude": {
+    "**/build/**": true,
+    "**/install/**": true,
+    "**/log/**": true
+  },
+
+  // ------------------------------------------------------------------- yaml --
+  // Parameter files are keyed by NODE NAME, and a key that does not match a
+  // node applies nothing, silently. No schema can catch that, but at least
+  // keep the files readable.
+  "yaml.format.enable": true,
+  "[yaml]": { "editor.tabSize": 2 },
+
+  // ---------------------------------------------------------------- editor --
+  // No format-on-save: the ament linters are deliberately not enabled yet
+  // (docs/info/testing.md), so an editor formatter would churn style the
+  // project has not decided on. The ruler is ROS's 100-column convention.
+  "editor.formatOnSave": false,
+  "editor.rulers": [100],
+  "[cpp]": { "editor.tabSize": 2 },
+  "[python]": { "editor.tabSize": 4 },
+
+  // ---------------------------------------------------------------- testing --
+  "testing.automaticallyOpenTestResults": "neverOpen"
+}

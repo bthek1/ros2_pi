@@ -161,6 +161,70 @@ node, its pkill pattern goes into the trap in the same change.
 session then dies with `Device or resource busy`. Check both machines are clean
 before walking away.
 
+## Working in VS Code
+
+The workspace configuration is **checked in** (`.vscode/`), because it encodes
+project facts rather than personal taste: which Python interpreter is safe here,
+where the compile database lives, and what the tasks are. Only per-user state is
+git-ignored.
+
+**Run `just venv` once**, then **install the recommended extensions when
+prompted.** The one that matters is
+`ms-vscode.cpptools` — without it there is no C++ IntelliSense at all, and this
+is a C++ project. `clangd` is listed as *unwanted*: it and cpptools fight over
+the same files, and the workspace is set up for cpptools.
+
+### What is configured, and why
+
+- **The Python interpreter is pinned through a `.venv`, and this took two
+  attempts.** This box has *three* python3.14 interpreters and only one is
+  usable: `/usr/bin/python3` has pytest, PlatformIO's venv cannot import `em`
+  or `yaml`, and uv's `~/.local/bin/python3.14` has no pytest. Naming the right
+  one in `python.defaultInterpreterPath` was **not enough** — that setting is
+  only a *default*, and the Python Environments extension
+  (`ms-python.vscode-python-envs`) overrides it. It picked uv's interpreter and
+  the Testing sidebar failed with `No module named pytest`.
+
+  The fix is `just venv`, which builds `.venv` from `/usr/bin/python3` with
+  `--system-site-packages`. **It is not a dependency sandbox** — it installs
+  nothing and sees the system pytest; it is a deterministic pointer at the right
+  interpreter, and `.venv` is the first place that extension looks
+  (`python-envs.workspaceSearchPaths` defaults to `['.venv', '*/.venv']`).
+  `just test` uses the same interpreter, so a green sidebar and a green
+  `just test` cannot disagree. On a fresh clone it falls back to
+  `/usr/bin/python3` — the same interpreter, so nothing changes but the path in
+  the log.
+
+  Note `python-envs.alwaysUseUv` defaults to **true** and is *machine*-scoped,
+  so a workspace setting cannot turn it off. That is why the fix works *with*
+  the extension's discovery rather than against it.
+- **C++ IntelliSense is driven entirely by `build/compile_commands.json`**, so
+  it cannot drift from the build: every include path and define comes from how
+  the file was actually compiled. `just build` regenerates it — the compiled
+  packages set `CMAKE_EXPORT_COMPILE_COMMANDS`, and
+  `tools/merge_compile_commands.py` merges colcon's per-package databases into
+  the one file the editor reads. **If IntelliSense is confused, build first.**
+- **`cppStandard` is `c++17`, not 20.** The Pi builds this same code under
+  Jazzy; an editor set to 20 would accept code the Pi then refuses.
+- **Tasks shell out to `just`** rather than reimplementing anything. The recipes
+  already know how to source ROS, fix `PATH`, reach the Pi with the right ssh
+  options, and tear themselves down. `Ctrl+Shift+B` builds; the test task runs
+  both suites; the gates and the camera recipes are all there.
+- **No format-on-save.** The ament linters are deliberately not enabled yet
+  ([testing.md](testing.md)), so a formatter would churn style the project has
+  not decided on.
+
+### Debugging
+
+`camera_node` runs **on the Pi** and cannot be launched from here — there is no
+camera. To debug it in place, connect with Remote-SSH to `pi`, open
+`~/ros2_pi`, and use the same configurations there.
+
+What *is* usefully debuggable locally is the gtest binary, which is where the
+timestamp arithmetic lives: `launch.json` has a configuration for the whole
+suite and one that prompts for a `--gtest_filter`. The pytest suite for the gate
+tools debugs through `debugpy`, pinned to the system interpreter.
+
 ## Environment traps
 
 - **`ssh pi '...'` does not read the ROS environment.** Use `ssh pi "bash -lc
