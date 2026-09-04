@@ -32,37 +32,70 @@ means:
 
 ## Stage 1 — Capture (`camera_node`, on the Pi)
 
+**Built and gated 2026-09-02** (`just gate-capture`). Everything in this section
+is measured unless it says otherwise.
+
 **Job:** get frames off the sensor, stamp them honestly, put them on the wire.
 Nothing else. No decode, no re-encode, no processing.
 
-- Open the camera by its **serial-keyed `by-id` path**
-  (`/dev/v4l/by-id/usb-046d_C922_…-video-index0`), which is stable across
-  replugs and reboots — it resolves to `/dev/video0`, the C922's only capture
-  node, while `…-index1`/`/dev/video1` is its UVC metadata node. The path is a
-  parameter, defaulted from the Ansible variable `camera_device`
-  ([ansible.md](ansible.md)). Then `V4L2_PIX_FMT_MJPEG`, 1280×720, request
-  60 fps.
-- `mmap` buffer pool, 4 buffers, `VIDIOC_DQBUF` → publish the JPEG bytes
-  verbatim as `CompressedImage` with `format: "jpeg"`.
-- **Stamp at dequeue from the buffer's own timestamp.** `usb_cam` 0.8.1 has a
-  once-per-process epoch bug that offsets every stamp by a random sub-second
-  amount **(measured: 0.223 / 0.362 / 0.979 s on three launches)**. Fixing that
-  is a large part of why this node exists rather than reusing `usb_cam`.
-- **Fail loudly.** A missing or busy device exits non-zero with a clear message.
-  `usb_cam` logs one ERROR and then idles forever, which looks like a working
-  node publishing nothing.
-- Publish `/camera_info` transient-local from a calibration YAML. Zero distortion
-  is not good enough for a pipeline that unprojects every pixel — run the
-  checkerboard.
+- Opens the C922 through its serial-keyed `by-id` symlink (`/dev/video0`;
+  `index1` is the UVC metadata node), `V4L2_PIX_FMT_MJPEG`, 1280×720, an `mmap`
+  pool of 4 buffers, `poll()` → `VIDIOC_DQBUF` → publish the JPEG bytes verbatim
+  as `CompressedImage` with `format: "jpeg"`.
+- **A dedicated capture thread blocking in `poll()`, not a ROS timer.** A timer
+  asks the camera for a frame at a rate the node picked, and beats against the
+  sensor's own cadence — the predecessor's timer-driven driver delivered 24 fps
+  while raw V4L2 on the same camera delivered 30.
+- **Measured cost: 37 µs per frame** from dequeue to publish (the one
+  unavoidable memcpy of ~150 kB out of the mmap'd buffer, so the buffer can go
+  straight back to the driver). Against a 17–34 ms frame interval that is noise.
+- **Measured throughput: within 1–2.5% of raw `v4l2-ctl` on the same camera in
+  the same run.** That ratio is the claim the gate asserts; the absolute number
+  is not a constant, because the C922's rate tracks its auto-exposure time
+  (29.7 fps and 58.8 fps both measured on 2026-09-02 —
+  [hardware.md](hardware.md#capture-behaviour)).
 
-**Cost:** ~16 ms/frame of Pi CPU at 720p MJPEG passthrough (no decode). The Pi
-has four cores and nothing else to do.
+### The timestamps, which are why this node exists
 
-**Frame rate reality (inherited):** the C922 delivers 18–21 fps on stock settings
-because `exposure_dynamic_framerate=1` trades rate for exposure indoors; with
-the control cleared it delivers **42–60 distinct frames/s at true 720p MJPEG
-(measured 2026-08-04)**. Budget consumers for up to 60 fps and never quote a
-frame rate without saying which exposure mode it was measured under.
+`usb_cam` 0.8.1 computes its monotonic-to-wall offset **once per process** and
+gets it wrong by up to a second — a `tv_sec * 1000000 + tv_usec / 1000.0`
+mix-up — so every stamp it emits sits a random sub-second amount in the past,
+redrawn at each launch (measured 0.223 / 0.362 / 0.979 s on three launches).
+
+`camera_node` samples `CLOCK_MONOTONIC` and `CLOCK_REALTIME` **per frame**,
+microseconds after `VIDIOC_DQBUF`, and adds the difference to the buffer's own
+capture timestamp. There is no epoch to get wrong, so there is nothing to drift.
+The node also checks `V4L2_BUF_FLAG_TIMESTAMP_MASK` and says so loudly if the
+driver is not giving `CLOCK_MONOTONIC` capture times, because then every
+downstream latency number would be fiction.
+
+**Measured, on the Pi where publisher and subscriber share one clock: 5 ms
+stamp-to-receipt, and 0.00 ms of movement between two separate launches.** That
+last figure is the whole test — it is exactly what `usb_cam` fails.
+
+Measured from the dev box the same quantity reads 29–38 ms and wanders, because
+it also carries the Wi-Fi transfer and the offset between two machines' clocks.
+That is the number the rest of the pipeline lives with, and it is reported, but
+it is not what the node is judged on.
+
+### Failing loudly
+
+A missing device and a busy device both make the process **exit non-zero within
+1–2 s**, with the failing ioctl and errno in the message
+(`cannot start: VIDIOC_S_FMT failed: Device or resource busy (errno 16)`), and
+`on_exit=Shutdown()` takes the launch down with it. `usb_cam` logs one ERROR and
+then idles forever, which from the outside is indistinguishable from a healthy
+node publishing into a topic nobody reads.
+
+### Not yet true
+
+`/camera_info` is published transient-local at the right rate and with the right
+stamp, but **K is all zeros** — there is no calibration, and the node warns at
+startup. Zeros are deliberate: a consumer can detect an uncalibrated camera with
+`info.k[0] == 0.0`, where a fabricated focal length would let every downstream
+stage compute confident nonsense. Loading a real calibration is deferred with a
+trigger in
+[../plans/future/bootstrap-future.md](../plans/future/bootstrap-future.md).
 
 ## Stage 2 — Decode (`decode_node`, dev box)
 

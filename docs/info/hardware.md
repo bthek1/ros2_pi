@@ -74,7 +74,8 @@ that was not written down as a role.
 
 | | |
 | --- | --- |
-| Capture node | **`/dev/video0`** — `crw-rw---- root video` |
+| Capture node | **`/dev/video0`** — `crw-rw---- root video`, reached through the by-id symlink |
+| USB link | **480M (USB 2.0)**, `Bus 002 … xhci-hcd`. See the rate note below |
 | Stable path | `/dev/v4l/by-id/usb-046d_C922_Pro_Stream_Webcam_5461327F-video-index0` — survives replugs; prefer it over `/dev/video0` in config |
 | `/dev/video1` | **Not a capture device.** It is the C922's UVC metadata node (`…-video-index1`) |
 | Formats | `YUYV 4:2:2` and `MJPG`, both at 640×480 and 1280×720 |
@@ -84,14 +85,48 @@ The `/dev/video2x` nodes on the Pi belong to `pispbe`, the Pi 5's own image
 signal processor. They are not this camera and there is no CSI camera attached —
 `libcamera`/`rpicam` guidance does not apply.
 
-### Capture behaviour (inherited from `piros2`, re-verify here)
+### Capture behaviour
+
+**Measured here 2026-09-02, via raw `v4l2-ctl` with no ROS in the loop:**
+
+```
+v4l2-ctl -d <by-id> --set-fmt-video=width=1280,height=720,pixelformat=MJPG \
+         --set-parm=60 --stream-mmap --stream-count=200 --stream-to=/dev/null
+→ 29.7 fps in one set of runs, 58.8 fps in another, same day, same command
+```
+
+**The rate is not a property of the camera — it tracks the auto-exposure
+time.** Both figures came from the same device, the same link and the same
+control baseline within an hour of each other; the only difference was the
+light in the room and how long auto-exposure had had to converge. That is the
+same behaviour the predecessor recorded (18–21 fps stock, 42–60 fps after
+clearing the persistent controls, 2026-08-04), and it is why **no frame-rate
+figure in this project means anything without the exposure conditions beside
+it**.
+
+Consequences that follow from this, and they are the practical ones:
+
+- **A gate must measure the hardware's rate in the same run** it judges a node
+  against, never compare against a number written down on another day.
+  `just gate-capture` does exactly that: raw `v4l2-ctl` first, then the node,
+  and the assertion is on the *ratio*.
+- **Budget consumers for up to 60 fps** — the fast case is real.
+- The driver reports `Frames per second: 60.000` after `VIDIOC_S_PARM`
+  regardless, because that is the request being echoed back. **`v4l2-ctl`'s
+  closing line `Frame rate set to 60.000 fps` is not a measurement either**;
+  the measured number is on the streaming progress lines.
+
+**The camera is on a 480M (USB 2.0) link** — `lsusb -t` shows
+`Bus 002 … xhci-hcd/2p, 480M` with the C922 beneath it. 720p60 MJPEG fits in
+that budget (~9 MB/s of ~24 MB/s après overhead), which is consistent with
+58.8 fps being achievable; it is recorded here because it bounds anything
+faster or larger.
+
+Still true, and still inherited:
 
 - **Stock settings give 18–21 fps, not 30.** `exposure_dynamic_framerate=1`
   trades frame rate for exposure in indoor light, and the C922 powers on with it
   set despite the driver reporting the default as 0.
-- **With the control cleared, 720p MJPG delivered 42–60 distinct frames/s**
-  (measured 2026-08-04: 0 duplicate payloads in 634 messages). Budget every
-  consumer for up to 60 fps.
 - **V4L2 controls persist inside the camera** across processes and reboots. A
   manual exposure left behind by a benchmark makes every later session black.
   Reset the controls to a known baseline before diagnosing black frames or low

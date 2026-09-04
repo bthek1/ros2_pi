@@ -127,7 +127,7 @@ both distros. A build that only succeeds here is half a build.
 
 ## Running
 
-Recipes that exist today (P0 and P9):
+Recipes that exist today (P0, P1 and P9):
 
 ```bash
 just build              # colcon build here
@@ -135,8 +135,12 @@ just sync-pi            # source only — no build products cross the distro bou
 just build-pi           # sync, then build on the Pi
 just provision-check    # dry-run the Pi's playbook, with diffs
 just provision          # apply it
+just cam                # run the Pi's camera (just cam 30 bounds it at 30 s)
+just camera             # every V4L2 control, current vs default
+just camera-reset       # restore the C922's known-good baseline
 just pipeline           # the dev-box container (empty until P2)
 just gate-build         # the P0 gate
+just gate-capture       # the P1 gate
 just gate-provision     # the P9 gate
 just stragglers         # sweep both machines for leftovers
 ```

@@ -16,7 +16,7 @@ pi_host  := "pi"
 pi_ws    := "~/ros2_pi"
 # What the Pi builds. It is a sensor head: this list grows by exactly one
 # package (pimesh_camera, at P1) and then stops.
-pi_pkgs  := "pimesh_msgs"
+pi_pkgs  := "pimesh_msgs pimesh_camera"
 # The camera's serial-keyed symlink — stable across replugs, unlike /dev/video0.
 # Same value as ansible/group_vars/robot.yml's camera_device; the gate checks it.
 camera_by_id := "/dev/v4l/by-id/usb-046d_C922_Pro_Stream_Webcam_5461327F-video-index0"
@@ -328,4 +328,164 @@ gate-provision:
     echo
     echo "g++ on the Pi: $(get gpp)   apply: changed ${changed1} → ${changed2}"
     if [ "${fail}" -eq 0 ]; then echo "P9 GATE PASS"; else echo "P9 GATE FAIL"; fi
+    exit "${fail}"
+
+# ---------------------------------------------------------------- camera ----
+
+# Camera state PERSISTS inside the camera across processes and reboots, so this
+# is machine state you inspect before blaming software for a black image.
+#
+# Print every V4L2 control, current vs default.
+[group('camera')]
+camera:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc 'v4l2-ctl -d {{camera_by_id}} --list-ctrls; echo; v4l2-ctl -d {{camera_by_id}} --get-parm'"
+
+# Restore the C922 to a known-good baseline: auto exposure on, the dynamic
+# frame-rate thief off, auto focus and white balance back, the rest at default.
+[group('camera')]
+camera-reset:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc '
+        for c in auto_exposure=3 exposure_dynamic_framerate=0 \
+                 focus_automatic_continuous=1 white_balance_automatic=1 \
+                 gain=0 brightness=128 contrast=128 saturation=128 \
+                 sharpness=128 zoom_absolute=100 pan_absolute=0 tilt_absolute=0; do
+            v4l2-ctl -d {{camera_by_id}} --set-ctrl=\$c
+        done
+        echo camera baseline restored
+        v4l2-ctl -d {{camera_by_id}} --get-ctrl=auto_exposure,exposure_time_absolute,exposure_dynamic_framerate
+    '"
+
+# `just cam 30` bounds it at 30 s; with no argument it runs until Ctrl-C.
+# Either way it cannot outlive the session.
+#
+# Run the Pi's camera in the foreground.
+[group('run')]
+cam seconds='0' *args:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    bound=""
+    if [ "{{seconds}}" != "0" ]; then bound="timeout -s INT {{seconds}}"; fi
+    ssh {{ssh_opts}} -tt {{pi_host}} "bash -lc '${bound} ros2 launch pimesh_camera camera.launch.py {{args}}'"
+
+# Asserts: the node loses nothing against raw v4l2 on the same camera, the
+# stamp-to-receipt offset is under one frame interval AND stable across two
+# separate launches (exactly what usb_cam 0.8.1 fails), the driver gives capture
+# timestamps, and a camera it cannot open makes it exit non-zero instead of idle.
+#
+# P1 gate — capture, with honest timestamps.
+[group('gate')]
+gate-capture:
+    #!/usr/bin/env bash
+    set -o pipefail
+    fail=0
+    out=$(mktemp -d)
+    trap 'rm -rf "${out}"' EXIT
+    export PATH="/usr/bin:${PATH}"
+    source "{{ros}}/setup.bash"
+    source "{{ws}}/install/setup.bash"
+    echo "== P1 gate: capture =="
+    # A leaked camera process from an earlier session holds /dev/video0 and
+    # would make every number below meaningless, so refuse to measure at all.
+    before=$(ssh {{ssh_opts}} {{pi_host}} "pgrep -f '[c]amera_node' | wc -l" 2>/dev/null | tr -d ' ')
+    if [ "${before}" != "0" ]; then
+        echo "  FAIL  ${before} camera process(es) already running on the Pi — run 'just stragglers'"
+        echo "P1 GATE FAIL"; exit 1
+    fi
+    echo "-- camera baseline --"
+    just camera-reset > "${out}/reset.log" 2>&1 || true
+    exposure=$(grep -E '^auto_exposure' "${out}/reset.log" | head -1)
+    echo "  ${exposure:-auto_exposure: unknown}"
+    echo "-- hardware ceiling (raw v4l2, no ROS in the loop) --"
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout 25 v4l2-ctl -d {{camera_by_id}} --set-fmt-video=width=1280,height=720,pixelformat=MJPG --set-parm=60 --stream-mmap --stream-count=200 --stream-to=/dev/null 2>&1 | tail -3'" > "${out}/raw.txt" 2>&1
+    # v4l2-ctl's LAST line is "Frame rate set to 60.000 fps" — the request
+    # echoed back, not a measurement. The measured rate is on the progress
+    # lines, which start with '<'. Taking the last match here silently compared
+    # the node against the number we asked for, and called a working node a 50%
+    # loss.
+    hw_fps=$(grep '<' "${out}/raw.txt" | grep -oE '[0-9]+\.[0-9]+ fps' | tail -1 | cut -d' ' -f1)
+    echo "  raw v4l2: ${hw_fps:-unknown} fps at 1280x720 MJPG, 60 requested"
+    for run in 1 2; do
+        echo "-- launch ${run} --"
+        # Let the previous run's DDS discovery age out; two launches racing
+        # each other's teardown is not what this gate is measuring.
+        sleep 3
+        ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT 45 ros2 launch pimesh_camera camera.launch.py > /tmp/cam${run}.log 2>&1'" &
+        launch_pid=$!
+        sleep 8
+        # Stats first: one message, cheap, and running it last left it racing
+        # the launch's own timeout and coming back empty.
+        timeout -s INT 6 ros2 topic echo /pipeline/stats --once > "${out}/stats${run}.txt" 2>&1 || true
+        # The stamp measurement that matters is taken ON THE PI, where the
+        # publisher and the subscriber share a clock. Measured from here it
+        # would carry the offset between two machines' clocks as well as the
+        # frame, and that offset moves on its own — see tools/check_capture.py.
+        ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT 8 ros2 topic delay /image_raw/compressed 2>&1 | tail -3'" > "${out}/pidelay${run}.txt" 2>&1 || true
+        timeout -s INT 12 ros2 topic hz /image_raw/compressed > "${out}/hz${run}.txt" 2>&1 || true
+        timeout -s INT 6 ros2 topic delay /image_raw/compressed > "${out}/delay${run}.txt" 2>&1 || true
+        wait "${launch_pid}" 2>/dev/null || true
+        eval "rate${run}=$(grep -oE 'average rate: [0-9.]+' "${out}/hz${run}.txt" | tail -1 | cut -d' ' -f3)"
+        eval "delay${run}=$(grep -oE 'average delay: [0-9.]+' "${out}/delay${run}.txt" | tail -1 | cut -d' ' -f3)"
+        eval "pidelay${run}=$(grep -oE 'average delay: [0-9.]+' "${out}/pidelay${run}.txt" | tail -1 | cut -d' ' -f3)"
+        # The node's OWN capture rate, counted on the Pi. `ros2 topic hz` here
+        # counts frames that arrived, so it charges the node for Wi-Fi loss —
+        # it read 5.3% loss against the hardware for a node that was actually
+        # losing 2.4%.
+        eval "noderate${run}=$(grep -oE 'rate_hz: [0-9.]+' "${out}/stats${run}.txt" | tail -1 | cut -d' ' -f2 | xargs printf '%.2f' 2>/dev/null)"
+        eval "echo \"  captured=\${noderate${run}:-none} Hz  delivered=\${rate${run}:-none} Hz  on-pi=\${pidelay${run}:-none} s  dev-box=\${delay${run}:-none} s\""
+    done
+    src=$(grep -oE 'detail: .*' "${out}/stats1.txt" | tail -1 | cut -d' ' -f2-)
+    echo "-- assertions --"
+    python3 "{{ws}}/tools/check_capture.py" \
+        --hw-fps "${hw_fps:-0}" \
+        --node-rate "${noderate1:-0}" "${noderate2:-0}" \
+        --delivered-rate "${rate1:-0}" "${rate2:-0}" \
+        --pi-delay "${pidelay1:--1}" "${pidelay2:--1}" \
+        --dev-delay "${delay1:--1}" "${delay2:--1}" || fail=1
+    echo "  timestamp source: ${src:-unknown}"
+    case "${src}" in
+      *CLOCK_MONOTONIC*) echo "  ok    stamps are capture times, not arrival times" ;;
+      *) echo "  FAIL  driver is not giving capture timestamps"; fail=1 ;;
+    esac
+    echo "-- fails loudly --"
+    t0=$(date +%s)
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT 10 ros2 run pimesh_camera camera_node --ros-args -p device:=/dev/video99 > /tmp/missing.log 2>&1'"
+    rc=$?; took=$(( $(date +%s) - t0 ))
+    if [ "${rc}" -ne 0 ] && [ "${took}" -le 3 ]; then
+        echo "  ok    missing device → exit ${rc} in ${took}s"
+    else
+        echo "  FAIL  missing device → exit ${rc} after ${took}s (want non-zero within 2-3 s)"; fail=1
+    fi
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT 20 ros2 launch pimesh_camera camera.launch.py > /tmp/holder.log 2>&1'" &
+    holder=$!
+    sleep 7
+    t0=$(date +%s)
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT 8 ros2 run pimesh_camera camera_node > /tmp/busy.log 2>&1'"
+    rc=$?; took=$(( $(date +%s) - t0 ))
+    busy_msg=$(ssh {{ssh_opts}} {{pi_host}} "grep -ohE 'cannot start: .*' /tmp/busy.log | head -1" 2>/dev/null)
+    wait "${holder}" 2>/dev/null || true
+    if [ "${rc}" -ne 0 ] && [ "${took}" -le 3 ]; then
+        echo "  ok    busy device → exit ${rc} in ${took}s"
+        if [ -n "${busy_msg}" ]; then echo "        ${busy_msg}"; fi
+    else
+        echo "  FAIL  busy device → exit ${rc} after ${took}s"; fail=1
+    fi
+    echo "-- teardown --"
+    sleep 2
+    # '[c]amera_node', not 'camera_node': pgrep -f matches the command line of
+    # the shell running it, and that shell's command line contains the pattern.
+    # Without the bracket this reports a straggler that is its own query — it
+    # did, and cost a gate run.
+    left=$(ssh {{ssh_opts}} {{pi_host}} "pgrep -f '[c]amera_node' | wc -l" 2>/dev/null | tr -d ' ')
+    if [ "${left}" = "0" ]; then
+        echo "  ok    no camera process left on the Pi"
+    else
+        echo "  FAIL  ${left} camera process(es) still holding /dev/video0"; fail=1
+    fi
+    echo
+    echo "hardware ${hw_fps:-?} Hz | captured ${noderate1:-?} / ${noderate2:-?} Hz | delivered ${rate1:-?} / ${rate2:-?} Hz | on-pi offset ${pidelay1:-?} / ${pidelay2:-?} s"
+    if [ "${fail}" -eq 0 ]; then echo "P1 GATE PASS"; else echo "P1 GATE FAIL"; fi
     exit "${fail}"

@@ -23,12 +23,14 @@ copy its structure wholesale: the point of the rewrite is to do in one process
 with `rclcpp` components what Python needed three processes and two interpreters
 to do.
 
-### Status: P0 and P9 done, P1 next
+### Status: P0, P1 and P9 done — P2 next
 
-As of 2026-09-02, **`pimesh_msgs` and `pimesh_bringup` build on both machines**
-(`just gate-build`) and **`ansible/` provisions the Pi** (`just gate-provision`,
-idempotent). There are no pipeline nodes yet — the container launches empty and
-the frame tree is static. Everything else in `docs/` is still **design intent**,
+As of 2026-09-02: `pimesh_msgs` and `pimesh_bringup` build on both machines
+(`just gate-build`), `ansible/` provisions the Pi (`just gate-provision`,
+idempotent), and **the Pi captures** — `pimesh_camera` publishes
+`/image_raw/compressed` at up to 59 Hz with `CLOCK_MONOTONIC` capture stamps
+(`just gate-capture`). Nothing downstream of the camera exists yet: the dev-box
+container launches empty. Everything else in `docs/` is still **design intent**,
 not a description of running code.
 
 **This repo now owns the Pi's configuration.** Its login shells source

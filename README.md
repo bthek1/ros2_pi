@@ -27,7 +27,14 @@ this machine's, and the build dependencies asserted rather than assumed. Nothing
 on the Pi is installed by hand — see
 [docs/info/ansible.md](docs/info/ansible.md).
 
-**P1 is next**: `camera_node` on the Pi.
+**P1 done — the Pi captures.** `camera_node` publishes
+`/image_raw/compressed` at up to 59 Hz, within a percent of what raw `v4l2-ctl`
+gets from the same camera, stamped from the buffer's own `CLOCK_MONOTONIC`
+capture time: **5 ms** from stamp to receipt on the Pi, and **0.00 ms** of
+movement between separate launches. The driver it replaces misses that by
+0.2–1.0 s, redrawn every launch.
+
+**P2 is next**: the dev-box container, and proving intra-process comms.
 
 Everything else in `docs/` is design intent.
 [docs/info/roadmap.md](docs/info/roadmap.md) tracks what has actually been

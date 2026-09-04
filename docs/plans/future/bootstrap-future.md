@@ -120,6 +120,51 @@ the three shared variables still match the Pi's.
 
 ---
 
+## Loading a camera calibration
+
+**What.** `camera_node` publishes `CameraInfo` with **K all zeros** and warns at
+startup: it has no way to read a calibration file. Loading one — the
+`camera_info_url` parameter it already declares — needs a YAML parser, which is
+what `camera_info_manager` is for (already installed on the Pi by the
+`toolchain` role, and named in P9's gate for this reason).
+
+**Why not now.** There is no calibration to load. Running the checkerboard is a
+physical act, and until it has been done, adding a file-loading path would only
+be a more elaborate way of publishing zeros. Zeros are the honest signal: a
+consumer can detect an uncalibrated camera with `info.k[0] == 0.0`, where a
+fabricated focal length would let every downstream stage compute confident
+nonsense.
+
+**Trigger.** A calibration YAML existing — i.e. someone has held a checkerboard
+in front of the C922 and `camera_calibration` has written a file. Depth
+unprojection (P4) and TSDF integration (P5) both need real intrinsics, so this
+must land before P5 is trusted, and P4's own gate is the last point at which
+zeros are still harmless.
+
+---
+
+## Making 60 fps repeatable at 720p
+
+**What.** The C922 delivers **29.7 fps in one run and 58.8 fps in another** on
+the same day, same link, same control baseline — the rate tracks the
+auto-exposure time and therefore the light in the room. Pinning it would mean
+choosing a manual exposure (and gain to match) that holds the frame rate up
+without making the image unusable indoors.
+
+**Why not now.** Nothing in the pipeline needs more than 30 fps: depth is the
+clock at ~13 Hz, and keypoints at 30 Hz is already twice what fusion consumes.
+Pinning exposure also trades away automatic adaptation, which matters more for a
+reconstruction than frame rate does. And `just gate-capture` is immune to the
+variability by construction — it measures the hardware in the same run it judges
+the node against.
+
+**Trigger.** A stage that can use the frames: keypoint odometry (P7) showing
+tracking failures attributable to inter-frame motion at 30 fps. The measurement
+to make first is the exposure/gain pair that holds 60 fps in this room, recorded
+alongside the light level it was taken under.
+
+---
+
 ## Retired
 
 Nothing yet. When an entry's trigger can no longer fire — the hardware went

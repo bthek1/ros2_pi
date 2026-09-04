@@ -26,8 +26,8 @@ date and what the test printed).
 | Phase | Delivers | Test | Status |
 | --- | --- | --- | --- |
 | **P0** | `pimesh_msgs`, `pimesh_bringup`, the justfile | `just gate-build` | **✓ 2026-09-01** — PASS ×3, both machines clean (`b96f63c`) |
-| **P1** | `camera_node` on the Pi | `just gate-capture` | ☐ **next** |
-| **P2** | `decode_node` + the container | `just gate-ipc` | ☐ |
+| **P1** | `camera_node` on the Pi | `just gate-capture` | **✓ 2026-09-02** — PASS ×2, 0.00 ms stamp drift |
+| **P2** | `decode_node` + the container | `just gate-ipc` | ☐ **next** |
 | **P3** | `keypoint_node`, `bags/desk1` | `just gate-keypoints` | ☐ |
 | **P4** | `depth_node` on the GPU | `just gate-depth` | ☐ |
 | **P5** | `fusion_node` (TSDF) | `just gate-fusion` | ☐ |
@@ -36,14 +36,14 @@ date and what the test printed).
 | **P8** | `dashboard_node` | `just gate-dashboard` | ☐ |
 | **P9** | `ansible/` — the Pi's configuration as code | `just gate-provision` | **✓ 2026-09-02** — PASS ×2, idempotent (11 → 0) |
 
-**2 of 10 phases done.** No phase has been abandoned or rescoped; no entry has
+**3 of 10 phases done.** No phase has been abandoned or rescoped; no entry has
 been promoted out of
 [../future/bootstrap-future.md](../future/bootstrap-future.md) yet.
 
 **Phase numbers are identities, not an execution order.** P9 was added on
 2026-09-02 and **executed the same day, ahead of P1** — it put the Pi's
-toolchain and environment under version control before P1 starts building
-against them. **Next is P1.** Rule 1 says a plan never grows a phase in the middle, so it is
+toolchain and environment under version control before P1 started building
+against them. **Next is P2.** Rule 1 says a plan never grows a phase in the middle, so it is
 appended at the next unused number and the table's Status column carries the
 ordering. That is the rule working, not a wart: "P1" still means the same thing
 it meant yesterday.
@@ -126,7 +126,15 @@ half a build.
 
 ---
 
-## ☐ P1 — Capture on the Pi
+## ✓ P1 — Capture on the Pi
+
+**Done 2026-09-02.** `just gate-capture` PASS twice: the node captures
+**59.52 Hz against a 59.09 Hz raw-`v4l2-ctl` ceiling** measured in the same run
+(and 2.4% under it in a darker run), stamps from `CLOCK_MONOTONIC` capture
+times, holds a **5 ms** on-Pi stamp-to-receipt offset that moves **0.00 ms
+between two separate launches** — the test `usb_cam` 0.8.1 fails — and exits
+non-zero within 1-2 s on a missing or busy device. What it
+cost, and what it taught, is annotated at the end of the phase.
 
 **Goal:** frames off the sensor with honest timestamps, and nothing else.
 
@@ -149,6 +157,54 @@ differs between the two launches by < 5 ms** — which is exactly what `usb_cam`
 `/dev/video0` exclusively from a helper) and asserts the node exits non-zero
 within 2 s. Prints the measured rate, both offsets, and the exposure mode they
 were measured under.
+
+**As built, the test differs from that sketch in two ways, both because the
+sketch measured the wrong thing** (see *What happened*): the rate is asserted as
+a **ratio against raw `v4l2-ctl` measured in the same run** rather than against
+a fixed 40 Hz, and both the rate and the offset are measured **on the Pi**
+rather than on the dev box. The dev-box figures are printed, not asserted.
+
+### What happened
+
+- **Built:** `pimesh_camera` — `V4l2Capture` (a ROS-free RAII wrapper over the
+  device) and `CameraNode` (an `rclcpp` component with a thin `main`), plus
+  `camera.launch.py`, `config/camera.yaml`, `tools/check_capture.py`, and the
+  recipes `just cam`, `just camera`, `just camera-reset`, `just gate-capture`.
+- **Measured:** 37 µs per frame from dequeue to publish. Capture between
+  **-0.7% and 2.4%** of the raw v4l2 ceiling — i.e. indistinguishable from the
+  hardware, and identical to four decimals across two launches
+  (59.5204 / 59.5209 Hz). Wi-Fi then delivered **59.04 of 59.52 Hz** on one run
+  and 53.6 on another. On-Pi stamp-to-receipt **5 ms**, drifting **0.00 ms**
+  across launches.
+- **The gate's first two designs were both wrong, in the same way: they measured
+  on the dev box.** `ros2 topic hz` there counts frames that *arrived*, so it
+  charged the node for Wi-Fi loss (5.3% "loss" for a node actually losing 2.4%);
+  `ros2 topic delay` there is `now() - stamp` across two machines, so it carries
+  their clock offset, which moved 11 → 38 ms between launches while the Pi-side
+  figure did not move at all. **Measure each quantity on the machine where it is
+  unambiguous**, and report the cross-machine number without asserting on it.
+- **The ≥40 Hz threshold was not measurable as written.** The C922's rate tracks
+  its auto-exposure time: 29.7 fps and 58.8 fps were both measured on this same
+  day, same link, same control baseline, differing only in the light. Raw
+  `v4l2-ctl` showed the same spread, so it is the camera, not the code. A fixed
+  absolute threshold would have been a lighting test — hence the ratio.
+- **Two parsing traps, both self-inflicted, both caught by the gate failing
+  honestly:** `v4l2-ctl`'s closing line `Frame rate set to 60.000 fps` is the
+  *request* echoed back, not a measurement (taking the last match compared the
+  node against 60 and called a working node a 50% loss); and `pgrep -f
+  camera_node` **matches the shell running it**, so the teardown check reported
+  a straggler that was its own query. The project's own docs warn about the
+  second one; it still landed.
+- **A heredoc terminator at column 0 truncates a justfile recipe.** The
+  assertions moved into `tools/check_capture.py`, which is better anyway — the
+  thresholds are now readable and testable on their own.
+- **`ament_target_dependencies` no longer exists in Lyrical** but is still
+  present in Jazzy. Namespaced targets (`rclcpp::rclcpp`, `${sensor_msgs_TARGETS}`)
+  exist in both, so that is what a package building under two distros must use.
+- **`camera_info_manager` was dropped**, not added: it is not installed on the
+  dev box, and at P1 it would only have served zeros. `CameraInfo` is published
+  with **K all zeros** and a startup warning — deferred with a trigger in
+  [../future/bootstrap-future.md](../future/bootstrap-future.md).
 
 ---
 

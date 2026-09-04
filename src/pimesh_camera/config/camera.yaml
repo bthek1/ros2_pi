@@ -1,0 +1,28 @@
+# Parameters for the Pi's camera node.
+#
+# KEYED BY NODE NAME. A top-level key that does not match a running node's name
+# applies nothing at all — silently. Check `ros2 node list` against the key here
+# before concluding that a parameter "does not work".
+#
+# This file lives in pimesh_camera rather than pimesh_bringup because the Pi
+# builds only its own two packages: the sensor head carries its own launch and
+# its own configuration, and can be started without anything from the dev box.
+camera_node:
+  ros__parameters:
+    # The serial-keyed symlink, not /dev/video0: it survives replugs and
+    # renumbering, and index1 is the C922's UVC metadata node, which produces
+    # no frames. Same value as ansible/group_vars/robot.yml's camera_device.
+    device: /dev/v4l/by-id/usb-046d_C922_Pro_Stream_Webcam_5461327F-video-index0
+    image_width: 1280
+    image_height: 720
+    # Ask for the camera's real maximum. This node publishes frames as they
+    # arrive rather than pacing them, so a lower request only throttles the
+    # sensor — and the predecessor measured 42-60 distinct frames/s at 720p
+    # MJPG once the camera's persistent exposure control was cleared.
+    framerate: 60
+    buffer_count: 4
+    frame_id: camera_optical_frame
+    # Empty until the checkerboard has been run. The node warns at startup.
+    camera_info_url: ''
+    poll_timeout_ms: 2000
+    stats_period_s: 1.0

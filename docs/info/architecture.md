@@ -1,8 +1,9 @@
 # Architecture
 
-*Design intent, 2026-09-01, except where marked **built**. `pimesh_msgs` and
-`pimesh_bringup` exist and their gate passes (P0); no pipeline nodes do yet —
-see [roadmap.md](roadmap.md).*
+*Design intent, except where marked **built**. As of 2026-09-02 `pimesh_msgs`,
+`pimesh_bringup` and `pimesh_camera` exist and their gates pass (P0, P1, P9) —
+the Pi captures, and nothing downstream of it has been written yet. See
+[roadmap.md](roadmap.md).*
 
 ## The shape of it
 
@@ -69,7 +70,7 @@ process quietly falls back to serialising.
 | Package | Build | Runs on | Contents |
 | --- | --- | --- | --- |
 | `pimesh_msgs` | `ament_cmake` (rosidl) | both | **built** — `Keypoints.msg`, `PipelineStats.msg`, `MeshStats.msg`, `SaveMesh.srv`, `ResetMap.srv` |
-| `pimesh_camera` | `ament_cmake` | **Pi** | `camera_node` — V4L2 capture, MJPEG passthrough, capture-time stamps |
+| `pimesh_camera` | `ament_cmake` | **Pi** | **built** — `camera_node`: V4L2 MJPEG passthrough, per-frame capture stamps, exits non-zero on a device it cannot open |
 | `pimesh_perception` | `ament_cmake` | dev box | `decode_node`, `keypoint_node`, `depth_node` |
 | `pimesh_world` | `ament_cmake` | dev box | `fusion_node` (TSDF), `mesh_node` (marching cubes, PLY export) |
 | `pimesh_dashboard` | `ament_cmake` | dev box | `dashboard_node` — HTTP + WebSocket server, vendored web UI |
@@ -84,8 +85,8 @@ split.
 
 | Topic | Type | Publisher | QoS | Notes |
 | --- | --- | --- | --- | --- |
-| `/image_raw/compressed` | `sensor_msgs/CompressedImage` | `camera_node` | RELIABLE, KEEP_LAST(1) | The only topic on the LAN. MJPEG straight from V4L2, never re-encoded |
-| `/camera_info` | `sensor_msgs/CameraInfo` | `camera_node` | RELIABLE, KEEP_LAST(1), transient local | Real intrinsics from calibration, not defaults |
+| `/image_raw/compressed` | `sensor_msgs/CompressedImage` | `camera_node` | RELIABLE, KEEP_LAST(1) | **live** — the only topic on the LAN. MJPEG straight from V4L2, never re-encoded |
+| `/camera_info` | `sensor_msgs/CameraInfo` | `camera_node` | RELIABLE, KEEP_LAST(1), transient local | **live, but K is all zeros** — there is no calibration yet, and zeros are the honest signal for that |
 | `/rgb/image` | `sensor_msgs/Image` (bgr8) | `decode_node` | RELIABLE, KEEP_LAST(1) | Intra-process only. Never crosses the network |
 | `/keypoints` | `pimesh_msgs/Keypoints` | `keypoint_node` | RELIABLE, KEEP_LAST(1) | Positions, descriptors, match ids for the frame |
 | `/keypoints/image/compressed` | `sensor_msgs/CompressedImage` | `keypoint_node` | BEST_EFFORT, KEEP_LAST(1) | Annotated preview for the dashboard. Small, droppable |
