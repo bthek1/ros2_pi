@@ -43,6 +43,31 @@ enum class TimestampSource
 
 const char * to_string(TimestampSource source);
 
+/// Which clock the driver stamped a buffer against, from its flags.
+TimestampSource timestamp_source_from_flags(uint32_t buffer_flags);
+
+/// Convert a buffer's CLOCK_MONOTONIC capture time to the system clock, given
+/// a pair of clock readings taken at (very nearly) the same instant.
+///
+/// This is the whole timestamp story in one line, and it is a free function so
+/// it can be tested without a camera.
+///
+/// The offset is a property of the two clocks *now*, so it is sampled per
+/// frame, microseconds after the buffer is dequeued. usb_cam 0.8.1 computes an
+/// equivalent offset ONCE per process and gets it wrong besides — it writes
+/// `tv_sec * 1000000 + tv_usec / 1000.0`, mixing microseconds and
+/// milliseconds, so the result is short by roughly the microsecond field of the
+/// wall clock at node start. That is uniform in 0-1 s, redrawn at every launch,
+/// and then constant for the life of the process: the reason every stamp it
+/// emits sits a random sub-second amount in the past.
+///
+/// Sampling per frame has no epoch to get wrong and nothing to drift.
+constexpr int64_t to_system_clock_ns(
+  int64_t buffer_monotonic_ns, int64_t monotonic_now_ns, int64_t realtime_now_ns)
+{
+  return buffer_monotonic_ns + (realtime_now_ns - monotonic_now_ns);
+}
+
 /// RAII: the device is opened in the constructor and released in the
 /// destructor. Every failure throws std::runtime_error with the operation and
 /// errno spelled out — a camera consumer that idles instead of failing is the

@@ -47,6 +47,15 @@ std::string fourcc(uint32_t f)
 
 }  // namespace
 
+TimestampSource timestamp_source_from_flags(uint32_t buffer_flags)
+{
+  switch (buffer_flags & V4L2_BUF_FLAG_TIMESTAMP_MASK) {
+    case V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC: return TimestampSource::Monotonic;
+    case V4L2_BUF_FLAG_TIMESTAMP_COPY: return TimestampSource::Copy;
+    default: return TimestampSource::Unknown;
+  }
+}
+
 const char * to_string(TimestampSource source)
 {
   switch (source) {
@@ -296,14 +305,7 @@ bool V4l2Capture::wait_frame(Frame & frame, int timeout_ms)
   ::clock_gettime(CLOCK_MONOTONIC, &mono);
   ::clock_gettime(CLOCK_REALTIME, &real);
 
-  const uint32_t stamp_flags = buf.flags & V4L2_BUF_FLAG_TIMESTAMP_MASK;
-  if (stamp_flags == V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC) {
-    timestamp_source_ = TimestampSource::Monotonic;
-  } else if (stamp_flags == V4L2_BUF_FLAG_TIMESTAMP_COPY) {
-    timestamp_source_ = TimestampSource::Copy;
-  } else {
-    timestamp_source_ = TimestampSource::Unknown;
-  }
+  timestamp_source_ = timestamp_source_from_flags(buf.flags);
 
   const int64_t mono_ns = static_cast<int64_t>(mono.tv_sec) * 1000000000LL + mono.tv_nsec;
   const int64_t real_ns = static_cast<int64_t>(real.tv_sec) * 1000000000LL + real.tv_nsec;
@@ -312,7 +314,7 @@ bool V4l2Capture::wait_frame(Frame & frame, int timeout_ms)
     static_cast<int64_t>(buf.timestamp.tv_usec) * 1000LL;
 
   if (timestamp_source_ == TimestampSource::Monotonic) {
-    frame.stamp_ns = buf_ns + (real_ns - mono_ns);
+    frame.stamp_ns = to_system_clock_ns(buf_ns, mono_ns, real_ns);
   } else {
     // No trustworthy capture time: stamp on arrival and let the node warn.
     frame.stamp_ns = real_ns;

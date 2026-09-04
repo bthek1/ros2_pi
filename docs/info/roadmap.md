@@ -1,10 +1,12 @@
 # Roadmap
 
-Status as of **2026-09-02**. The build order and per-phase tests live in
+Status as of **2026-09-04**. The build order and per-phase tests live in
 [../plans/in-progress/bootstrap-plan.md](../plans/in-progress/bootstrap-plan.md);
 this page is the one-line status view. Milestones map to plan phases: M1 = P0,
 M2 = P1, and so on through M9 = P8, plus **M11 = P9**. M10 is not a phase — it
-is the loop-closure work, still deferred.
+is the loop-closure work, still deferred. **P10 has no milestone**: it is the
+test layer, and the Tests section below is its status line — a layer the other
+milestones are built with, not a step on the way to a mesh.
 
 | # | Milestone | Status |
 | --- | --- | --- |
@@ -20,6 +22,15 @@ is the loop-closure work, still deferred.
 | M9 | `dashboard_node` — the web view | not started |
 | M10 | Loop closure + pose graph + volume rebuild | not started — deferred, not a phase |
 | M11 | The Pi's configuration as code: `ansible/`, applied and idempotent (**P9**) | **done 2026-09-02** — `just gate-provision` PASS, first apply 11 changes then 0 |
+
+## Tests
+
+Separate from the milestones, because they are a layer rather than a step: **23
+cases pass on both machines** as of 2026-09-04 — 10 gtest in `pimesh_camera`
+(timestamp arithmetic and failure paths) and 13 pytest for the gate tools.
+(`colcon test-result` reports 11 for the gtest package; it counts the binary
+itself alongside its cases.)
+`just test`, `just test-pi`, and [testing.md](testing.md) for what each covers.
 
 ## What "done" means here
 

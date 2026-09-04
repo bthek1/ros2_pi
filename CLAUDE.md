@@ -33,6 +33,9 @@ idempotent), and **the Pi captures** — `pimesh_camera` publishes
 container launches empty. Everything else in `docs/` is still **design intent**,
 not a description of running code.
 
+**23 test cases pass on both machines** — 10 gtest, 13 pytest (`just test`,
+`just test-pi`) — alongside the three gates — see [docs/info/testing.md](docs/info/testing.md).
+
 **This repo now owns the Pi's configuration.** Its login shells source
 `~/ros2_pi/install`, not the predecessor's workspace, and
 `~/Documents/piros2/ansible` must not be run against it again.
@@ -247,6 +250,20 @@ strong priors, re-verify before quoting a number as this project's own.
   check both hosts are clean before reporting. **A leaked camera process holds
   `/dev/video0` exclusively** and every later session dies with
   `Device or resource busy`.
+- **Tests and gates are different things, and both are required.** A *test*
+  answers "is this logic right", needs no hardware, runs in under a second, and
+  lives beside the code (`ament_cmake_gtest`; `tools/test_*.py` for the repo's
+  own tools). A *gate* answers "does the real system do what we claim", needs
+  the camera and both machines, and closes a plan phase. Full account:
+  [docs/info/testing.md](docs/info/testing.md).
+  - **If logic is hard to test, that is a fact about the code, not the tests.**
+    The timestamp conversion moved out of a 90-line method that needs a camera
+    into a free function so it could be tested at all; the refactor was worth
+    more than the tests.
+  - **A suite that has never failed is not evidence.** Break the thing it
+    covers, watch it go red, put it back.
+  - **`just test-pi` runs the same cases under Jazzy on aarch64.** A test that
+    has only run on Lyrical says nothing about the machine that runs the camera.
 - **Claims are closed by scripts, not by eyes.** A gate names its evidence: a
   number on a topic, a log line with a threshold, a rendered image file. Reserve
   "needs a human" for the physical world — a tape-measure scale check, exposure
@@ -306,6 +323,7 @@ somebody once.
 | [docs/info/hardware.md](docs/info/hardware.md) | Measured specs of both machines, the camera, and the GPU |
 | [docs/info/setup.md](docs/info/setup.md) | Getting both machines to build and run this, including the GPU stack |
 | [docs/info/ansible.md](docs/info/ansible.md) | Provisioning the Pi: what the playbook owns, what the justfile owns, and the traps |
+| [docs/info/testing.md](docs/info/testing.md) | The two layers — unit tests vs gates — what is covered today, and how to add a case |
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause, mostly inherited and worth reading before debugging |
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones and their status |
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: stable phases, a command for a test, executable-only, and the future file |

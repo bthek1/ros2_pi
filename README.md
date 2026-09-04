@@ -46,6 +46,8 @@ same pipeline on the same hardware.
 just build            # dev box
 just build-pi         # sync + build on the Pi
 just provision        # apply the playbook to the Pi
+just test             # gtest + pytest, ~1 s
+just test-pi          # the same tests under Jazzy on the Pi
 just gate-build       # the P0 gate
 just gate-provision   # the P9 gate
 just stragglers       # sweep both machines
@@ -103,6 +105,7 @@ Measured on this hardware, via the predecessor:
 | [docs/info/hardware.md](docs/info/hardware.md) | Measured specs of both machines and the camera |
 | [docs/info/setup.md](docs/info/setup.md) | Getting both machines to build and run this |
 | [docs/info/ansible.md](docs/info/ansible.md) | Provisioning the Pi — the playbook owns the machine, the justfile owns the code |
+| [docs/info/testing.md](docs/info/testing.md) | Unit tests vs gates: what each is for, what is covered, how to add one |
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause |
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones |
 | [docs/plans/README.md](docs/plans/README.md) | How plans are written here: stable phases, a command for a test, executable phases only |

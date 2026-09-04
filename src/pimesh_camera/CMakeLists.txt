@@ -56,4 +56,15 @@ install(TARGETS camera_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
 
+if(BUILD_TESTING)
+  # Tests run on BOTH machines, and the dev box has no camera — so nothing here
+  # may require a device. What is covered is the timestamp arithmetic (this
+  # package's most consequential logic, extracted into free functions so it can
+  # be tested at all) and the failure paths, which matter most and would
+  # otherwise only ever be exercised by accident.
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_v4l2_capture test/test_v4l2_capture.cpp)
+  target_link_libraries(test_v4l2_capture v4l2_capture)
+endif()
+
 ament_package()

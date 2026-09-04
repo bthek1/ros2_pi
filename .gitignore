@@ -24,3 +24,7 @@ maps/
 compile_commands.json
 *.swp
 .DS_Store
+
+# pytest bytecode for the repo tools
+__pycache__/
+.pytest_cache/

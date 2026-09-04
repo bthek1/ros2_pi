@@ -69,7 +69,10 @@ build-pi: sync-pi
         colcon build --symlink-install --packages-select {{pi_pkgs}} 2>&1 | tail -5
     '"
 
-# colcon test on the dev box.
+# Two suites: the packages' own gtest via colcon, and pytest for the gate tools
+# in tools/, which are not a ROS package and so are invisible to colcon.
+#
+# Run every test on the dev box.
 [group('test')]
 test *args:
     #!/usr/bin/env bash
@@ -77,7 +80,26 @@ test *args:
     export PATH="/usr/bin:${PATH}"
     source "{{ros}}/setup.bash"
     cd "{{ws}}"
-    colcon test {{args}} && colcon test-result --verbose
+    rc=0
+    echo "── colcon ──"
+    colcon test {{args}} || rc=1
+    colcon test-result || rc=1
+    echo "── pytest (tools/) ──"
+    python3 -m pytest tools/ -q || rc=1
+    exit "${rc}"
+
+# The same tests under the OTHER distro and compiler. A test that has only ever
+# run on Lyrical says nothing about the machine that actually runs the camera.
+[group('test')]
+test-pi: build-pi
+    #!/usr/bin/env bash
+    set -eo pipefail
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc '
+        source {{pi_ros}}/setup.bash
+        cd {{pi_ws}}
+        colcon test --packages-select {{pi_pkgs}} 2>&1 | tail -3
+        colcon test-result
+    '"
 
 # ----------------------------------------------------------------- run -----
 

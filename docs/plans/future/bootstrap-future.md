@@ -165,6 +165,31 @@ alongside the light level it was taken under.
 
 ---
 
+## Turning on the `ament_lint_auto` linters
+
+**What.** `ament_copyright`, `ament_cpplint` and `ament_uncrustify` over `src/`,
+wired the usual way — `ament_lint_auto_find_test_dependencies()` inside each
+package's `BUILD_TESTING` block, so `just test` fails on a style regression the
+way it fails on a broken test.
+
+**Why not now.** P10 removed the `ament_lint_auto` / `ament_lint_common`
+`test_depend` declarations that had sat in all three `package.xml` files since
+P0 without anything invoking them, rather than leave a claim the build did not
+keep. Turning them on is a different change and a real one: `ament_copyright`
+wants a licence header on every file and a `LICENSE` in every package, and
+`uncrustify` would reformat code that is currently readable and heavily
+commented. Doing that as a side effect of adding the first real tests would have
+buried ten genuine test cases under a few hundred lines of reflow.
+
+**Trigger.** P2–P8 complete — the point at which the code stops being rewritten
+weekly, so a one-time reformat is paid once instead of colliding with every
+phase — or a second person writing C++ here, whichever comes first. The
+measurement to take before deciding is `ament_uncrustify src/` in check-only
+mode: the count of files it would rewrite is the actual price, and it has never
+been looked at.
+
+---
+
 ## Retired
 
 Nothing yet. When an entry's trigger can no longer fire — the hardware went

@@ -29,6 +29,12 @@ prints the measured mean and p95.
 
 - The test recipe is written **in the same change as the phase's code**, not
   afterwards. A phase without a runnable test is not finished.
+- **A phase's test is a *gate*, and a gate is not a unit test.** It exercises
+  the real system — the camera, the link, both machines — and takes minutes.
+  Unit tests are a separate and also-required layer, added alongside whatever
+  logic the phase introduces that can be tested without hardware, and run by
+  `just test`. Neither substitutes for the other:
+  [../info/testing.md](../info/testing.md).
 - The test names its own evidence: a number on a topic, a log line with a
   threshold, or a rendered image file it wrote. A screenshot is not evidence, and
   neither is a viewer window.

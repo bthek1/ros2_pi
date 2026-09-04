@@ -139,6 +139,8 @@ just cam                # run the Pi's camera (just cam 30 bounds it at 30 s)
 just camera             # every V4L2 control, current vs default
 just camera-reset       # restore the C922's known-good baseline
 just pipeline           # the dev-box container (empty until P2)
+just test               # gtest + pytest on the dev box
+just test-pi            # the same gtest cases under Jazzy
 just gate-build         # the P0 gate
 just gate-capture       # the P1 gate
 just gate-provision     # the P9 gate

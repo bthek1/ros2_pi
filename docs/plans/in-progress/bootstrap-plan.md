@@ -1,6 +1,6 @@
 # Bootstrap plan — one webcam to a live mesh, in C++
 
-**Started 2026-09-01. Last updated 2026-09-02.** The build order for the whole
+**Started 2026-09-01. Last updated 2026-09-04.** The build order for the whole
 pipeline.
 
 Written to the rules in [../README.md](../README.md): **stable phase numbers**,
@@ -9,9 +9,11 @@ executable** — startable the moment the plan reaches it, with nothing to wait
 for. Work that is not executable yet lives in
 [../future/bootstrap-future.md](../future/bootstrap-future.md), never here.
 
-Each phase's test recipe is written **in the same change as its code**. Only
-`just gate-build` exists so far; every other recipe named below is written by
-the phase that needs it.
+Each phase's test recipe is written **in the same change as its code**.
+`just gate-build`, `just gate-capture` and `just gate-provision` exist; every
+other recipe named below is written by the phase that needs it. Alongside them,
+`just test` and `just test-pi` run the unit tests — a separate layer, built at
+P10 and described in [../../info/testing.md](../../info/testing.md).
 
 The predecessor [`~/Documents/piros2`](../../../../piros2) already does all of
 this in Python. **It is the reference and the yardstick** — where a number exists
@@ -35,18 +37,21 @@ date and what the test printed).
 | **P7** | 6-DoF odometry | `just gate-odom` | ☐ |
 | **P8** | `dashboard_node` | `just gate-dashboard` | ☐ |
 | **P9** | `ansible/` — the Pi's configuration as code | `just gate-provision` | **✓ 2026-09-02** — PASS ×2, idempotent (11 → 0) |
+| **P10** | Unit tests and the recipes that run them | `just test`, `just test-pi` | **✓ 2026-09-04** — 0 failures: 10 gtest on both machines, 13 pytest here |
 
-**3 of 10 phases done.** No phase has been abandoned or rescoped; no entry has
+**4 of 11 phases done.** No phase has been abandoned or rescoped; no entry has
 been promoted out of
 [../future/bootstrap-future.md](../future/bootstrap-future.md) yet.
 
-**Phase numbers are identities, not an execution order.** P9 was added on
-2026-09-02 and **executed the same day, ahead of P1** — it put the Pi's
-toolchain and environment under version control before P1 started building
-against them. **Next is P2.** Rule 1 says a plan never grows a phase in the middle, so it is
-appended at the next unused number and the table's Status column carries the
-ordering. That is the rule working, not a wart: "P1" still means the same thing
-it meant yesterday.
+**Phase numbers are identities, not an execution order.** Twice now a phase has
+been written after the ones that follow it and executed before them: P9 on
+2026-09-02, ahead of P1, putting the Pi's toolchain under version control before
+P1 built against it; and P10 on 2026-09-04, ahead of P2, so that every phase
+from P2 on inherits a place to put a unit test instead of inventing one.
+**Next is P2.** Rule 1 says a plan never grows a phase in the middle, so both
+were appended at the next unused number and the table's Status column carries
+the ordering. That is the rule working, not a wart: "P1" still means the same
+thing it meant yesterday.
 
 ## House rules for gate recipes
 
@@ -66,6 +71,14 @@ one without them repeats a debugging session that has already happened.
   the session tore itself down; `just stragglers` is the sweep.
 - **Every gate prints its numbers**, passing or failing, so a run is evidence
   on its own and not just a green tick.
+- **Measure each quantity on the machine where it is unambiguous.** P1's gate
+  got this wrong twice in a row: rate measured on the dev box charges the node
+  for Wi-Fi loss, and stamp age measured across two hosts carries their clock
+  offset. Cross-machine numbers get printed, not asserted.
+- **A phase also brings unit tests** for whatever logic it adds that can be
+  tested without hardware, run by `just test` and `just test-pi` —
+  [../../info/testing.md](../../info/testing.md). The gate is not a substitute
+  for them, nor they for it.
 
 ---
 
@@ -201,6 +214,15 @@ rather than on the dev box. The dev-box figures are printed, not asserted.
 - **`ament_target_dependencies` no longer exists in Lyrical** but is still
   present in Jazzy. Namespaced targets (`rclcpp::rclcpp`, `${sensor_msgs_TARGETS}`)
   exist in both, so that is what a package building under two distros must use.
+- **Tests, added 2026-09-04:** 10 gtest cases in `pimesh_camera` and 13 pytest
+  cases for `tools/check_capture.py`, passing on both machines (`just test`,
+  `just test-pi`). Getting them written moved the timestamp conversion out of
+  `wait_frame` — which needs a camera — into the free function
+  `to_system_clock_ns`, which does not; **that refactor was worth more than the
+  tests**. One case reproduces the usb_cam epoch bug in arithmetic and shows it
+  landing 0.72 s late; another feeds its measured 0.223/0.362 s offsets to the
+  gate's own assertions and checks the gate fails. The suite was mutation-checked
+  (a 1 ms error turns 4 of 10 cases red).
 - **`camera_info_manager` was dropped**, not added: it is not installed on the
   dev box, and at P1 it would only have served zeros. `CameraInfo` is published
   with **K all zeros** and a startup warning — deferred with a trigger in
@@ -490,3 +512,128 @@ entry with a trigger in
   (`— ROS 2 jazzy environment`) while the predecessor's tree had moved to
   distro-free markers. The legacy-sweep loop this role inherited is what made
   the hand-off a replacement rather than a second block.
+
+---
+
+## ✓ P10 — Tests, and one command that runs them
+
+**Done 2026-09-04.** `just test` — 10 gtest cases in `pimesh_camera` and 13
+pytest cases for the gate tools, 0 failures — and `just test-pi`, the same gtest
+cases under Jazzy on aarch64, 0 failures. Reference:
+[../../info/testing.md](../../info/testing.md).
+
+**Added 2026-09-04, and executed ahead of P2**, for the same reason P9 was
+executed ahead of P1: it is machinery the phases after it depend on, and the
+cost of adding it later is that the phases in between quietly do without.
+Numbered 10 because rule 1 forbids growing a plan in the middle.
+
+**Goal:** a phase that adds testable logic has somewhere to put a test and one
+command that runs it, on **both** machines — and that command exits non-zero
+when something is wrong.
+
+Before this phase, it did not. All three `package.xml` files declared
+`ament_lint_auto` and `ament_lint_common` as `test_depend`, no `CMakeLists.txt`
+had a `BUILD_TESTING` block, and `colcon test` reported **`3 packages finished`,
+`0 tests`** — a green result that asserted nothing. A `test_depend` that names
+nothing which runs is decoration, and a test command that passes on an empty
+suite is worse than no test command: it answers the question "is this covered?"
+with a tick.
+
+The **gate recipes are not this layer and do not replace it**. A gate exercises
+the real system across two machines and a radio link and takes minutes; when one
+fails it tells you *something* is wrong in a system with a dozen candidates.
+Unit tests are what make that bisectable. The distinction is now written into
+rule 2 of [../README.md](../README.md), so every later phase inherits it.
+
+**Work**
+
+- **`if(BUILD_TESTING)` in `pimesh_camera`**, with `ament_cmake_gtest` and
+  `ament_add_gtest(test_v4l2_capture test/test_v4l2_capture.cpp)` linking
+  `v4l2_capture` — the ROS-free half of the package, which is a separate CMake
+  target precisely so a test can link it without spinning a node.
+  `<test_depend>ament_cmake_gtest</test_depend>` replaces the two lint
+  declarations; the same unused declarations come out of `pimesh_msgs` and
+  `pimesh_bringup`, which have no compiled logic to test.
+- **A refactor, which was the real deliverable.** The stamp conversion was three
+  lines inside `wait_frame`, a 90-line method that needs a camera, so it could
+  not be tested at all. It is now the free function `to_system_clock_ns`, with
+  `timestamp_source_from_flags` beside it, and the reasoning about usb_cam's
+  epoch bug written above it. **If logic is hard to test, that is a fact about
+  the code** — the extraction was worth more than the cases it enabled.
+- **`src/pimesh_camera/test/test_v4l2_capture.cpp`** — 10 cases in 3 suites:
+  the offset arithmetic and that it is independent of when the clock pair was
+  sampled; the `V4L2_BUF_FLAG_TIMESTAMP_*` values restated as literals, so a
+  change in `<videodev2.h>` fails a test rather than silently changing
+  provenance; and the three failure paths (missing device, regular file,
+  non-V4L2 character device) each throwing with the path and errno.
+  One case, `DoesNotReproduceTheUsbCamEpochBug`, reproduces the inherited bug
+  in arithmetic and shows it landing ~0.72 s late where ours is exact.
+- **`tools/test_check_capture.py`** — 13 cases. `check_capture.py` is what
+  decides whether P1 passes, so it is tested like anything else that can say
+  "everything is fine": a healthy run passes, a third of the frames dropped
+  fails, a 3% sampling difference does *not* fail (or the gate cries wolf every
+  run), and feeding it usb_cam's measured 0.223 / 0.362 s offsets makes it fail.
+  One case asserts a **missing** hardware measurement fails rather than quietly
+  passing on the strength of the checks that could still run.
+- **Recipes:** `just test` runs colcon and pytest, reports **both** rather than
+  stopping at the first, and exits non-zero if either fails — `tools/` is not a
+  ROS package, so colcon cannot see it, which is why there are two passes.
+  `just test-pi` syncs, builds and runs the gtest cases on the Pi.
+- **`docs/info/testing.md`** — what each layer is for, what is covered today,
+  how to add a case, and why the linters are off.
+
+**Every test is code the Pi builds.** `just test-pi` compiles these cases under
+Jazzy with g++ 13.3.0, so the same cross-distro rules apply to a test file as to
+a node: C++17, namespaced targets, no `ament_target_dependencies`. A test that
+has only ever run on Lyrical says nothing about the machine that runs the camera.
+
+**Test:** `just test` — asserts the workspace's gtest cases and the `tools/`
+pytest cases all pass on the dev box; prints `colcon test-result`'s count and
+pytest's, and exits non-zero if either suite fails. Then `just test-pi` — the
+same gtest cases under the other distro and compiler, printing its own count.
+Neither may require hardware: **the moment a test needs a device it is a gate**,
+and belongs in a `gate-*` recipe instead.
+
+**A suite that has never failed is not evidence.** The claim that these tests
+would catch a regression is closed by breaking the thing they cover and watching
+them go red — done here, and recorded below. Every later phase's tests carry the
+same obligation.
+
+**Not in scope:** the `ament_lint_auto` linters (`copyright`, `cpplint`,
+`uncrustify`). `ament_copyright` wants a header on every file and a `LICENSE` in
+every package, and `uncrustify` would reformat code that is currently readable;
+that is a deliberate change in its own commit, not a side effect of adding the
+first real tests. Deferred with a trigger in
+[../future/bootstrap-future.md](../future/bootstrap-future.md). Also not in
+scope: node-level `launch_testing` tests — there is one node and it needs a
+camera, so there is nothing yet for a launch test to assert that the P1 gate
+does not. P2 brings the first node that can be tested without hardware.
+
+### What happened
+
+- **Built:** the `BUILD_TESTING` block and `test/test_v4l2_capture.cpp` in
+  `pimesh_camera`, `tools/test_check_capture.py`, the `just test` and
+  `just test-pi` recipes, and `docs/info/testing.md`. Rule 2 in
+  [../README.md](../README.md) gained the gate-vs-test distinction, and the
+  house rules above gained the bullet that every phase brings unit tests.
+- **Measured:** `just test` → `Summary: 11 tests, 0 errors, 0 failures,
+  0 skipped` from colcon and `13 passed in 0.40s` from pytest, in about a
+  second. `just test-pi` → `Summary: 11 tests, 0 errors, 0 failures, 0 skipped`
+  under Jazzy on aarch64.
+- **`colcon test-result` says 11 where gtest says 10**, and the difference is
+  not a missing case: it aggregates two XML files, the gtest report with its 10
+  cases and CTest's own record of having run the binary. `colcon test-result
+  --all` prints them separately and is worth remembering before hunting for an
+  eleventh test that does not exist.
+- **Mutation-checked.** Adding 1 ms to `to_system_clock_ns` turns 4 of the 10
+  cases red; removing it turns them green again. That is the only reason to
+  believe the suite covers what it claims to.
+- **The lint declarations were removed rather than left.** They had been in
+  every `package.xml` since P0, generated by `ros2 pkg create` and never
+  invoked. Deleting a `test_depend` that names nothing which runs is not a loss
+  of coverage — there was none — it is the file stopping making a claim it did
+  not keep.
+- **The refactor came out of trying to write the test, not the other way
+  round.** Nothing about `wait_frame` looked wrong until something had to call
+  its arithmetic without a camera attached, at which point the three lines that
+  matter were visibly buried in ninety that do not.
