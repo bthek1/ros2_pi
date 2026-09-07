@@ -29,8 +29,8 @@ date and what the test printed).
 | --- | --- | --- | --- |
 | **P0** | `pimesh_msgs`, `pimesh_bringup`, the justfile | `just gate-build` | **✓ 2026-09-01** — PASS ×3, both machines clean (`b96f63c`) |
 | **P1** | `camera_node` on the Pi | `just gate-capture` | **✓ 2026-09-02** — PASS ×2, 0.00 ms stamp drift |
-| **P2** | `decode_node` + the container | `just gate-ipc` | ☐ **next** |
-| **P3** | `keypoint_node`, `bags/desk1` | `just gate-keypoints` | ☐ |
+| **P2** | `decode_node` + the container | `just gate-ipc` | **✓ 2026-09-04** — PASS ×2, 10/10 frames at the same address |
+| **P3** | `keypoint_node`, `bags/desk1` | `just gate-keypoints` | ☐ **next** |
 | **P4** | `depth_node` on the GPU | `just gate-depth` | ☐ |
 | **P5** | `fusion_node` (TSDF) | `just gate-fusion` | ☐ |
 | **P6** | `mesh_node` (marching cubes) | `just gate-mesh` | ☐ |
@@ -39,7 +39,7 @@ date and what the test printed).
 | **P9** | `ansible/` — the Pi's configuration as code | `just gate-provision` | **✓ 2026-09-02** — PASS ×2, idempotent (11 → 0) |
 | **P10** | Unit tests and the recipes that run them | `just test`, `just test-pi` | **✓ 2026-09-04** — 0 failures: 10 gtest on both machines, 13 pytest here |
 
-**4 of 11 phases done.** No phase has been abandoned or rescoped; no entry has
+**5 of 11 phases done.** No phase has been abandoned or rescoped; no entry has
 been promoted out of
 [../future/bootstrap-future.md](../future/bootstrap-future.md) yet.
 
@@ -48,7 +48,7 @@ been written after the ones that follow it and executed before them: P9 on
 2026-09-02, ahead of P1, putting the Pi's toolchain under version control before
 P1 built against it; and P10 on 2026-09-04, ahead of P2, so that every phase
 from P2 on inherits a place to put a unit test instead of inventing one.
-**Next is P2.** Rule 1 says a plan never grows a phase in the middle, so both
+**Next is P3.** Rule 1 says a plan never grows a phase in the middle, so both
 were appended at the next unused number and the table's Status column carries
 the ordering. That is the rule working, not a wart: "P1" still means the same
 thing it meant yesterday.
@@ -230,7 +230,14 @@ rather than on the dev box. The dev-box figures are printed, not asserted.
 
 ---
 
-## ☐ P2 — The container, and proving intra-process
+## ✓ P2 — The container, and proving intra-process
+
+**Done 2026-09-04.** `just gate-ipc` PASS, twice: **10 of 10 frames arrived at
+the address they were published at**, the same runs with `intra_process:=false`
+produced **10 of 10 differing** addresses, `/image_raw/compressed` had exactly
+**one** subscriber, and decode ran at **30.00 Hz for 1.88 ms mean / 2.41 ms
+p95** against a ~4 ms target. What it changed, and the two bugs it found, is
+annotated at the end.
 
 **Goal:** one network subscriber, one decode, zero copies downstream.
 
@@ -238,8 +245,8 @@ rather than on the dev box. The dev-box figures are printed, not asserted.
 
 - `pimesh_perception/decode_node`: subscribe `/image_raw/compressed`,
   `cv::imdecode`, publish `bgr8` intra-process.
-- The bringup container with `use_intra_process_comms=True`, and a temporary
-  probe component that logs the address of the buffer it received.
+- The bringup container with `use_intra_process_comms=True`, and a probe
+  component that logs the address of the buffer it received.
 
 **Test:** `just gate-ipc` — asserts the probe's received-buffer address **equals**
 the publisher's (a serialised path cannot produce that), and that
@@ -248,6 +255,64 @@ Prints both addresses and the subscriber count.
 
 The single-subscriber assertion is the Wi-Fi constraint the whole architecture is
 shaped around — see [../../info/architecture.md](../../info/architecture.md#why-one-container).
+
+### What happened
+
+- **Built:** `pimesh_perception` — `decode_node` (component + standalone
+  `decode_node` executable), `ipc_probe_node`, and the ROS-free half the tests
+  reach: `Mailbox<T>` and `decode_bgr8`. The container gained `decode_node` and
+  three launch arguments: `probe`, and `intra_process` for the control run.
+  `tools/check_ipc.py` holds the assertions, with 18 pytest cases of its own.
+
+- **The gate proves the negative as well as the positive.** An address
+  comparison that has only ever been seen to pass is not evidence that it can
+  fail — and address *reuse* is visible in every one of these logs, the
+  allocator handing the same block back frame after frame, so matching
+  addresses could in principle be luck. So the gate runs the container a second
+  time with `intra_process:=false` and requires the addresses to **differ**.
+  They do, and the serialised path is ~1.4 ms slower per frame in the log
+  timestamps against ~50 µs for the shared one.
+
+- **Bug found by a unit test, before the node existed.** `cv::imdecode`'s
+  three-argument form leaves its destination **untouched** when a decode fails
+  — still holding the previous frame — so the obvious `!bgr.empty()` check
+  reports success on a corrupt buffer. A node trusting it would have
+  republished the last good image with a fresh timestamp: a frozen picture that
+  every downstream stage and every rate check reads as live. Over Wi-Fi, where
+  truncated frames are routine, that would have been a permanent low-grade
+  fault nobody could see. Read the **return value**, not the destination.
+
+- **Bug found by the gate's first run, in the gate itself.**
+  **`/pipeline/stats` is shared by every node**, keyed by the `stage` field, so
+  `ros2 topic echo --once` returns whichever stage published first — the
+  camera. The gate asserted the *camera's* 59 Hz and 0.26 ms as if they were
+  decode's, and they passed every threshold. Selecting by stage is the only way
+  to read that topic; the selection now lives in `check_ipc.py` with tests, not
+  in a `grep | tail -1`.
+
+- **`ros2 launch` can hang forever on SIGINT, and it is not our code.** Roughly
+  one run in three (measured: 1 of 2 consecutive runs, same command) its signal
+  handler prints `This event loop is already running`, never signals its
+  children, and never exits — and `timeout -s INT` without `-k` then waits
+  forever with it, so the *gate* hangs instead of failing. Every `ros2 launch`
+  in the justfile now carries `timeout -s INT -k <grace>`: SIGINT for an
+  orderly shutdown, SIGKILL as a backstop. The gate reports which one was
+  needed and still hard-asserts that nothing survived on either machine. This
+  was a latent hang in `gate-build`, `gate-capture` and `just cam` too, and
+  they were fixed in the same change.
+
+- **Measured, and better than budgeted:** decode is **1.88–2.07 ms mean and
+  2.41–2.56 ms p95** at 1280×720, against the ~4 ms target inherited from the
+  predecessor. Zero mailbox drops and zero undecodable frames over the gate's
+  runs — decode keeps up with the camera comfortably, which is what makes it
+  safe to hang the rest of the pipeline off it.
+
+- **The one copy that remains is at the message boundary**, not between stages:
+  `cv::Mat` owns its pixels and the message must own its bytes, so the worker
+  memcpys ~2.7 MB into the outgoing `Image`. Decoding straight into the
+  message's `data` buffer is possible and was deliberately not done — it needs
+  the frame size known in advance, and OpenCV silently reallocates elsewhere if
+  it guesses wrong, which would publish a buffer nobody wrote to.
 
 ---
 

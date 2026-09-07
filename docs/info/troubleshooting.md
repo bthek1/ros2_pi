@@ -182,3 +182,43 @@ The file is keyed by **node name**, and a key that does not match applies
 nothing — silently, with no warning. Check the node's actual name (`ros2 node
 list`) against the top-level key. This trap has cost real time in the
 predecessor project more than once.
+
+## A gate hangs forever instead of finishing
+
+**`ros2 launch` has a race in its SIGINT handler.** Roughly one run in three it
+prints `This event loop is already running`, never signals its children, and
+never exits. A `timeout -s INT` with no `-k` then waits for it forever, so the
+gate hangs rather than fails — and if you kill the gate, the launch and its
+container are orphaned. Measured 2026-09-04: 1 of 2 consecutive runs of the same
+command, with frames flowing.
+
+Every `ros2 launch` in the justfile carries `timeout -s INT -k <grace>`: SIGINT
+for an orderly shutdown, SIGKILL as a backstop. `just gate-ipc` prints which one
+was needed (`shut down on SIGINT` vs `needed the SIGKILL backstop`) and asserts
+separately that nothing survived on either machine. **Write any ad-hoc launch
+the same way** — a bare `timeout -s INT` on a launch can wedge your shell, and a
+wedged launch on the Pi holds `/dev/video0` against every later session.
+
+## `/pipeline/stats` shows the wrong stage's numbers
+
+**Every node publishes to that one topic**, keyed by the `stage` field, so
+`ros2 topic echo /pipeline/stats --once` returns whichever stage published
+first — usually the camera, because it starts first and runs fastest. The P2
+gate asserted the camera's 59 Hz and 0.26 ms as if they were decode's on its
+first run, and they passed every threshold, because they were plausible.
+
+Echo the topic for a few seconds and select on `stage:` instead. The selection
+lives in `tools/check_ipc.py` with tests, not in a `grep | tail -1`.
+
+## `/rgb/image` has no subscribers inside the container
+
+**A QoS mismatch on an intra-process pair is silent.** The publisher and
+subscriber simply never connect; there is no warning, and the topic looks alive
+because the publisher is still publishing. Both sides here are
+`RELIABLE, KEEP_LAST(1), VOLATILE`.
+
+`transient_local` is the trap worth naming: it is a reasonable-looking choice
+for an image topic, it latches the last frame for late joiners, and it **also
+disables the intra-process path**, which is the entire reason the container
+exists. If `just gate-ipc` starts reporting differing addresses, check the
+durability before anything else.

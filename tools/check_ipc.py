@@ -45,6 +45,33 @@ PUBLISHED = re.compile(r"ipc published stamp=(\d+) buffer=(0x[0-9a-f]+)")
 RECEIVED = re.compile(r"ipc received stamp=(\d+) buffer=(0x[0-9a-f]+)")
 
 
+def stats_for(stage, echo_text):
+    """Pull one stage's record out of `ros2 topic echo /pipeline/stats`.
+
+    **/pipeline/stats is shared by every node in the pipeline**, keyed by the
+    `stage` field, so `--once` on it returns whichever stage published first —
+    which on 2026-09-04 was the camera, and this gate happily asserted the
+    camera's rate and latency while calling them decode's. The numbers even
+    looked plausible. Selecting by stage is the only way to read this topic.
+
+    Returns the LAST matching record: the first window after startup is short
+    and unrepresentative.
+    """
+    found = None
+    for block in echo_text.split("---"):
+        if re.search(rf"^stage:\s*{re.escape(stage)}\s*$", block, re.MULTILINE) is None:
+            continue
+        record = {}
+        for field in ("rate_hz", "latency_ms", "latency_p95_ms",
+                      "dropped_mailbox", "dropped_transport", "processed"):
+            m = re.search(rf"^{field}:\s*([0-9.]+)\s*$", block, re.MULTILINE)
+            if m:
+                record[field] = float(m.group(1))
+        if record:
+            found = record
+    return found
+
+
 def pairs(log_text):
     """Match each published buffer with the received buffer for the same frame.
 
@@ -70,12 +97,9 @@ def main():
                    help="launch log from the CONTROL run with intra_process:=false")
     p.add_argument("--subscribers", type=int, required=True,
                    help="subscription count on /image_raw/compressed")
-    p.add_argument("--decode-hz", type=float, required=True,
-                   help="decode rate from /pipeline/stats")
-    p.add_argument("--decode-ms", type=float, required=True,
-                   help="mean decode cost from /pipeline/stats")
-    p.add_argument("--decode-failures", type=int, required=True,
-                   help="dropped_transport from /pipeline/stats — undecodable frames")
+    p.add_argument("--stats", required=True,
+                   help="captured `ros2 topic echo /pipeline/stats` output. The "
+                        "topic carries every stage; this script selects decode's")
     a = p.parse_args()
 
     ok = True
@@ -123,17 +147,28 @@ def main():
         f"unicast copy over the Pi's Wi-Fi)")
 
     # --- the stage keeps up --------------------------------------------------
+    with open(a.stats, encoding="utf-8", errors="replace") as f:
+        decode = stats_for("decode", f.read())
+
+    if decode is None:
+        check(False, "no decode record on /pipeline/stats — the stage never reported")
+        return 1
+
+    hz = decode.get("rate_hz", 0.0)
+    ms = decode.get("latency_ms", 0.0)
+    p95 = decode.get("latency_p95_ms", 0.0)
+    failures = int(decode.get("dropped_transport", 0))
+
     check(
-        a.decode_hz >= MIN_DECODE_HZ,
-        f"decode runs at {a.decode_hz:.2f} Hz >= {MIN_DECODE_HZ:.0f} Hz floor")
+        hz >= MIN_DECODE_HZ,
+        f"decode runs at {hz:.2f} Hz >= {MIN_DECODE_HZ:.0f} Hz floor")
     check(
-        0.0 < a.decode_ms <= MAX_DECODE_MEAN_MS,
-        f"decode costs {a.decode_ms:.2f} ms/frame <= {MAX_DECODE_MEAN_MS:.0f} ms")
+        0.0 < ms <= MAX_DECODE_MEAN_MS,
+        f"decode costs {ms:.2f} ms/frame mean, {p95:.2f} ms p95 "
+        f"(limit {MAX_DECODE_MEAN_MS:.0f} ms)")
     # Undecodable frames are a Wi-Fi fact, not a bug — but a decode stage that
     # fails on everything would otherwise pass every check above it.
-    check(
-        a.decode_failures == 0,
-        f"{a.decode_failures} undecodable frames")
+    check(failures == 0, f"{failures} undecodable frames")
 
     return 0 if ok else 1
 

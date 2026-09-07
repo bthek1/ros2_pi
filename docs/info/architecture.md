@@ -1,9 +1,10 @@
 # Architecture
 
-*Design intent, except where marked **built**. As of 2026-09-02 `pimesh_msgs`,
-`pimesh_bringup` and `pimesh_camera` exist and their gates pass (P0, P1, P9) —
-the Pi captures, and nothing downstream of it has been written yet. See
-[roadmap.md](roadmap.md).*
+*Design intent, except where marked **built**. As of 2026-09-04 `pimesh_msgs`,
+`pimesh_bringup`, `pimesh_camera` and `pimesh_perception` exist and their gates
+pass (P0, P1, P2, P9) — the Pi captures, the dev box decodes, and the
+container's zero-copy claim is measured rather than assumed. Nothing downstream
+of decode has been written yet. See [roadmap.md](roadmap.md).*
 
 ## The shape of it
 
@@ -65,13 +66,20 @@ publisher and subscriber with no serialisation and no copy. So:
 with `unique_ptr`/`shared_ptr` message moves, never with stack copies, or intra
 process quietly falls back to serialising.
 
+**And it is measured, not assumed.** `use_intra_process_comms=True` is a
+request; rclcpp honours it silently or ignores it silently. `just gate-ipc`
+compares the address `decode_node` published with the address the probe
+received — equal on 10 of 10 frames, and **different on 10 of 10 in a control
+run with the flag off**, which is what makes the passing run mean something.
+Measured 2026-09-04: ~50 µs publish-to-receive shared, ~1.4 ms serialised.
+
 ## Packages
 
 | Package | Build | Runs on | Contents |
 | --- | --- | --- | --- |
 | `pimesh_msgs` | `ament_cmake` (rosidl) | both | **built** — `Keypoints.msg`, `PipelineStats.msg`, `MeshStats.msg`, `SaveMesh.srv`, `ResetMap.srv` |
 | `pimesh_camera` | `ament_cmake` | **Pi** | **built** — `camera_node`: V4L2 MJPEG passthrough, per-frame capture stamps, exits non-zero on a device it cannot open |
-| `pimesh_perception` | `ament_cmake` | dev box | `decode_node`, `keypoint_node`, `depth_node` |
+| `pimesh_perception` | `ament_cmake` | dev box | **partly built** — `decode_node` (JPEG → bgr8, published zero-copy) and `ipc_probe_node`; `keypoint_node` and `depth_node` still to come |
 | `pimesh_world` | `ament_cmake` | dev box | `fusion_node` (TSDF), `mesh_node` (marching cubes, PLY export) |
 | `pimesh_dashboard` | `ament_cmake` | dev box | `dashboard_node` — HTTP + WebSocket server, vendored web UI |
 | `pimesh_bringup` | `ament_cmake` | both | **built** — `pimesh.launch.py` (the container), `frames.launch.py` (static TF), `config/pimesh.yaml`; RViz config still to come |
@@ -87,7 +95,7 @@ split.
 | --- | --- | --- | --- | --- |
 | `/image_raw/compressed` | `sensor_msgs/CompressedImage` | `camera_node` | RELIABLE, KEEP_LAST(1) | **live** — the only topic on the LAN. MJPEG straight from V4L2, never re-encoded |
 | `/camera_info` | `sensor_msgs/CameraInfo` | `camera_node` | RELIABLE, KEEP_LAST(1), transient local | **live, but K is all zeros** — there is no calibration yet, and zeros are the honest signal for that |
-| `/rgb/image` | `sensor_msgs/Image` (bgr8) | `decode_node` | RELIABLE, KEEP_LAST(1) | Intra-process only. Never crosses the network |
+| `/rgb/image` | `sensor_msgs/Image` (bgr8) | `decode_node` | RELIABLE, KEEP_LAST(1), **volatile** | **live** — intra-process, never crosses the network. Volatile is load-bearing: `transient_local` would latch the last frame for late joiners *and* disable the intra-process path |
 | `/keypoints` | `pimesh_msgs/Keypoints` | `keypoint_node` | RELIABLE, KEEP_LAST(1) | Positions, descriptors, match ids for the frame |
 | `/keypoints/image/compressed` | `sensor_msgs/CompressedImage` | `keypoint_node` | BEST_EFFORT, KEEP_LAST(1) | Annotated preview for the dashboard. Small, droppable |
 | `/depth` | `sensor_msgs/Image` (32FC1) | `depth_node` | RELIABLE, KEEP_LAST(1) | Metres. Carries the *input frame's* stamp and optical frame |
@@ -141,7 +149,7 @@ The measured per-frame budget on this hardware, from the predecessor's numbers
 
 ```
 capture + JPEG ship   ~16 ms   Pi, overlapped with everything else
-decode                 ~4 ms   dev box CPU
+decode              1.9-2.1 ms  dev box CPU  (measured 2026-09-04; ~4 ms was the target)
 ORB, 500 features      ~5 ms   dev box CPU  ─┐ these two run in parallel
 depth inference    72–79 ms    dev box GPU  ─┘ on separate threads
 TSDF integrate        ~15 ms   dev box CPU (target)

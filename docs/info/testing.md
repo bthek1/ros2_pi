@@ -1,7 +1,9 @@
 # Testing
 
-*Current as of 2026-09-04: 10 gtest cases in `pimesh_camera` and 13 pytest
-cases for the gate tools, plus three gates. All passing on both machines.*
+*Current as of 2026-09-04: 27 gtest cases (10 in `pimesh_camera`, 17 in
+`pimesh_perception`) and 31 pytest cases for the gate tools, plus four gates.
+All passing; the gtest cases run on both machines, the pytest ones on the dev
+box, where `tools/` lives.*
 
 ## Two layers, and they answer different questions
 
@@ -9,7 +11,7 @@ cases for the gate tools, plus three gates. All passing on both machines.*
 | --- | --- | --- |
 | Ask | is this logic right? | does the real system do what we claim? |
 | Need hardware | **never** | yes — camera, Wi-Fi, two machines |
-| Run with | `just test`, `just test-pi` | `just gate-build`, `just gate-capture`, `just gate-provision` |
+| Run with | `just test`, `just test-pi` | `just gate-build`, `just gate-capture`, `just gate-ipc`, `just gate-provision` |
 | Take | under a second | 1–4 minutes |
 | Live in | `src/*/test/`, `tools/test_*.py` | the justfile, one per plan phase |
 
@@ -45,7 +47,40 @@ has no camera.
   and the errno in the message. These matter most and would otherwise only be
   exercised by accident.
 
-### The gate tools — 13 cases, `tools/test_check_capture.py`
+### `pimesh_perception` — 17 cases, `src/pimesh_perception/test/`
+
+- **The mailbox (9 cases).** The pipeline's back-pressure policy: newest frame
+  wins, the unread one is dropped and counted. The cases pin the property that
+  matters — an old frame must never be delivered in preference to a new one —
+  plus the shutdown path (`close()` must wake a parked taker, or the node's
+  destructor never joins its worker), that it *moves* rather than copies (a
+  `unique_ptr` payload would not compile otherwise), and a 20 000-frame
+  producer/consumer race asserting that every frame is either delivered or
+  counted as dropped.
+- **JPEG decode (8 cases).** Exercised against JPEGs made on the spot with
+  `cv::imencode`, so nothing needs a camera. Channel order, forced 3-channel
+  output, allocation reuse — and the failure modes, which are the point: empty
+  buffers, garbage, and a truncated frame, which is what a lost Wi-Fi fragment
+  actually looks like. **One of these found a real bug before `decode_node`
+  existed:** `cv::imdecode`'s three-argument form leaves its destination
+  holding the *previous* frame on failure, so `!bgr.empty()` reports success on
+  a corrupt buffer and the node would republish a stale image with a fresh
+  timestamp.
+
+### The gate tools — 31 cases, `tools/test_check_capture.py` and `test_check_ipc.py`
+
+`check_ipc.py` (18 cases) decides whether the container is zero-copy. Its cases
+are mostly the ways it must say **no**: one serialised frame among nine shared
+still fails, a control run that *also* showed matching addresses fails (the
+check would then be incapable of failing), a probe that received nothing fails
+rather than passing vacuously on "all zero frames matched", and a second
+subscriber on the Wi-Fi topic fails. One case feeds it a real launch-log line,
+prefix and all — a log parser tested only against text the test invented proves
+nothing about the regex it is meant to pin. Another pins the bug the gate
+shipped with for exactly one run: `/pipeline/stats` carries every stage, so the
+tool must select decode's record and not the camera's.
+
+`check_capture.py` (13 cases) — the P1 gate's decision script.
 
 `check_capture.py` decides whether P1 passes, so it gets tested like anything
 else that can say "everything is fine". The cases drive its CLI and check both
@@ -62,7 +97,12 @@ rather than quietly passing on the strength of the checks that could still run.
 - **A test suite that has never failed is not evidence.** Break the thing it
   covers, watch the suite go red, put it back. Done for the timestamp
   conversion on 2026-09-04: adding 1 ms to `to_system_clock_ns` turns 4 of the
-  10 cases red, and removing it turns them green again.
+  10 cases red, and removing it turns them green again. Done for the mailbox
+  the same day: making `put()` keep the *old* value instead of the new one
+  turns `NewestValueWinsAndTheOldOneIsGone` red and nothing else, which is the
+  case named for exactly that claim. The decode and stats-parsing suites needed
+  no synthetic mutation — each caught a real bug on its first run, recorded in
+  P2's phase notes.
 - **If logic is hard to test, that is a fact about the code.** The stamp
   conversion was three lines inside a 90-line method that needs a camera; it is
   now a free function with the reasoning in a comment above it. The refactor
@@ -124,6 +164,7 @@ just test        # colcon (gtest) + pytest, dev box, ~1 s
 just test-pi     # the same gtest cases on the Pi, under Jazzy
 just gate-build      # P0: builds on both distros, interfaces identical
 just gate-capture    # P1: the camera, against real hardware
+just gate-ipc        # P2: the container is really zero-copy, both machines
 just gate-provision  # P9: the playbook is idempotent and the Pi matches
 ```
 

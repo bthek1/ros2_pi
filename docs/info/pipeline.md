@@ -97,11 +97,30 @@ stage compute confident nonsense. Loading a real calibration is deferred with a
 trigger in
 [../plans/future/bootstrap-future.md](../plans/future/bootstrap-future.md).
 
-## Stage 2 — Decode (`decode_node`, dev box)
+## Stage 2 — Decode (`decode_node`, dev box) — **built**
 
 The container's only network subscriber. `cv::imdecode` on the JPEG, publish
-`bgr8` intra-process. ~4 ms/frame **(target)**. Exists as its own component so
-that the decode happens exactly once no matter how many consumers appear.
+`bgr8` intra-process. Exists as its own component so that the decode happens
+exactly once no matter how many consumers appear.
+
+**Measured 2026-09-04 (`just gate-ipc`, ×2):** 30.00 Hz at **1.88–2.07 ms mean,
+2.41–2.56 ms p95** for 1280×720 — comfortably inside the ~4 ms target. Zero
+mailbox drops (decode keeps up with the camera) and zero undecodable frames.
+
+- The subscription callback moves a `shared_ptr` into a **one-deep mailbox** and
+  returns; a worker thread does the decode. Newest frame wins, and the mailbox
+  counts what it displaced so `dropped_mailbox` is measured rather than
+  estimated.
+- The output is published as a **`unique_ptr`**, which is what lets rclcpp hand
+  the buffer downstream instead of serialising it. `cv_bridge`'s `toImageMsg()`
+  returns a `shared_ptr` and would cost an extra copy per frame, so the message
+  is filled by hand.
+- **A failed decode is counted, never fatal.** A frame that lost a Wi-Fi
+  fragment cannot be reassembled; that is a routine event, and
+  `dropped_transport` is where it goes. Note that `cv::imdecode`'s
+  three-argument form leaves its destination holding the *previous* frame on
+  failure — read its return value, or the node republishes a stale image with a
+  fresh stamp.
 
 ## Stage 3 — Keypoints (`keypoint_node`, dev box)
 

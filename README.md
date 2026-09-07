@@ -17,8 +17,7 @@ where it pays.
 **P0 done — the workspace builds on both machines.** `pimesh_msgs` and
 `pimesh_bringup` exist and `just gate-build` passes: the same source builds
 under Lyrical here and Jazzy on the Pi, the generated interfaces are
-byte-identical across the two distros, and the static frame tree comes up. There
-are no pipeline nodes yet; the container launches empty.
+byte-identical across the two distros, and the static frame tree comes up.
 
 **P9 done — the Pi's configuration is a playbook in this repo.** `ansible/`
 provisions it and `just gate-provision` passes: idempotent (first apply changed
@@ -34,7 +33,19 @@ capture time: **5 ms** from stamp to receipt on the Pi, and **0.00 ms** of
 movement between separate launches. The driver it replaces misses that by
 0.2–1.0 s, redrawn every launch.
 
-**P2 is next**: the dev-box container, and proving intra-process comms.
+**P2 done — the container is zero-copy, and it is measured.** `decode_node`
+turns the Pi's JPEGs into `bgr8` at **30 Hz for 1.9-2.1 ms/frame**, and
+`just gate-ipc` passes: every frame arrives at the address it was published at,
+**exactly one** subscriber reads the Wi-Fi topic, and a control run with
+intra-process comms switched off produces differing addresses on every frame —
+which is what makes the passing run evidence rather than a green tick.
+
+**P10 done — tests are a layer, not an afterthought.** 58 cases, 0 failures:
+27 gtest on both machines and 31 pytest for the gate tools. Two of them found
+real bugs before the code they cover ever ran — see
+[docs/info/testing.md](docs/info/testing.md).
+
+**P3 is next**: ORB keypoints, and a recorded clip to develop against.
 
 Everything else in `docs/` is design intent.
 [docs/info/roadmap.md](docs/info/roadmap.md) tracks what has actually been
@@ -48,7 +59,11 @@ just build-pi         # sync + build on the Pi
 just provision        # apply the playbook to the Pi
 just test             # gtest + pytest, ~1 s
 just test-pi          # the same tests under Jazzy on the Pi
+just pipeline         # the dev-box container
+just cam 30           # the Pi's camera, bounded at 30 s
 just gate-build       # the P0 gate
+just gate-capture     # the P1 gate — needs the camera
+just gate-ipc         # the P2 gate — needs the camera
 just gate-provision   # the P9 gate
 just stragglers       # sweep both machines
 ```
@@ -66,6 +81,10 @@ with intra-process communication**, so the stream is read once, decoded once, an
 passed onward as a pointer. One network subscriber, no relay, no serialisation
 between stages, and the meshing library lives in the same process as the node
 that uses it.
+
+As of P2 that is measured rather than argued: the decoded frame reaches the next
+component at **the same address it was published at**, ~50 µs later, against
+~1.4 ms and a different address when intra-process comms is switched off.
 
 ## The machines
 

@@ -23,18 +23,22 @@ copy its structure wholesale: the point of the rewrite is to do in one process
 with `rclcpp` components what Python needed three processes and two interpreters
 to do.
 
-### Status: P0, P1 and P9 done — P2 next
+### Status: P0, P1, P2, P9 and P10 done — P3 next
 
-As of 2026-09-02: `pimesh_msgs` and `pimesh_bringup` build on both machines
+As of 2026-09-04: `pimesh_msgs` and `pimesh_bringup` build on both machines
 (`just gate-build`), `ansible/` provisions the Pi (`just gate-provision`,
-idempotent), and **the Pi captures** — `pimesh_camera` publishes
+idempotent), **the Pi captures** — `pimesh_camera` publishes
 `/image_raw/compressed` at up to 59 Hz with `CLOCK_MONOTONIC` capture stamps
-(`just gate-capture`). Nothing downstream of the camera exists yet: the dev-box
-container launches empty. Everything else in `docs/` is still **design intent**,
-not a description of running code.
+(`just gate-capture`) — and **the dev box decodes**: `pimesh_perception`'s
+`decode_node` runs in the container at 30 Hz for **1.9-2.1 ms/frame**, and the
+zero-copy claim is measured, not assumed (`just gate-ipc`: 10/10 frames arrive
+at the address they were published at, and 10/10 differ in a control run with
+intra-process off). Nothing downstream of decode exists yet. Everything else in
+`docs/` is still **design intent**, not a description of running code.
 
-**23 test cases pass on both machines** — 10 gtest, 13 pytest (`just test`,
-`just test-pi`) — alongside the three gates — see [docs/info/testing.md](docs/info/testing.md).
+**58 test cases pass, 0 failures** — 27 gtest (both machines) and 31 pytest
+(dev box), run by `just test` and `just test-pi` — alongside the four gates.
+See [docs/info/testing.md](docs/info/testing.md).
 
 **This repo now owns the Pi's configuration.** Its login shells source
 `~/ros2_pi/install`, not the predecessor's workspace, and
@@ -190,6 +194,22 @@ strong priors, re-verify before quoting a number as this project's own.
 - **The session is Wayland.** `rviz2` renders through GLX and needs
   `QT_QPA_PLATFORM=xcb`; it was measured working with hardware GL (4.6) on
   driver 595.84 as of 2026-08-31, so the old software-GL workaround is obsolete.
+- **`ros2 launch` can hang forever on SIGINT** (measured 2026-09-04, ~1 run in
+  3). Its handler prints `This event loop is already running`, never signals its
+  children and never exits; a bare `timeout -s INT` then waits for it forever,
+  hanging whatever it sits in, and killing that orphans the container. **Always
+  `timeout -s INT -k <grace>`** on a launch — SIGINT to shut down in order,
+  SIGKILL as a backstop — and assert separately that nothing survived. A wedged
+  launch on the Pi holds `/dev/video0` against every later session.
+- **`/pipeline/stats` is one topic shared by every stage**, keyed by the `stage`
+  field. `ros2 topic echo --once` on it returns whichever node published first
+  — normally the camera — so a check that does not select on `stage` measures
+  the wrong node and passes. It did exactly that in P2's first gate run.
+- **`transient_local` silently disables intra-process comms.** It is a
+  reasonable-looking choice for an image topic and it would undo the reason the
+  container exists. Every image topic inside the container is
+  `RELIABLE, KEEP_LAST(1), VOLATILE`, and a QoS mismatch on an intra-process
+  pair produces no warning at all — just a topic with no subscribers.
 - **The Pi's Wi-Fi link dies while the Pi keeps running** *(inherited)*. Never
   diagnose an unreachable Pi as "crashed" without evidence — `ping` first, then
   read `journalctl -b -1` after recovery. Every scripted `ssh pi` must carry

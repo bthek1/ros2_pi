@@ -35,17 +35,41 @@ def copied(n):
     return [(str(2000 + i), f"0x7f00{i:04x}", f"0x7e00{i:04x}") for i in range(n)]
 
 
-def run(tmp_path, on_pairs, off_pairs, subscribers=1, hz=30.0, ms=1.9, failures=0):
+def record(stage, hz, ms, p95=2.5, failures=0):
+    return (f"stage: {stage}\n"
+            f"rate_hz: {hz}\n"
+            f"latency_ms: {ms}\n"
+            f"latency_p95_ms: {p95}\n"
+            f"dropped_mailbox: 0\n"
+            f"dropped_transport: {failures}\n")
+
+
+def stats_echo(hz=30.0, ms=1.9, failures=0, with_capture=True):
+    """What `ros2 topic echo /pipeline/stats` actually prints: EVERY stage,
+    interleaved, separated by '---'."""
+    blocks = []
+    if with_capture:
+        # The camera's record, which is what `--once` returned on 2026-09-04
+        # and which the gate then asserted on as if it were decode's.
+        blocks.append(record("capture", 59.0, 0.26, p95=0.0, failures=3))
+    blocks.append(record("decode", hz, ms, failures=failures))
+    if with_capture:
+        blocks.append(record("capture", 58.9, 0.25, p95=0.0, failures=3))
+    return "---\n".join(blocks)
+
+
+def run(tmp_path, on_pairs, off_pairs, subscribers=1, hz=30.0, ms=1.9,
+        failures=0, stats=None):
     on = tmp_path / "on.log"
     off = tmp_path / "off.log"
+    st = tmp_path / "stats.txt"
     on.write_text(log(on_pairs))
     off.write_text(log(off_pairs))
+    st.write_text(stats if stats is not None else stats_echo(hz, ms, failures))
     return subprocess.run(
         [sys.executable, str(TOOL),
          "--log-on", str(on), "--log-off", str(off),
-         "--subscribers", str(subscribers),
-         "--decode-hz", str(hz), "--decode-ms", str(ms),
-         "--decode-failures", str(failures)],
+         "--subscribers", str(subscribers), "--stats", str(st)],
         capture_output=True, text=True)
 
 
@@ -96,14 +120,15 @@ def test_unmatched_stamps_are_not_paired(tmp_path):
     # at, so it cannot silently pair with the wrong frame.
     on = tmp_path / "on.log"
     off = tmp_path / "off.log"
+    st = tmp_path / "stats.txt"
     on.write_text(
         log(shared(6))
         + "[decode_node]: ipc published stamp=777 buffer=0xdeadbeef\n")
     off.write_text(log(copied(10)))
+    st.write_text(stats_echo())
     r = subprocess.run(
         [sys.executable, str(TOOL), "--log-on", str(on), "--log-off", str(off),
-         "--subscribers", "1", "--decode-hz", "30", "--decode-ms", "2",
-         "--decode-failures", "0"],
+         "--subscribers", "1", "--stats", str(st)],
         capture_output=True, text=True)
     assert r.returncode == 0, r.stdout
     assert "6 frames logged on both sides" in r.stdout
@@ -144,6 +169,30 @@ def test_undecodable_frames_fail(tmp_path):
     r = run(tmp_path, shared(10), copied(10), failures=7)
     assert r.returncode != 0
     assert "7 undecodable frames" in r.stdout
+
+
+def test_it_reads_decodes_record_and_not_the_cameras(tmp_path):
+    # The bug this gate shipped with for one run: /pipeline/stats carries every
+    # stage, so `--once` returned the CAMERA's 59 Hz / 0.26 ms and the gate
+    # asserted on them as decode's. They passed every threshold.
+    r = run(tmp_path, shared(10), copied(10), hz=30.0, ms=1.9)
+    assert r.returncode == 0, r.stdout
+    assert "decode runs at 30.00 Hz" in r.stdout
+    assert "59" not in r.stdout
+
+
+def test_a_stats_file_with_no_decode_record_fails(tmp_path):
+    # Decode never reported. Falling back to whatever else is on the topic is
+    # how the wrong stage got asserted on in the first place.
+    r = run(tmp_path, shared(10), copied(10),
+            stats=record("capture", 59.0, 0.26) + "---\n" + record("mesh", 0.1, 800.0))
+    assert r.returncode != 0
+    assert "never reported" in r.stdout
+
+
+def test_a_slow_decode_is_caught_even_beside_a_healthy_camera_record(tmp_path):
+    r = run(tmp_path, shared(10), copied(10), ms=25.0)
+    assert r.returncode != 0
 
 
 def test_the_measured_2026_09_04_run_passes(tmp_path):

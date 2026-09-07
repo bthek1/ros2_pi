@@ -228,7 +228,10 @@ gate-build:
       timeout 8 ros2 run tf2_ros tf2_echo camera_link camera_optical_frame \
           > "${out}/tf.log" 2>&1 || true ) &
     probe_pid=$!
-    timeout -s INT 18 ros2 launch pimesh_bringup pimesh.launch.py \
+    # -k, always, on a `ros2 launch`: its SIGINT handler has a race that leaves
+    # it hung forever roughly one run in three (measured 2026-09-04 while
+    # building the P2 gate). Without the backstop this line can hang the gate.
+    timeout -s INT -k 15 18 ros2 launch pimesh_bringup pimesh.launch.py \
         > "${out}/launch.log" 2>&1 || true
     wait "${probe_pid}" 2>/dev/null || true
     if grep -q 'Translation' "${out}/tf.log"; then
@@ -239,7 +242,7 @@ gate-build:
         tail -10 "${out}/launch.log"; fail=1
     fi
     if grep -q 'component_container_mt' "${out}/launch.log"; then
-        echo "  ok    pimesh_container up (empty until P2)"
+        echo "  ok    pimesh_container up (decode_node since P2)"
     else
         echo "  FAIL  container did not start"; fail=1
     fi
@@ -422,7 +425,9 @@ cam seconds='0' *args:
     #!/usr/bin/env bash
     set -eo pipefail
     bound=""
-    if [ "{{seconds}}" != "0" ]; then bound="timeout -s INT {{seconds}}"; fi
+    # -k: `ros2 launch` can wedge in its own SIGINT handler (see gate-ipc), and
+    # a wedged launch on the Pi holds /dev/video0 against every later session.
+    if [ "{{seconds}}" != "0" ]; then bound="timeout -s INT -k 10 {{seconds}}"; fi
     ssh {{ssh_opts}} -tt {{pi_host}} "bash -lc '${bound} ros2 launch pimesh_camera camera.launch.py {{args}}'"
 
 # Asserts: the node loses nothing against raw v4l2 on the same camera, the
@@ -467,7 +472,7 @@ gate-capture:
         # Let the previous run's DDS discovery age out; two launches racing
         # each other's teardown is not what this gate is measuring.
         sleep 3
-        ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT 45 ros2 launch pimesh_camera camera.launch.py > /tmp/cam${run}.log 2>&1'" &
+        ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT -k 10 45 ros2 launch pimesh_camera camera.launch.py > /tmp/cam${run}.log 2>&1'" &
         launch_pid=$!
         sleep 8
         # Stats first: one message, cheap, and running it last left it racing
@@ -513,7 +518,7 @@ gate-capture:
     else
         echo "  FAIL  missing device → exit ${rc} after ${took}s (want non-zero within 2-3 s)"; fail=1
     fi
-    ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT 20 ros2 launch pimesh_camera camera.launch.py > /tmp/holder.log 2>&1'" &
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT -k 10 20 ros2 launch pimesh_camera camera.launch.py > /tmp/holder.log 2>&1'" &
     holder=$!
     sleep 7
     t0=$(date +%s)
@@ -573,7 +578,7 @@ gate-ipc:
 
     # The decode stage needs real frames, so this is a two-machine gate. The Pi
     # camera is bounded up front and covers both container runs.
-    ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT 70 ros2 launch pimesh_camera camera.launch.py > /tmp/gate_ipc_cam.log 2>&1'" &
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT -k 10 70 ros2 launch pimesh_camera camera.launch.py > /tmp/gate_ipc_cam.log 2>&1'" &
     cam_pid=$!
     sleep 8
 
@@ -588,44 +593,59 @@ gate-ipc:
       # `topic info` does NOT create a subscriber; `topic hz` would, and would
       # then make this assertion fail by measuring it.
       timeout -s INT 6 ros2 topic info -v /image_raw/compressed > "${out}/info.txt" 2>&1 || true
-      # Decode's own numbers, from the node that measured them. The stats topic
-      # carries every stage, so filter to this one rather than taking whatever
-      # arrived first.
-      timeout -s INT 10 ros2 topic echo /pipeline/stats --once > "${out}/stats.txt" 2>&1 || true ) &
+      # NOT `--once`. /pipeline/stats is shared by every node, keyed by the
+      # `stage` field, so `--once` returns whichever stage published first —
+      # which is the camera, and this gate asserted the CAMERA's rate and
+      # latency as decode's on its first run. Capture a few seconds of the
+      # topic; check_ipc.py selects the decode record out of it.
+      timeout -s INT 8 ros2 topic echo /pipeline/stats > "${out}/stats.txt" 2>&1 || true ) &
     probe_pid=$!
-    timeout -s INT 22 ros2 launch pimesh_bringup pimesh.launch.py \
-        probe:=true > "${out}/on.log" 2>&1 || true
+    # -k is not belt-and-braces, it is required. `ros2 launch` has a race in
+    # its SIGINT handler: roughly one run in three it prints "This event loop
+    # is already running", never signals its children, and hangs FOREVER —
+    # measured 2026-09-04, 1 of 2 runs, same command. `timeout` without -k then
+    # waits forever too, so the gate hangs rather than fails. The backstop
+    # bounds it; which signal was needed is reported below.
+    timeout -s INT -k 15 22 ros2 launch pimesh_bringup pimesh.launch.py \
+        probe:=true > "${out}/on.log" 2>&1
+    rc_on=$?
     wait "${probe_pid}" 2>/dev/null || true
 
     # Run 2: the control. Same everything, buffers serialised.
     echo "-- run 2: intra_process:=false (the control) --"
     sleep 3
-    timeout -s INT 20 ros2 launch pimesh_bringup pimesh.launch.py \
-        probe:=true intra_process:=false > "${out}/off.log" 2>&1 || true
+    timeout -s INT -k 15 20 ros2 launch pimesh_bringup pimesh.launch.py \
+        probe:=true intra_process:=false > "${out}/off.log" 2>&1
+    rc_off=$?
 
     wait "${cam_pid}" 2>/dev/null || true
 
     subs=$(grep -c 'Endpoint type: SUBSCRIPTION' "${out}/info.txt" 2>/dev/null | tr -d ' ')
-    hz=$(grep -oE 'rate_hz: [0-9.]+' "${out}/stats.txt" | tail -1 | cut -d' ' -f2)
-    ms=$(grep -oE 'latency_ms: [0-9.]+' "${out}/stats.txt" | tail -1 | cut -d' ' -f2)
-    p95=$(grep -oE 'latency_p95_ms: [0-9.]+' "${out}/stats.txt" | tail -1 | cut -d' ' -f2)
-    bad=$(grep -oE 'dropped_transport: [0-9]+' "${out}/stats.txt" | tail -1 | cut -d' ' -f2)
-    stage=$(grep -oE '^stage: .*' "${out}/stats.txt" | tail -1 | cut -d' ' -f2)
+    stages=$(grep -oE '^stage: .*' "${out}/stats.txt" | sort -u | cut -d' ' -f2 | tr '\n' ' ')
 
     echo "-- assertions --"
-    if [ "${stage}" != "decode" ]; then
-        echo "  FAIL  /pipeline/stats carried stage '${stage:-none}', not decode"; fail=1
-    fi
+    echo "  info  /pipeline/stats carried: ${stages:-nothing}"
     python3 "{{ws}}/tools/check_ipc.py" \
         --log-on "${out}/on.log" --log-off "${out}/off.log" \
-        --subscribers "${subs:-0}" \
-        --decode-hz "${hz:-0}" --decode-ms "${ms:-0}" \
-        --decode-failures "${bad:-0}" || fail=1
+        --subscribers "${subs:-0}" --stats "${out}/stats.txt" || fail=1
 
     echo "-- teardown --"
+    # 124 = SIGINT was enough. 137 = the SIGKILL backstop had to fire, which
+    # means `ros2 launch` wedged in the race described above. That is upstream,
+    # not this pipeline, so it is REPORTED rather than failed — but the
+    # straggler check below is a hard assertion either way.
+    for pair in "run1:${rc_on}" "run2:${rc_off}"; do
+        name=${pair%%:*}; rc=${pair#*:}
+        case "${rc}" in
+          124) echo "  ok    ${name} shut down on SIGINT" ;;
+          137) echo "  warn  ${name} needed the SIGKILL backstop — ros2 launch's "\
+                    "event-loop race, not the container" ;;
+          *)   echo "  info  ${name} exited ${rc}" ;;
+        esac
+    done
     sleep 2
     left_pi=$(ssh {{ssh_opts}} {{pi_host}} "pgrep -f '[c]amera_node' | wc -l" 2>/dev/null | tr -d ' ')
-    left_dev=$(pgrep -c -f '[c]omponent_container_mt' 2>/dev/null | tr -d ' ')
+    left_dev=$(pgrep -f '[c]omponent_container_mt' | wc -l | tr -d ' ')
     if [ "${left_pi}" = "0" ] && [ "${left_dev}" = "0" ]; then
         echo "  ok    both machines clean"
     else
@@ -633,6 +653,6 @@ gate-ipc:
     fi
 
     echo
-    echo "decode ${hz:-?} Hz | ${ms:-?} ms mean, ${p95:-?} ms p95 | ${subs:-?} subscriber on the Pi's stream"
+    echo "stages seen: ${stages:-none} | ${subs:-?} subscriber on the Pi's stream"
     if [ "${fail}" -eq 0 ]; then echo "P2 GATE PASS"; else echo "P2 GATE FAIL"; fi
     exit "${fail}"

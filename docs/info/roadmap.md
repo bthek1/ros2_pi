@@ -13,7 +13,7 @@ milestones are built with, not a step on the way to a mesh.
 | M0 | Docs and working agreement | **done 2026-09-01** — this tree |
 | M1 | Workspace skeleton: `pimesh_msgs`, `pimesh_bringup`, justfile, both machines build | **done 2026-09-01** — `just gate-build` PASS |
 | M2 | `pimesh_camera` on the Pi — V4L2 MJPEG, honest capture stamps, fails loudly | **done 2026-09-02** — `just gate-capture` PASS, 5 ms stamps with 0.00 ms drift across launches |
-| M3 | Dev-box container — `decode_node` with intra-process comms proven zero-copy | not started |
+| M3 | Dev-box container — `decode_node` with intra-process comms proven zero-copy | **done 2026-09-04** — `just gate-ipc` PASS ×2, 10/10 frames at the same address, 10/10 differing in the control run |
 | M4 | `keypoint_node` — ORB, matching, annotated preview | not started |
 | M5 | `depth_node` — ONNX Runtime C++ on the GPU, metric depth published | not started |
 | M6 | `fusion_node` — TSDF integration with per-frame scale alignment | not started |
@@ -25,11 +25,13 @@ milestones are built with, not a step on the way to a mesh.
 
 ## Tests
 
-Separate from the milestones, because they are a layer rather than a step: **23
-cases pass on both machines** as of 2026-09-04 — 10 gtest in `pimesh_camera`
-(timestamp arithmetic and failure paths) and 13 pytest for the gate tools.
-(`colcon test-result` reports 11 for the gtest package; it counts the binary
-itself alongside its cases.)
+Separate from the milestones, because they are a layer rather than a step. As
+of 2026-09-04, **58 cases, 0 failures**: 27 gtest — 10 in `pimesh_camera`
+(timestamp arithmetic, failure paths) and 17 in `pimesh_perception` (the
+one-deep mailbox, JPEG decode and its failure modes) — plus 31 pytest for the
+gate tools. The gtest cases run on both machines; the pytest ones are dev-box
+only, since `tools/` never ships to the Pi. (`colcon test-result` reports 30 for
+the gtest packages: it counts each test binary alongside its cases.)
 `just test`, `just test-pi`, and [testing.md](testing.md) for what each covers.
 
 ## What "done" means here
