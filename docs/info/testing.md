@@ -1,7 +1,7 @@
 # Testing
 
 *Current as of 2026-09-08: 65 gtest cases (10 in `pimesh_camera`, 55 in
-`pimesh_perception`) and 50 pytest cases for the gate tools, plus six gates.
+`pimesh_perception`) and 77 pytest cases for the gate tools, plus six gates.
 All passing. The Pi builds only `pimesh_msgs` and `pimesh_camera`, so
 `just test-pi` runs the 10 that belong to it; `just test` runs everything here
 and reports 71 through `colcon test-result`, which counts each test binary
@@ -162,7 +162,7 @@ Both load-bearing cases were mutation-checked: skipping the BGR→RGB conversion
 turns `ConvertsBgrToRgb` red, and dividing before bounding turns
 `NeverProducesInfinityOrNaN` red.
 
-### The gate tools — 50 cases, `tools/test_check_*.py`
+### The gate tools — 77 cases, `tools/test_*.py`
 
 `check_ipc.py` (18 cases) decides whether the container is zero-copy. Its cases
 are mostly the ways it must say **no**: one serialised frame among nine shared
@@ -186,6 +186,27 @@ every run), a collapsed delivered rate fails, and — the one that matters —
 
 There is also a case asserting that a *missing* hardware measurement fails
 rather than quietly passing on the strength of the checks that could still run.
+
+`check_depth.py` (17 cases) — the P4 gate's decision script. Nearly all of its
+cases are ways it must say **no**, because the failure it exists to catch is
+silent: a CPU session produces depth maps that are perfectly *correct*, just
+five times too slow. Two are worth naming. One feeds it a log saying CUDA and a
+live session saying CPU, because the phase's whole risk is a fallback and the
+answer must not rest on a single source. The other is the nastiest version — a
+session that **reports the CUDA provider and still ran on the CPU**, which
+happens because ONNX Runtime falls back per-node, and which only the timing
+distinguishes. Deleting either half of the provider check turns four cases red.
+
+`depth_pairing.py` (10 cases) — the arithmetic behind the P4 gate's "every
+depth map has its RGB twin" line, in a module with no ROS import so it can be
+driven without a graph. **This is the logic that was wrong twice**, both times
+because the number it produced described the probe rather than the pipeline, so
+the cases are written as the two failures that actually happened: a boundary
+frame counted as an orphan because the probe stopped collecting, and a frame
+seen before the probe was listening. Reinstating the original whole-set
+comparison turns three of them red. One case guards the other direction — an
+interior gap must still count against the ratio, or the check could never fail
+at all.
 
 `check_keypoints.py` (19 cases) — the P3 gate's decision script, and the one
 whose cases are mostly about **not blaming the node for the fixture**. The bag

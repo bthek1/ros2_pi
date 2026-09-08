@@ -35,8 +35,11 @@ published a *plausible* frame instead of the *right* one fails.
 """
 
 import argparse
+import os
 import sys
 from collections import OrderedDict
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import cv2
 import numpy as np
@@ -44,6 +47,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image
+
+from depth_pairing import MIN_PAIRED, pairing
 
 # RELIABLE to match every image publisher in this pipeline — BEST_EFFORT
 # delivers zero megabyte-class frames once they fragment, and a mismatched
@@ -64,10 +69,6 @@ BIG = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
 # input by one inference, so the frame a /depth/rgb refers to is a few frames
 # back by the time it lands. Keep a short history rather than only the newest.
 HISTORY = 120
-
-# How many of the depth maps this probe sees must also arrive as /depth/rgb.
-# Not 100%: see the note where it is used.
-MIN_PAIRED = 0.9
 
 
 def stamp_key(header):
@@ -176,19 +177,7 @@ def main():
     # its twin at all would score 0% and is what this catches. The exactness
     # claim is carried by the byte comparison below, which cannot be faked by
     # a lucky drop.
-    # Only the INTERIOR of the observed window. A depth map whose stamp is
-    # outside the range of rgb stamps seen was published before the probe
-    # subscribed or after it stopped listening, and either way its twin was
-    # never in scope. Judging those would be judging the probe's own start and
-    # stop times.
-    interior = node.depth_stamps
-    if node.rgb_stamps:
-        lo, hi = min(node.rgb_stamps), max(node.rgb_stamps)
-        interior = {k for k in node.depth_stamps if lo <= k <= hi}
-    orphans = interior - node.rgb_stamps
-    seen = len(interior)
-    paired = seen - len(orphans)
-    ratio = paired / seen if seen else 0.0
+    seen, paired, ratio = pairing(node.depth_stamps, node.rgb_stamps)
     if seen == 0:
         print('  FAIL  no depth messages seen at all')
     elif ratio >= MIN_PAIRED:

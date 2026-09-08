@@ -32,9 +32,13 @@ off a replay is a measurement of the bag — see tools/check_keypoints.py.
 """
 
 import argparse
+import os
 import sys
 
-sys.path.insert(0, __file__.rsplit('/', 1)[0])
+# The stats parser is shared with the P3 checker rather than copied: both read
+# the same topic, and two hand-rolled YAML readers that drift apart is a bug
+# waiting for whichever gate is run less often.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check_keypoints import parse_detail, parse_stats   # noqa: E402
 
 # The plan's budget. Measured 55.9-56.7 ms here on 2026-09-08 — the model alone
@@ -120,8 +124,13 @@ def main():
           f"{mean_ms:.1f} ms is GPU-shaped (< {CPU_SHAPED_MS:.0f} ms; the CPU "
           f"path measured 280-305 ms for this model)")
 
-    processed = int(steady[-1]["processed"]) - int(steady[0]["processed"])
-    dropped = int(steady[-1]["dropped_mailbox"]) - int(steady[0]["dropped_mailbox"])
+    # .get, not indexing: the last record in the file is routinely half-written,
+    # because the gate stops the echo with a signal.
+    def span(field):
+        return int(steady[-1].get(field, 0)) - int(steady[0].get(field, 0))
+
+    processed = span("processed")
+    dropped = span("dropped_mailbox")
     offered = processed + dropped
     print(f"  info  processed {processed} of {offered} frames offered "
           f"({100.0 * processed / offered if offered else 0:.0f}%); the rest were "

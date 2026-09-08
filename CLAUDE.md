@@ -54,7 +54,7 @@ exactly this reason, and needs a person with a checkerboard.
 Nothing downstream of depth exists yet. Everything else in `docs/` is still
 **design intent**, not a description of running code.
 
-**0 test failures** — `just test` reports 71 gtest and 50 pytest on the dev box,
+**0 test failures** — `just test` reports 71 gtest and 77 pytest on the dev box,
 `just test-pi` 11 gtest under Jazzy — alongside the six gates. See
 [docs/info/testing.md](docs/info/testing.md).
 

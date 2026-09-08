@@ -37,7 +37,7 @@ date and what the test printed).
 | **P7** | 6-DoF odometry | `just gate-odom` | ☐ |
 | **P8** | `dashboard_node` | `just gate-dashboard` | ☐ |
 | **P9** | `ansible/` — the Pi's configuration as code | `just gate-provision` | **✓ 2026-09-02** — PASS ×2, idempotent (11 → 0) |
-| **P10** | Unit tests and the recipes that run them | `just test`, `just test-pi` | **✓ 2026-09-04** — 0 failures; now 71 gtest here, 11 on the Pi, 50 pytest |
+| **P10** | Unit tests and the recipes that run them | `just test`, `just test-pi` | **✓ 2026-09-04** — 0 failures; now 71 gtest here, 11 on the Pi, 77 pytest |
 | **P11** | Camera calibration, loaded and published | `just gate-calibration` | ☐ — promoted out of the future file by P3 |
 
 **7 of 12 phases done.** No phase has been abandoned or rescoped. **One entry
@@ -512,7 +512,9 @@ is the distinction that matters: the pairing figure is asserted as a ratio and
 labelled as bounded by the probe's own reception, while the exactness claim
 rides on the byte comparison, which no amount of dropping can fake.
 
-**Tests: 12 new gtest cases**, and the refactor that made them possible.
+**Tests: 12 new gtest cases and 27 new pytest**, and two refactors that made
+them possible.
+
 `preprocess_frame` and `relative_to_metres` were pulled out of `DepthModel`
 into `perception_core`, where nothing includes an ONNX Runtime header — so they
 run on a machine that has never installed it, and on the Pi's toolchain if it
@@ -521,6 +523,17 @@ kind that yields a plausible depth map that is quietly wrong and throws
 nothing. Both were mutation-checked — skipping the BGR→RGB conversion turns
 `ConvertsBgrToRgb` red, and dividing before bounding instead of after turns
 `NeverProducesInfinityOrNaN` red.
+
+`check_depth.py` gets 17 cases, mostly the ways it must say no. The one worth
+naming is a session that **reports the CUDA provider and still ran on the
+CPU** — ONNX Runtime falls back per-node, so the provider field alone cannot
+settle it and only the timing can. Deleting either half of the provider check
+turns four cases red.
+
+The probe's pairing arithmetic moved into `tools/depth_pairing.py`, a module
+with no ROS import in it, and got 10 cases. That is the logic that was wrong
+twice, so the cases are written *as the two failures that actually happened* —
+reinstating the original whole-set comparison turns three of them red.
 
 **`depth_scale` is still 10.0 and still arbitrary.** Monocular depth is
 relative; every metre figure this stage publishes is provisional until P5's tape

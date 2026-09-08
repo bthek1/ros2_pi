@@ -28,7 +28,7 @@ mesh.
 ## Tests
 
 Separate from the milestones, because they are a layer rather than a step. As
-of 2026-09-08, **0 failures**: `just test` reports **71 gtest** and **50
+of 2026-09-08, **0 failures**: `just test` reports **71 gtest** and **77
 pytest** on the dev box, `just test-pi` **11 gtest** under Jazzy on aarch64.
 The gtest cases cover `pimesh_camera` (timestamp arithmetic, failure paths) and
 `pimesh_perception` (the one-deep mailbox, JPEG decode, the rotation geometry,
