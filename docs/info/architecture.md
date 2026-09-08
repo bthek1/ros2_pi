@@ -79,7 +79,7 @@ Measured 2026-09-04: ~50 µs publish-to-receive shared, ~1.4 ms serialised.
 | --- | --- | --- | --- |
 | `pimesh_msgs` | `ament_cmake` (rosidl) | both | **built** — `Keypoints.msg`, `PipelineStats.msg`, `MeshStats.msg`, `SaveMesh.srv`, `ResetMap.srv` |
 | `pimesh_camera` | `ament_cmake` | **Pi** | **built** — `camera_node`: V4L2 MJPEG passthrough, per-frame capture stamps, exits non-zero on a device it cannot open |
-| `pimesh_perception` | `ament_cmake` | dev box | **partly built** — `decode_node` (JPEG → bgr8, published zero-copy) and `ipc_probe_node`; `keypoint_node` and `depth_node` still to come |
+| `pimesh_perception` | `ament_cmake` | dev box | **partly built** — `decode_node` (JPEG → bgr8, published zero-copy), `keypoint_node` (ORB + a rotation-only odometer that K-all-zeros keeps switched off) and `ipc_probe_node`; `depth_node` still to come |
 | `pimesh_world` | `ament_cmake` | dev box | `fusion_node` (TSDF), `mesh_node` (marching cubes, PLY export) |
 | `pimesh_dashboard` | `ament_cmake` | dev box | `dashboard_node` — HTTP + WebSocket server, vendored web UI |
 | `pimesh_bringup` | `ament_cmake` | both | **built** — `pimesh.launch.py` (the container), `frames.launch.py` (static TF), `config/pimesh.yaml`; RViz config still to come |
@@ -96,12 +96,13 @@ split.
 | `/image_raw/compressed` | `sensor_msgs/CompressedImage` | `camera_node` | RELIABLE, KEEP_LAST(1) | **live** — the only topic on the LAN. MJPEG straight from V4L2, never re-encoded |
 | `/camera_info` | `sensor_msgs/CameraInfo` | `camera_node` | RELIABLE, KEEP_LAST(1), transient local | **live, but K is all zeros** — there is no calibration yet, and zeros are the honest signal for that |
 | `/rgb/image` | `sensor_msgs/Image` (bgr8) | `decode_node` | RELIABLE, KEEP_LAST(1), **volatile** | **live** — intra-process, never crosses the network. Volatile is load-bearing: `transient_local` would latch the last frame for late joiners *and* disable the intra-process path |
-| `/keypoints` | `pimesh_msgs/Keypoints` | `keypoint_node` | RELIABLE, KEEP_LAST(1) | Positions, descriptors, match ids for the frame |
-| `/keypoints/image/compressed` | `sensor_msgs/CompressedImage` | `keypoint_node` | BEST_EFFORT, KEEP_LAST(1) | Annotated preview for the dashboard. Small, droppable |
+| `/keypoints` | `pimesh_msgs/Keypoints` | `keypoint_node` | RELIABLE, KEEP_LAST(1) | **live** — positions, descriptors, match ids for the frame. Published as a `unique_ptr`, so downstream components share the arrays |
+| `/keypoints/image/compressed` | `sensor_msgs/CompressedImage` | `keypoint_node` | RELIABLE, KEEP_LAST(1) | **live** — annotated preview, drawn on its own thread and rate-limited to 10 Hz because it leaves the container. **RELIABLE, not BEST_EFFORT** as this table used to say: a 1280×720 JPEG is ~100 kB, which fragments past the socket buffer, and BEST\_EFFORT then delivers *nothing* |
 | `/depth` | `sensor_msgs/Image` (32FC1) | `depth_node` | RELIABLE, KEEP_LAST(1) | Metres. Carries the *input frame's* stamp and optical frame |
 | `/depth/rgb` | `sensor_msgs/Image` (bgr8) | `depth_node` | RELIABLE, KEEP_LAST(1) | The exact frame inferred on, so fusion gets a true RGB-D pair with no sync guessing |
 | `/depth/image/compressed` | `sensor_msgs/CompressedImage` | `depth_node` | BEST_EFFORT, KEEP_LAST(1) | Colourised preview for the dashboard |
-| `/odom` | `nav_msgs/Odometry` | `keypoint_node` | RELIABLE, KEEP_LAST(10) | Plus the `odom → base_link` TF |
+| `/camera/orientation` | `geometry_msgs/PoseStamped` | `keypoint_node` | RELIABLE, KEEP_LAST(10) | **live at P3, but inert until P11** — rotation only, so a `PoseStamped` and not an `Odometry`: publishing zero position and zero covariance inside a `nav_msgs/Odometry` would claim a measurement that was never made. Plus the `odom → base_link` TF, translation exactly zero |
+| `/odom` | `nav_msgs/Odometry` | `keypoint_node` | RELIABLE, KEEP_LAST(10) | **P7** — replaces the above once depth gives the rays a length and the pose is genuinely 6-DoF |
 | `/world/mesh` | `visualization_msgs/Marker` | `mesh_node` | RELIABLE, transient local | `TRIANGLE_LIST`, vertex-coloured, capped for RViz |
 | `/world/mesh_stats` | `pimesh_msgs/MeshStats` | `mesh_node` | RELIABLE, KEEP_LAST(1) | Triangles, vertices, volume extent, last mesh duration |
 | `/pipeline/stats` | `pimesh_msgs/PipelineStats` | every node | RELIABLE, KEEP_LAST(1) | Per-stage rate, latency, drop count. The dashboard's data source |

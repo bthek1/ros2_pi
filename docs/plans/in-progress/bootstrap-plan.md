@@ -1,6 +1,6 @@
 # Bootstrap plan — one webcam to a live mesh, in C++
 
-**Started 2026-09-01. Last updated 2026-09-04.** The build order for the whole
+**Started 2026-09-01. Last updated 2026-09-07.** The build order for the whole
 pipeline.
 
 Written to the rules in [../README.md](../README.md): **stable phase numbers**,
@@ -30,28 +30,32 @@ date and what the test printed).
 | **P0** | `pimesh_msgs`, `pimesh_bringup`, the justfile | `just gate-build` | **✓ 2026-09-01** — PASS ×3, both machines clean (`b96f63c`) |
 | **P1** | `camera_node` on the Pi | `just gate-capture` | **✓ 2026-09-02** — PASS ×2, 0.00 ms stamp drift |
 | **P2** | `decode_node` + the container | `just gate-ipc` | **✓ 2026-09-04** — PASS ×2, 10/10 frames at the same address |
-| **P3** | `keypoint_node`, `bags/desk1` | `just gate-keypoints` | ☐ **next** |
-| **P4** | `depth_node` on the GPU | `just gate-depth` | ☐ |
+| **P3** | `keypoint_node`, `bags/desk1` | `just gate-keypoints` | **✓ 2026-09-07** — PASS ×2, 6.99 ms/frame, 94.1% matched |
+| **P4** | `depth_node` on the GPU | `just gate-depth` | ☐ **next** |
 | **P5** | `fusion_node` (TSDF) | `just gate-fusion` | ☐ |
 | **P6** | `mesh_node` (marching cubes) | `just gate-mesh` | ☐ |
 | **P7** | 6-DoF odometry | `just gate-odom` | ☐ |
 | **P8** | `dashboard_node` | `just gate-dashboard` | ☐ |
 | **P9** | `ansible/` — the Pi's configuration as code | `just gate-provision` | **✓ 2026-09-02** — PASS ×2, idempotent (11 → 0) |
-| **P10** | Unit tests and the recipes that run them | `just test`, `just test-pi` | **✓ 2026-09-04** — 0 failures: 10 gtest on both machines, 13 pytest here |
+| **P10** | Unit tests and the recipes that run them | `just test`, `just test-pi` | **✓ 2026-09-04** — 0 failures; now 58 gtest here, 11 on the Pi, 50 pytest |
+| **P11** | Camera calibration, loaded and published | `just gate-calibration` | ☐ — promoted out of the future file by P3 |
 
-**5 of 11 phases done.** No phase has been abandoned or rescoped; no entry has
-been promoted out of
-[../future/bootstrap-future.md](../future/bootstrap-future.md) yet.
+**6 of 12 phases done.** No phase has been abandoned or rescoped. **One entry
+has been promoted** out of
+[../future/bootstrap-future.md](../future/bootstrap-future.md): loading a camera
+calibration, which became P11 when P3 shipped a rotation estimator that K-all-
+zeros keeps switched off.
 
 **Phase numbers are identities, not an execution order.** Twice now a phase has
 been written after the ones that follow it and executed before them: P9 on
 2026-09-02, ahead of P1, putting the Pi's toolchain under version control before
 P1 built against it; and P10 on 2026-09-04, ahead of P2, so that every phase
 from P2 on inherits a place to put a unit test instead of inventing one.
-**Next is P3.** Rule 1 says a plan never grows a phase in the middle, so both
-were appended at the next unused number and the table's Status column carries
-the ordering. That is the rule working, not a wart: "P1" still means the same
-thing it meant yesterday.
+**Next is P4.** Rule 1 says a plan never grows a phase in the middle, so all of
+these were appended at the next unused number and the table's Status column
+carries the ordering. That is the rule working, not a wart: "P1" still means the
+same thing it meant yesterday. P11 arrived the same way — a promotion out of the
+future file is an *append*, never an insertion next to the phase that wanted it.
 
 ## House rules for gate recipes
 
@@ -316,7 +320,7 @@ shaped around — see [../../info/architecture.md](../../info/architecture.md#wh
 
 ---
 
-## ☐ P3 — Keypoints and a recorded clip
+## ✓ P3 — Keypoints and a recorded clip
 
 **Goal:** repeatable corners, matched across frames, cheap.
 
@@ -336,6 +340,86 @@ sustained, mean per-frame cost ≤ 8 ms measured against the node's own clock
 (never against `header.stamp`), and matched-keypoint fraction within 5 points of
 the predecessor's on the same clip. Prints all three, plus the pose-gate reject
 rate.
+
+### What happened
+
+Landed 2026-09-07. `just gate-keypoints` PASS ×2, six assertions:
+
+```
+ok  the FIXTURE delivers 46.0 Hz median over 24 windows >= 30 Hz
+ok  keeps up with decode: 96.4% of the frames decode delivered (42.4 vs 44.0 Hz)
+ok  mean per-frame cost 6.99 ms <= 8.0 ms budget
+ok  matched fraction 0.941 is 4.1 points from the predecessor's 0.90
+ok  processed 958 of 993 frames offered (96.5%)
+ok  the stats `detail` field arrived complete
+```
+
+`bags/desk1` is 61.6 s, 2608 frames at 42.4 Hz, 185 MiB of MJPEG.
+
+**The rate assertion had to change, and the reason is the point.** The phase
+asked for "≥ 30 Hz sustained", and the first version of the gate asserted that
+on the minimum window rate off the replay. It failed at **8 Hz** — and decode,
+in the very same window, read **10 Hz**. The stage was processing 8 of the 10
+frames it was given, which is not a failure of anything. The bag was recorded
+over Wi-Fi while the camera was carried around a room, so its instantaneous
+rate swings between 7 and 60 Hz; **any absolute rate measured off a replay is a
+measurement of the fixture.** So the node's own claim is asserted as a ratio
+against decode — both numbers measured inside one process on one clock, which
+is unambiguous in a way an absolute figure off a bag can never be — and the
+absolute rate survives only as a floor on the fixture being usable, labelled as
+such. The capability claim now lives where it belongs, in `latency_ms`: 7 ms a
+frame is a 140 Hz ceiling. Live against the camera the stage measured
+**59-60 Hz**, which is the number the phase was really asking about.
+
+**The whole workspace was compiling at `-O0`.** colcon's default
+`CMAKE_BUILD_TYPE` is the empty string, which passes no `-O` flag at all. The
+rotation estimator ran **1.19 ms/frame unoptimised and 0.03 ms optimised — 40×**
+— while OpenCV's own cost did not move a millisecond, because that code is
+already optimised inside `libopencv`. So the effect is invisible for as long as
+every expensive thing you call belongs to somebody else, and P5's TSDF and P6's
+marching cubes are exactly where it stops being invisible. `just build` and
+`just build-pi` now pass `-DCMAKE_BUILD_TYPE=RelWithDebInfo`.
+
+**The preview moved to its own thread.** Drawing 500 rich keypoints and
+JPEG-encoding a 1280×720 frame costs ~9 ms, and on the tracking thread that
+showed as a p95 of **20.6 ms against a 10.9 ms mean** plus a steady trickle of
+dropped frames. It is the house rule applied to our own code: a picture for
+humans is work that costs milliseconds, so it gets a thread and a one-deep
+mailbox like every other expensive stage. p95 fell to **9.6 ms**.
+
+**The first `desk1` take was thrown away at 13.7 Hz.** `/camera_info` (500
+bytes) and `/image_raw/compressed` (90 kB) arrived at *the same* rate, which
+rules out Wi-Fi loss — a link dropping megabyte frames does not drop tiny ones
+equally. The cause was `exposure_dynamic_framerate=1`, the trap CLAUDE.md
+already documents: the C922 trades frame rate for exposure time in dim light,
+and a room sweep points at dim things. At 13.7 Hz the exposure is ~73 ms, so
+that clip was also heavily motion-blurred — a bad fixture twice over.
+`just camera-reset` first, then re-record: 42.4 Hz.
+
+**`ros2 topic echo` silently truncates strings past 128 characters** with a
+trailing `...`, and `detail` carries the reject breakdown past that mark. The
+gate printed `uncalibrated ?` for a run in which the number was present all
+along. `--full-length` fixes it, and the gate now *fails* on an incomplete
+`detail` rather than reporting less than it promised — a truncated field and a
+missing one look identical from the far end.
+
+**The odometer has never run on a real frame.** K is all zeros, so every one of
+the 1071 frames rejected with `no_intrinsics` and the node reported
+`regime=detect_only`. That is the honest behaviour — a fabricated focal length
+would turn "no pose" into "a confident wrong pose" — but it means the rotation
+gates are covered by `test_rotation` and by nothing else. **P11 closes this**,
+and it was promoted out of the future file for exactly this reason.
+
+**Tests: 26 new gtest cases and 19 pytest.** `test_rotation` (16) drives the
+geometry with synthetic ray bundles and known rotations; `test_orb_tracker`
+(10) drives detection and both matchings with synthetic scenes. Two were
+mutation-checked: disabling the determinant guard turns
+`Kabsch.NeverReturnsAReflection` red, and unbounding the pooled window turns
+`TheWindowForgivesAFrameOfChurn...` red. The reflection test **failed to fail**
+on its first writing — it was built from a cleanly rotated bundle, and
+`det(P·(R·P)ᵀ)` is always positive, so the SVD could not have reflected no
+matter what the code did. It was rebuilt around a bundle whose best-fit
+orthogonal transform genuinely is a reflection.
 
 ---
 
@@ -702,3 +786,51 @@ does not. P2 brings the first node that can be tested without hardware.
   round.** Nothing about `wait_frame` looked wrong until something had to call
   its arithmetic without a camera attached, at which point the three lines that
   matter were visibly buried in ninety that do not.
+
+---
+
+## ☐ P11 — Camera calibration, loaded and published
+
+**Promoted out of [../future/bootstrap-future.md](../future/bootstrap-future.md)
+on 2026-09-07**, by P3. Its trigger there was "a calibration YAML exists", and
+the reasoning was that a file-loading path with no file to load is a more
+elaborate way of publishing zeros. P3 changed the calculation: it shipped a
+rotation estimator with gates, thresholds and 16 unit tests that **has never run
+on a real frame** — every one of the 1071 frames in the gate run rejected with
+`no_intrinsics`. Untested-on-real-data geometry does not get more trustworthy by
+waiting, and P4's depth unprojection and P5's TSDF both need real intrinsics
+anyway.
+
+**Goal:** `/camera_info` carries a measured K, and the odometer runs.
+
+**Work**
+
+- Run `camera_calibration` against the C922 at 1280×720 and write the YAML.
+  *Needs a person:* holding a checkerboard in front of a camera is a physical
+  act. Store it in `pimesh_camera/config/` — it describes this camera, and it
+  belongs beside the node that publishes it.
+- Load it in `camera_node` through `camera_info_manager`, driven by the
+  `camera_info_url` parameter the node **already declares and already warns
+  about**. The package is on the Pi (the `toolchain` role installs it, and P9's
+  gate names it for this reason).
+- Keep the uncalibrated path exactly as it is. A missing or unreadable file must
+  still publish zeros and still warn — the honest signal is what makes
+  `is_calibrated()` downstream mean anything, and a calibration that silently
+  falls back to a plausible-looking guess is worse than none.
+- Nothing in `keypoint_node` changes. It already subscribes `/camera_info`,
+  already tests K for zeros, and already reports `regime=` on every stats
+  message; a real K simply switches it from `detect_only` to `rotation_only`.
+
+**Test:** `just gate-calibration` — asserts `/camera_info` carries `k[0] > 0`
+with a plausible focal length (the C922's spec FOV puts fx near 900 px at 720p,
+so 700–1100 is the sanity window, and the point of the bound is to catch a
+calibration that converged on nonsense rather than to grade it); replays
+`bags/desk1` and asserts `keypoint_node` reports `regime=rotation_only` with a
+pose-gate reject rate **below 40%** and `rej_nointr=0`; and asserts the
+uncalibrated path still works by launching with `camera_info_url` pointing at a
+file that does not exist and requiring K all zeros plus the warning. Prints the
+recovered fx, fy, cx, cy, the reprojection error the calibration reported, and
+the reject-rate breakdown.
+
+The reject rate is the assertion that matters: it is the first evidence that the
+rotation gates behave on real data rather than on synthetic ray bundles.

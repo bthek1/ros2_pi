@@ -45,7 +45,16 @@ build *args:
     # colcon writes one per package, so they are merged into
     # build/compile_commands.json, which .vscode/c_cpp_properties.json reads.
     # Without it an editor guesses include paths and gets every ROS header wrong.
-    colcon build --symlink-install {{args}}
+    #
+    # RelWithDebInfo is NOT optional in this project. colcon's default build
+    # type is EMPTY, which means no -O flag at all: every package compiles at
+    # -O0. Measured 2026-09-07 while building P3 — the rotation estimator ran
+    # 1.19 ms/frame at -O0 and 0.03 ms/frame optimised, a 40x difference, and
+    # OpenCV's own cost did not move because that code is already optimised
+    # inside libopencv. So the effect is invisible until you write numerics of
+    # your own, and P5's TSDF and P6's marching cubes are exactly that.
+    # WithDebInfo rather than plain Release so a crash still has a backtrace.
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo {{args}}
     python3 "{{ws}}/tools/merge_compile_commands.py" "{{ws}}/build"
 
 # Never the build products — there is no ABI compatibility between Lyrical and
@@ -71,7 +80,8 @@ build-pi: sync-pi
     ssh {{ssh_opts}} {{pi_host}} "bash -lc '
         source {{pi_ros}}/setup.bash
         cd {{pi_ws}}
-        colcon build --symlink-install --packages-select {{pi_pkgs}} 2>&1 | tail -5
+        colcon build --symlink-install --packages-select {{pi_pkgs}} \
+            --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo 2>&1 | tail -5
     '"
 
 # A thin pointer at /usr/bin/python3, not a dependency sandbox: built with
@@ -429,6 +439,161 @@ cam seconds='0' *args:
     # a wedged launch on the Pi holds /dev/video0 against every later session.
     if [ "{{seconds}}" != "0" ]; then bound="timeout -s INT -k 10 {{seconds}}"; fi
     ssh {{ssh_opts}} -tt {{pi_host}} "bash -lc '${bound} ros2 launch pimesh_camera camera.launch.py {{args}}'"
+
+# The bag every later phase replays, so its numbers compare like for like.
+#
+# Records exactly what the CAMERA produced — the compressed stream and the
+# intrinsics — and nothing the pipeline derived from it. A bag holding
+# keypoints or depth would freeze one version of the algorithms into the
+# fixture that is supposed to be judging them.
+#
+# The Pi camera is started here and bounded, so the recording cannot outlive
+# the recipe.
+#
+# Record the camera's stream to bags/<name>, e.g. `just record desk1 60`.
+[group('run')]
+record name seconds='60':
+    #!/usr/bin/env bash
+    set -eo pipefail
+    export PATH="/usr/bin:${PATH}"
+    source "{{ros}}/setup.bash"
+    source "{{ws}}/install/setup.bash"
+
+    dest="{{ws}}/bags/{{name}}"
+    if [ -e "${dest}" ]; then
+        echo "bags/{{name}} already exists — refusing to overwrite a fixture"
+        echo "every phase from P3 on compares against it; move it aside first"
+        exit 1
+    fi
+
+    before=$(ssh {{ssh_opts}} {{pi_host}} "pgrep -f '[c]amera_node' | wc -l" 2>/dev/null | tr -d ' ')
+    if [ "${before}" != "0" ]; then
+        echo "${before} camera process(es) already on the Pi — run 'just stragglers'"
+        exit 1
+    fi
+
+    # The camera outlives the recording by a margin at each end: starting it
+    # first means the bag opens on a settled auto-exposure rather than on the
+    # first few black frames, and ending it after means the bag is closed
+    # before its publisher disappears.
+    warmup=6
+    ssh {{ssh_opts}} {{pi_host}} "bash -lc 'timeout -s INT -k 10 $(({{seconds}} + 12)) ros2 launch pimesh_camera camera.launch.py > /tmp/record_{{name}}.log 2>&1'" &
+    cam_pid=$!
+    sleep "${warmup}"
+
+    echo "recording {{seconds}} s to bags/{{name}} — SWEEP THE ROOM, do not leave it on the desk"
+    mkdir -p "{{ws}}/bags"
+    # `timeout -s INT` is what ENDS the recording. rosbag2's -d is the bag-SPLIT
+    # duration, not a stop-after, and Lyrical has no --duration at all. SIGINT
+    # rather than SIGTERM so rosbag2 closes the bag and writes metadata.yaml —
+    # a bag killed hard replays as nothing.
+    #
+    # --topics, not positional arguments: `ros2 bag record <topic>` is gone in
+    # Lyrical and fails with "unrecognized arguments" — AFTER the camera has
+    # started and the person holding it has begun sweeping. Wasted take.
+    #
+    # --max-cache-size 0 writes straight through instead of buffering. At
+    # ~9 MB/s that costs nothing and means a rough shutdown loses no frames.
+    timeout -s INT -k 10 $(({{seconds}} + 3)) \
+        ros2 bag record -o "${dest}" \
+        --topics /image_raw/compressed /camera_info \
+        --max-cache-size 0 || true
+
+    wait "${cam_pid}" 2>/dev/null || true
+    sleep 1
+
+    echo "-- what landed in the bag --"
+    ros2 bag info "${dest}"
+    left=$(ssh {{ssh_opts}} {{pi_host}} "pgrep -f '[c]amera_node' | wc -l" 2>/dev/null | tr -d ' ')
+    if [ "${left}" != "0" ]; then
+        echo "WARNING: ${left} camera process(es) still on the Pi"
+        exit 1
+    fi
+
+# Asserts: the keypoint stage keeps up with what decode hands it, one frame
+# costs what it was budgeted, the matching finds about what the predecessor's
+# did, and the stage gets through most of the stream. The pose-gate reject rate
+# is PRINTED, not asserted — see tools/check_keypoints.py on both points.
+#
+# P3 gate — ORB keypoints, replayed off bags/desk1.
+[group('gate')]
+gate-keypoints bag='desk1':
+    #!/usr/bin/env bash
+    set -o pipefail
+    fail=0
+    out=$(mktemp -d)
+    trap 'rm -rf "${out}"' EXIT
+    export PATH="/usr/bin:${PATH}"
+    source "{{ros}}/setup.bash"
+    source "{{ws}}/install/setup.bash"
+
+    echo "== P3 gate: keypoints =="
+
+    # A bag, not the live camera. The point of the fixture is that P4 through
+    # P8 measure themselves against the SAME frames — a live run would compare
+    # today's room and today's light against last week's.
+    bag="{{ws}}/bags/{{bag}}"
+    if [ ! -d "${bag}" ]; then
+        echo "  FAIL  bags/{{bag}} does not exist — record it with 'just record {{bag}} 60'"
+        echo "P3 GATE FAIL"; exit 1
+    fi
+    echo "-- fixture --"
+    ros2 bag info "${bag}" | sed -n '1,12p' | sed 's/^/  /'
+
+    # The launch in the FOREGROUND under `timeout -s INT`, the replay and the
+    # probe backgrounded: a shell without job control sets SIGINT to SIG_IGN
+    # for background children, so a backgrounded launch is un-interruptible and
+    # orphans its components. Measured on P0's gate.
+    ( sleep 5
+      # NOT `--once`. /pipeline/stats is one topic shared by every stage, keyed
+      # by `stage`; `--once` returns whichever node published first, and
+      # check_keypoints.py selects the keypoints record out of the stream.
+      #
+      # --full-length is REQUIRED, not cosmetic. `ros2 topic echo` silently
+      # elides any string longer than 128 characters with a trailing "...",
+      # and `detail` carries the pose-gate reject breakdown past that mark. The
+      # gate printed "uncalibrated ?" for a run in which that number was
+      # present all along — a truncated field looks exactly like a missing one.
+      timeout -s INT 26 ros2 topic echo --full-length /pipeline/stats \
+          > "${out}/stats.txt" 2>&1 || true ) &
+    probe_pid=$!
+    ( sleep 4
+      # No --loop and no --rate: the clip is replayed once at the rate it was
+      # captured, because the budget being judged is per-frame cost at the
+      # camera's real rate.
+      timeout -s INT -k 10 30 ros2 bag play "${bag}" > "${out}/play.log" 2>&1 || true ) &
+    play_pid=$!
+
+    # -k is required, not belt-and-braces: `ros2 launch` has a SIGINT race that
+    # hangs it forever roughly one run in three, and `timeout` without a
+    # backstop then waits forever too.
+    timeout -s INT -k 15 40 ros2 launch pimesh_bringup pimesh.launch.py \
+        > "${out}/run.log" 2>&1
+    rc=$?
+    wait "${probe_pid}" 2>/dev/null || true
+    wait "${play_pid}" 2>/dev/null || true
+
+    echo "-- assertions --"
+    python3 "{{ws}}/tools/check_keypoints.py" --stats "${out}/stats.txt" || fail=1
+
+    echo "-- teardown --"
+    case "${rc}" in
+      124) echo "  ok    the launch shut down on SIGINT" ;;
+      137) echo "  warn  the launch needed the SIGKILL backstop — ros2 launch's"\
+                " event-loop race, not the container" ;;
+      *)   echo "  info  the launch exited ${rc}" ;;
+    esac
+    sleep 2
+    left=$(pgrep -f '[c]omponent_container_mt' | wc -l | tr -d ' ')
+    if [ "${left}" = "0" ]; then
+        echo "  ok    dev box clean"
+    else
+        echo "  FAIL  ${left} container(s) still running"; fail=1
+    fi
+
+    echo
+    if [ "${fail}" -eq 0 ]; then echo "P3 GATE PASS"; else echo "P3 GATE FAIL"; fi
+    exit "${fail}"
 
 # Asserts: the node loses nothing against raw v4l2 on the same camera, the
 # stamp-to-receipt offset is under one frame interval AND stable across two

@@ -120,29 +120,6 @@ the three shared variables still match the Pi's.
 
 ---
 
-## Loading a camera calibration
-
-**What.** `camera_node` publishes `CameraInfo` with **K all zeros** and warns at
-startup: it has no way to read a calibration file. Loading one — the
-`camera_info_url` parameter it already declares — needs a YAML parser, which is
-what `camera_info_manager` is for (already installed on the Pi by the
-`toolchain` role, and named in P9's gate for this reason).
-
-**Why not now.** There is no calibration to load. Running the checkerboard is a
-physical act, and until it has been done, adding a file-loading path would only
-be a more elaborate way of publishing zeros. Zeros are the honest signal: a
-consumer can detect an uncalibrated camera with `info.k[0] == 0.0`, where a
-fabricated focal length would let every downstream stage compute confident
-nonsense.
-
-**Trigger.** A calibration YAML existing — i.e. someone has held a checkerboard
-in front of the C922 and `camera_calibration` has written a file. Depth
-unprojection (P4) and TSDF integration (P5) both need real intrinsics, so this
-must land before P5 is trusted, and P4's own gate is the last point at which
-zeros are still harmless.
-
----
-
 ## Making 60 fps repeatable at 720p
 
 **What.** The C922 delivers **29.7 fps in one run and 58.8 fps in another** on

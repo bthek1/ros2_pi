@@ -19,10 +19,10 @@ The dashboard and RViz stay OUTSIDE this container on purpose: they are
 viewers, they can afford serialisation, and they must be able to die without
 taking the pipeline with them.
 
-As of P2 the container holds `decode_node`, plus an optional zero-copy probe
-(`probe:=true`, which is what `just gate-ipc` launches). Each later phase adds
-its own component to the list below, and the container is what makes the
-phase's intra-process guarantee testable.
+As of P3 the container holds `decode_node` and `keypoint_node`, plus an
+optional zero-copy probe (`probe:=true`, which is what `just gate-ipc`
+launches). Each later phase adds its own component to the list below, and the
+container is what makes the phase's intra-process guarantee testable.
 """
 
 import os
@@ -111,7 +111,13 @@ def generate_launch_description():
                     ],
                     extra_arguments=[intra_process],
                 ),
-                # P3: keypoint_node
+                ComposableNode(
+                    package='pimesh_perception',
+                    plugin='pimesh_perception::KeypointNode',
+                    name='keypoint_node',
+                    parameters=[config],
+                    extra_arguments=[intra_process],
+                ),
                 # P4: depth_node
                 # P5: fusion_node
                 # P6: mesh_node

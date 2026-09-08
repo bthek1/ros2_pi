@@ -23,22 +23,32 @@ copy its structure wholesale: the point of the rewrite is to do in one process
 with `rclcpp` components what Python needed three processes and two interpreters
 to do.
 
-### Status: P0, P1, P2, P9 and P10 done — P3 next
+### Status: P0-P3, P9 and P10 done — P4 next
 
-As of 2026-09-04: `pimesh_msgs` and `pimesh_bringup` build on both machines
+As of 2026-09-07: `pimesh_msgs` and `pimesh_bringup` build on both machines
 (`just gate-build`), `ansible/` provisions the Pi (`just gate-provision`,
 idempotent), **the Pi captures** — `pimesh_camera` publishes
 `/image_raw/compressed` at up to 59 Hz with `CLOCK_MONOTONIC` capture stamps
-(`just gate-capture`) — and **the dev box decodes**: `pimesh_perception`'s
-`decode_node` runs in the container at 30 Hz for **1.9-2.1 ms/frame**, and the
-zero-copy claim is measured, not assumed (`just gate-ipc`: 10/10 frames arrive
-at the address they were published at, and 10/10 differ in a control run with
-intra-process off). Nothing downstream of decode exists yet. Everything else in
-`docs/` is still **design intent**, not a description of running code.
+(`just gate-capture`) — **the dev box decodes**: `decode_node` runs in the
+container for **1.9-2.1 ms/frame**, and the zero-copy claim is measured, not
+assumed (`just gate-ipc`) — and **finds keypoints**: `keypoint_node` runs ORB
+at 500 features for **7.0 ms/frame**, holds **94.1% matched** against the
+predecessor's ~90%, and keeps up with 96.4% of what decode delivers
+(`just gate-keypoints`, replayed off `bags/desk1`). Live against the camera the
+keypoint stage measured **59-60 Hz**.
 
-**58 test cases pass, 0 failures** — 27 gtest (both machines) and 31 pytest
-(dev box), run by `just test` and `just test-pi` — alongside the four gates.
-See [docs/info/testing.md](docs/info/testing.md).
+**The rotation odometer exists but has never run on a real frame.** K is all
+zeros, so it reports `regime=detect_only` and rejects every frame with
+`no_intrinsics`. Its geometry is covered by 16 unit tests and by nothing else.
+**P11 closes that** — it was promoted out of the future file on 2026-09-07 for
+exactly this reason, and needs a person with a checkerboard.
+
+Nothing downstream of keypoints exists yet. Everything else in `docs/` is still
+**design intent**, not a description of running code.
+
+**0 test failures** — `just test` reports 58 gtest and 50 pytest on the dev box,
+`just test-pi` 11 gtest under Jazzy — alongside the five gates. See
+[docs/info/testing.md](docs/info/testing.md).
 
 **This repo now owns the Pi's configuration.** Its login shells source
 `~/ros2_pi/install`, not the predecessor's workspace, and
@@ -110,7 +120,7 @@ message types and rates: [docs/info/pipeline.md](docs/info/pipeline.md).
 | Stage | Node | Where | Budget |
 | --- | --- | --- | --- |
 | Capture | `camera_node` | Pi | 1280×720 MJPEG, up to 60 fps, stamped at `VIDIOC_DQBUF` |
-| Keypoints | `keypoint_node` | dev box | ORB, 500 features, ~5 ms/frame target |
+| Keypoints | `keypoint_node` | dev box | ORB, 500 features over 4 pyramid levels, **7.0 ms/frame measured** |
 | Depth | `depth_node` | dev box, **GPU** | Depth Anything V2 Small, 518², **72–79 ms/frame measured on this GPU** |
 | Fusion | `fusion_node` | dev box | TSDF, 1.5 cm voxels, integrate at depth rate |
 | Surface | `mesh_node` | dev box | marching cubes, re-mesh every ~10 s |
@@ -154,6 +164,15 @@ strong priors, re-verify before quoting a number as this project's own.
   black; the C922 powers on with `exposure_dynamic_framerate=1`, which costs
   ~10 fps in indoor light. Treat camera state as inspectable machine state and
   reset it before diagnosing black frames or low fps as a software bug.
+  **Measured here 2026-09-07, and it costs far more than ~10 fps when the
+  camera moves:** the first `bags/desk1` take came out at **13.7 Hz** because a
+  room sweep points at dim things and the C922 trades frame rate for exposure
+  time. At 13.7 Hz the exposure is ~73 ms, so the clip was heavily
+  motion-blurred as well — useless for ORB twice over. `just camera-reset`
+  before every recording; the re-take ran at 42.4 Hz. Note the diagnosis: the
+  500-byte `/camera_info` and the 90 kB `/image_raw/compressed` arrived at
+  **the same** rate, which rules out Wi-Fi loss, because a link dropping
+  megabyte frames does not drop tiny ones equally.
 - **`/dev/video1` is not a capture device** — it is the C922's UVC metadata node.
   Capture is `/dev/video0`.
 - **The GPU has no CUDA toolkit installed** (measured: `nvcc` absent, no
@@ -205,6 +224,29 @@ strong priors, re-verify before quoting a number as this project's own.
   field. `ros2 topic echo --once` on it returns whichever node published first
   — normally the camera — so a check that does not select on `stage` measures
   the wrong node and passes. It did exactly that in P2's first gate run.
+- **`ros2 topic echo` silently truncates strings past 128 characters** with a
+  trailing `...`, and arrays and byte fields the same way. `PipelineStats.detail`
+  runs past that mark, so P3's gate printed `uncalibrated ?` for a number that
+  was present all along — a truncated field and a missing one are
+  indistinguishable at the far end. Pass `--full-length` whenever a script
+  parses an echo, and make the script *fail* on an incomplete record rather
+  than reporting less than it promised.
+- **colcon's default `CMAKE_BUILD_TYPE` is EMPTY, which means `-O0`** — no
+  optimisation at all, in a project whose whole premise is real-time C++.
+  Measured 2026-09-07: the rotation estimator ran **1.19 ms/frame unoptimised
+  and 0.03 ms optimised, 40×**, while OpenCV's own cost did not move, because
+  that code is already optimised inside `libopencv`. **The effect is invisible
+  for as long as every expensive thing you call belongs to somebody else**, and
+  P5's TSDF and P6's marching cubes are where it stops being invisible.
+  `just build` and `just build-pi` pass `-DCMAKE_BUILD_TYPE=RelWithDebInfo`;
+  never invoke `colcon build` by hand without it.
+- **A rate measured off a bag replay is the BAG's rate.** `bags/desk1` was
+  recorded over Wi-Fi while the camera was carried around a room, so its
+  instantaneous rate swings between 7 and 60 Hz. P3's gate first asserted
+  "≥ 30 Hz sustained" on the replay and failed at 8 Hz — while decode, in the
+  same window, read 10 Hz and the stage was processing 8 of them. Assert a
+  **ratio against the upstream stage** (both measured in one process on one
+  clock) and let the absolute number judge only whether the fixture is usable.
 - **`transient_local` silently disables intra-process comms.** It is a
   reasonable-looking choice for an image topic and it would undo the reason the
   container exists. Every image topic inside the container is
@@ -252,9 +294,11 @@ strong priors, re-verify before quoting a number as this project's own.
   sandbox) — naming it in settings alone is overridden by the Python
   Environments extension, which picked uv's pytest-less interpreter. Editor tasks shell out to `just`; never reimplement a recipe in
   `tasks.json`. [docs/info/setup.md](docs/info/setup.md#working-in-vs-code).
-- Build with `colcon build --symlink-install`. Day-to-day commands are `just`
-  recipes; add a recipe rather than documenting a long one-off command, and keep
-  recipes and docs in agreement.
+- Build with `just build`, never a bare `colcon build` — the recipe carries the
+  `/usr/bin` PATH fix and `-DCMAKE_BUILD_TYPE=RelWithDebInfo`, and without the
+  second one every package compiles at `-O0` (see the constraint above). Day-to-
+  day commands are `just` recipes; add a recipe rather than documenting a long
+  one-off command, and keep recipes and docs in agreement.
 - **Sessions tear themselves down — no stragglers.** Ctrl-C and closing the
   window must both end everything the recipe started, **on both machines**. The
   mechanism: viewer in the foreground, `trap … EXIT` that `pkill -f`s every node

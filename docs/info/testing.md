@@ -1,9 +1,11 @@
 # Testing
 
-*Current as of 2026-09-04: 27 gtest cases (10 in `pimesh_camera`, 17 in
-`pimesh_perception`) and 31 pytest cases for the gate tools, plus four gates.
-All passing; the gtest cases run on both machines, the pytest ones on the dev
-box, where `tools/` lives.*
+*Current as of 2026-09-07: 53 gtest cases (10 in `pimesh_camera`, 43 in
+`pimesh_perception`) and 50 pytest cases for the gate tools, plus five gates.
+All passing. The Pi builds only `pimesh_msgs` and `pimesh_camera`, so
+`just test-pi` runs the 10 that belong to it; `just test` runs everything here
+and reports 58 through `colcon test-result`, which counts each test binary
+alongside its cases.*
 
 ## Two layers, and they answer different questions
 
@@ -11,7 +13,7 @@ box, where `tools/` lives.*
 | --- | --- | --- |
 | Ask | is this logic right? | does the real system do what we claim? |
 | Need hardware | **never** | yes — camera, Wi-Fi, two machines |
-| Run with | `just test`, `just test-pi` | `just gate-build`, `just gate-capture`, `just gate-ipc`, `just gate-provision` |
+| Run with | `just test`, `just test-pi` | `just gate-build`, `just gate-capture`, `just gate-ipc`, `just gate-keypoints`, `just gate-provision` |
 | Take | under a second | 1–4 minutes |
 | Live in | `src/*/test/`, `tools/test_*.py` | the justfile, one per plan phase |
 
@@ -47,7 +49,7 @@ has no camera.
   and the errno in the message. These matter most and would otherwise only be
   exercised by accident.
 
-### `pimesh_perception` — 17 cases, `src/pimesh_perception/test/`
+### `pimesh_perception` — 43 cases, `src/pimesh_perception/test/`
 
 - **The mailbox (9 cases).** The pipeline's back-pressure policy: newest frame
   wins, the unread one is dropped and counted. The cases pin the property that
@@ -67,7 +69,64 @@ has no camera.
   a corrupt buffer and the node would republish a stale image with a fresh
   timestamp.
 
-### The gate tools — 31 cases, `tools/test_check_capture.py` and `test_check_ipc.py`
+### `test_rotation.cpp` — 16 cases, the P3 geometry
+
+The file that justified pulling the rotation estimator out of the node. Inside a
+subscription callback it could only be tested by pointing a camera at a room and
+squinting at RViz; as free functions over ray bundles it can be handed a **known
+rotation and asked to find it back**.
+
+- **Unprojection (4 cases).** The pixel at `(cx, cy)` must unproject to exactly
+  `+Z` — if that fails, `cx`/`cy` have been read out of the wrong slots of K,
+  which puts a small constant bias into every pose. Rays are unit length and
+  point forward, because a negative Z means the unprojection flipped and no
+  amount of downstream fitting recovers from it. And `is_calibrated()` must
+  recognise K-all-zeros, which is what keeps the odometer honest rather than
+  confidently wrong.
+- **Kabsch (3 cases).** A known rotation is recovered to 1e-9, and the
+  determinant guard is exercised by a bundle whose best-fit orthogonal transform
+  genuinely *is* a reflection. **The reflection case failed to fail on its first
+  writing:** it was built from a cleanly rotated bundle, and `det(P·(R·P)ᵀ)` is
+  always positive, so the SVD could not have reflected no matter what the code
+  did. It passed with the guard commented out — which is the whole reason
+  mutation-checking a new test is not optional.
+- **The pose gate (6 cases).** Too few pairs is refused rather than fitted; 10%
+  false matches are dropped by the refit rounds and the truth is still found to
+  0.005 rad; a bundle that agrees on no rotation at all is refused with the
+  *residual* reason rather than the *pairs* reason, because those two call for
+  different fixes.
+- **Composition helpers (3 cases).** `orthonormalize` must repair drift without
+  moving a clean rotation — composing thousands of per-frame rotations
+  accumulates error until the product is a slightly-scaling transform that
+  quietly grows the map.
+
+### `test_orb_tracker.cpp` — 10 cases, the P3 bookkeeping
+
+Synthetic scenes of drawn blobs on noise, translated by a known amount. What is
+tested is not OpenCV's ORB — that is upstream's job — but the bookkeeping around
+it.
+
+- **The two matchings stay separate.** The trap the file exists to prevent is
+  using the *pooled* result for odometry: a "match" six frames back carries six
+  frames of motion. After an interrupting frame the pooled window recovers
+  (>40% matched) while the strict pair set stays thin, and one case asserts
+  exactly that gap. Another shows the window earning its keep — pooled matching
+  recovers from a frame of churn that consecutive-only matching does not, by
+  more than 20 points.
+- **Track ids follow the point, not the index.** A matched feature inherits the
+  previous frame's id; inheriting by index would hand the id to whichever corner
+  happened to sort into that slot. Ids are never reused, even across a `reset()`,
+  so a consumer holding an old id can never find it pointing at something else.
+- **Parallel arrays stay in step.** The `Keypoints` message is flat parallel
+  arrays that a consumer indexes with one loop counter, so a length mismatch is
+  a wrong-answer bug rather than a crash.
+- **Matched pairs move the way the scene moved.** The property the rotation
+  estimator actually depends on, checked in the one case where the answer is
+  known: a pure 5 px translation must show a 5 px median displacement.
+- **A featureless frame yields nothing rather than garbage**, and the tracker
+  survives it — a hand over the lens mid-session must not poison the state.
+
+### The gate tools — 50 cases, `tools/test_check_*.py`
 
 `check_ipc.py` (18 cases) decides whether the container is zero-copy. Its cases
 are mostly the ways it must say **no**: one serialised frame among nine shared
@@ -91,6 +150,19 @@ every run), a collapsed delivered rate fails, and — the one that matters —
 
 There is also a case asserting that a *missing* hardware measurement fails
 rather than quietly passing on the strength of the checks that could still run.
+
+`check_keypoints.py` (19 cases) — the P3 gate's decision script, and the one
+whose cases are mostly about **not blaming the node for the fixture**. The bag
+was recorded over Wi-Fi while the camera was carried around a room, so its
+instantaneous rate swings between 7 and 60 Hz. One case feeds it a window where
+decode delivered 10 Hz and the stage processed 9.6 of them: the fixture floor
+fires, the node's keep-up ratio does not. Another feeds it a stage genuinely
+falling behind a healthy decode, which must fail. Two more pin traps the gate
+shipped with: `/pipeline/stats` carries every stage, so reading the camera's
+record instead of the keypoint node's passes for the wrong reason; and
+**`ros2 topic echo` silently elides strings past 128 characters**, so a `detail`
+field that arrives truncated must fail rather than print `uncalibrated ?` for a
+number that was there all along.
 
 ## Rules
 
@@ -165,6 +237,7 @@ just test-pi     # the same gtest cases on the Pi, under Jazzy
 just gate-build      # P0: builds on both distros, interfaces identical
 just gate-capture    # P1: the camera, against real hardware
 just gate-ipc        # P2: the container is really zero-copy, both machines
+just gate-keypoints  # P3: ORB keeps up and matches, replayed off bags/desk1
 just gate-provision  # P9: the playbook is idempotent and the Pi matches
 ```
 

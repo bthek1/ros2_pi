@@ -38,3 +38,45 @@ ipc_probe_node:
     # Only loaded when the launch is given `probe:=true`. Ten frames is plenty
     # to compare addresses and short enough not to bury the launch output.
     frames: 10
+
+# --- P3, in the container --------------------------------------------------
+
+keypoint_node:
+  ros__parameters:
+    # ORB. The feature cap is the predecessor's; the pyramid is NOT — OpenCV
+    # defaults to 8 levels, which measured 9.6 ms/frame at 1280x720 here
+    # against 6.8 ms at 4 (2026-09-07). Four levels still span a 1.73x scale
+    # range, and consecutive frames 30 ms apart barely change scale at all.
+    max_features: 500
+    pyramid_levels: 4
+    scale_factor: 1.2
+    # The POOLED match window — "have I seen this point recently?". It does not
+    # touch the odometry, which always matches strictly against the previous
+    # frame. 10 frames forgives the detection churn that costs consecutive-only
+    # matching ~25% of its keypoints.
+    match_window: 10
+    # Hamming bits of 256 above which a match is a similar-looking corner
+    # rather than the same physical point.
+    match_max_distance: 64
+
+    # The pose gate. Below min_matched_pairs, or above max_residual_rad mean
+    # ray residual, the node HOLDS the last pose instead of publishing a guess
+    # — fusion integrates depth at whatever pose it is handed, and one bad
+    # rotation smears the room permanently.
+    min_matched_pairs: 8
+    max_residual_rad: 0.03
+
+    # The annotated preview leaves the container, so it is drawn, JPEG-encoded
+    # and serialised. Deliberately far below the frame rate: at 30-60 Hz it
+    # would spend most of this stage's budget on a picture for humans.
+    preview_rate_hz: 10.0
+    jpeg_quality: 80
+
+    # EXACTLY ONE node may own odom -> base_link. Two publishers on one edge
+    # is the failure that smears a mesh and appears in no single log.
+    publish_tf: true
+    odom_frame: odom
+    base_frame: base_link
+
+    stats_period_s: 1.0
+    stale_after_s: 2.0

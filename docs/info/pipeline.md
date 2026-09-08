@@ -128,11 +128,30 @@ mailbox drops (decode keeps up with the camera) and zero undecodable frames.
 into camera motion.
 
 - `cv::ORB`, **500 features** — enough that ranking churn at the cap does not
-  dominate, cheap enough at 30+ fps. ~5 ms/frame **(target)**.
-- Match against a **pooled window of the last 10 frames**, not just the previous
-  one: strict frame-to-frame matching loses ~25% of keypoints to detection
-  flicker at the feature cap **(inherited)**. Reject matches whose Hamming
-  distance exceeds 64 of 256 bits — a lookalike corner is worse than no corner.
+  dominate, cheap enough at 30+ fps. **7.0 ms/frame measured** on `bags/desk1`
+  (2026-09-07), 59-60 Hz live against the camera.
+- **Four pyramid levels, not OpenCV's eight.** Measured 9.6 ms/frame at eight
+  levels against 6.8 at four, at 1280×720. What the extra levels buy is *scale*
+  invariance, and between two frames 30 ms apart there is almost no scale change
+  to be invariant to; four levels at 1.2 still span 1.73×, which covers a
+  hand-held sweep's approach and retreat. It is a parameter, not a constant,
+  because the calculation changes the day something matches across a **wide**
+  baseline — P7's keyframes, or loop closure.
+- **There are two matchings, and they answer different questions.** Confusing
+  them is the subtle bug this stage is shaped to prevent.
+  - *Pooled*, against the last 10 frames: "have I seen this point recently?"
+    Strict frame-to-frame matching alone loses ~25% of keypoints to detection
+    flicker at the feature cap **(inherited)**. Pooling holds **94.1% matched**
+    (measured) against the predecessor's ~90%. It drives the preview colours and
+    the matched-fraction statistic.
+  - *Strict*, against the previous frame only: "where did this exact point
+    move?" That is the only question motion can be estimated from, so it feeds
+    `match_index`, the track ids and the rotation estimate. Using the pooled
+    result for odometry would be the real trap — a match six frames back carries
+    six frames of motion, and feeding that to a one-frame estimator produces a
+    confident wrong answer.
+  - Either way, reject matches whose Hamming distance exceeds 64 of 256 bits —
+    a lookalike corner is worse than no corner.
 - **Two odometry regimes, and be honest about which is running:**
   - *Rotation only* (bearing rays, no depth): robust, cheap, and **wrong the
     moment the camera translates**. A hand pan carries ~0.9 m of arm arc, which
@@ -150,6 +169,21 @@ into camera motion.
 
 `/keypoints` carries positions, descriptors and per-feature match ids so the
 dashboard can draw tracks without recomputing anything.
+
+**The annotated preview gets its own thread.** Drawing 500 rich keypoints and
+JPEG-encoding a 1280×720 frame costs ~9 ms, and on the tracking thread that
+measured as a p95 of 20.6 ms against a 10.9 ms mean, plus a steady trickle of
+dropped frames. It is the house rule applied to our own code: a picture for
+humans is work that costs milliseconds, so it gets a thread and a one-deep
+mailbox like every other expensive stage, and it is rate-limited to 10 Hz
+because it leaves the container and pays for serialisation. p95 fell to 9.6 ms.
+
+**As of 2026-09-07 the odometer is built but inert.** `camera_node` publishes K
+all zeros, so the node reports `regime=detect_only` and rejects every frame with
+`no_intrinsics` — the honest behaviour, since a fabricated focal length would
+turn "no pose" into "a confident wrong pose". The gates and the geometry are
+covered by 16 unit tests over synthetic ray bundles and by nothing else. **P11**
+is the calibration that switches it on.
 
 ## Stage 4 — Depth (`depth_node`, dev box, GPU)
 
