@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of **2026-09-01**. The build order and per-phase tests live in
+Status as of **2026-09-08**. The build order and per-phase tests live in
 the bootstrap plan, [issue #1](https://github.com/bthek1/ros2_pi/issues/1);
 this page is the one-line status view. Milestones map to plan phases: M1 = P0,
 M2 = P1, and so on through M9 = P8.
@@ -8,7 +8,8 @@ M2 = P1, and so on through M9 = P8.
 | # | Milestone | Status |
 | --- | --- | --- |
 | M0 | Docs and working agreement | **done 2026-09-01** — this tree |
-| M1 | Workspace skeleton: `pimesh_msgs`, `pimesh_bringup`, justfile, both machines build | not started |
+| M0.5 | Scaffolding proven: `pimesh_hello`, composed container, both distros, clean teardown | **done 2026-09-08** — [issue #2](https://github.com/bthek1/ros2_pi/issues/2), five `just gate-hello-*` recipes |
+| M1 | Workspace skeleton: `pimesh_msgs`, `pimesh_bringup`, justfile, both machines build | not started — the justfile, the two-machine build loop and the component pattern already exist from M0.5 |
 | M2 | `pimesh_camera` on the Pi — V4L2 MJPEG, honest capture stamps, fails loudly | not started |
 | M3 | Dev-box container — `decode_node` with intra-process comms proven zero-copy | not started |
 | M4 | `keypoint_node` — ORB, matching, annotated preview | not started |

@@ -14,12 +14,22 @@ where it pays.
 
 ## Status
 
-**Documentation only.** As of 2026-09-01 there is no code in this repository —
-`docs/` is the design and the working agreement, and
-[docs/info/roadmap.md](docs/info/roadmap.md) tracks what has actually been
-built. The numbers quoted throughout are measured, but they were measured on the
-Python predecessor at [`~/Documents/piros2`](../piros2), which implements the
-same pipeline on the same hardware.
+**The scaffolding runs; the pipeline is not started.** As of 2026-09-08 the
+repository holds one package, `src/pimesh_hello/`, which publishes `"hello
+world"` and exists to prove the structure everything else will be built on —
+components composed in one container with the message handed over as a pointer,
+parameters from a keyed YAML, the same source built under both distros, and a
+session that leaves nothing running on either machine. `just` lists the recipes;
+`just gate-hello-build`, `-talk`, `-ipc`, `-lan` and `-clean` are the tests, and
+[gh issue #2](https://github.com/bthek1/ros2_pi/issues/2) records what each one
+printed.
+
+No camera, depth, fusion, mesh or dashboard code exists yet — that is
+[gh issue #1](https://github.com/bthek1/ros2_pi/issues/1), and
+[docs/info/roadmap.md](docs/info/roadmap.md) tracks it. The numbers quoted
+throughout `docs/` are measured, but on the Python predecessor at
+[`~/Documents/piros2`](../piros2), which implements the same pipeline on the
+same hardware.
 
 ## Why a rewrite
 
@@ -74,7 +84,9 @@ Measured on this hardware, via the predecessor:
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause |
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones |
 | [docs/plans/README.md](docs/plans/README.md) | How plans are written here: a GitHub issue of stable phases, a command for a test, executable phases only |
-| [Issue #1 — bootstrap plan](https://github.com/bthek1/ros2_pi/issues/1) | The build order, P0–P8, each ending in a `just gate-*` test |
+| [Issue #1 — bootstrap plan](https://github.com/bthek1/ros2_pi/issues/1) | The build order, P0–P8, each ending in a `just gate-*` test — not started |
+| [Issue #2 — hello-world plan](https://github.com/bthek1/ros2_pi/issues/2) | Closed 2026-09-08: the scaffolding that exists, and what each gate measured |
+| [Issue #3 — justfile plan](https://github.com/bthek1/ros2_pi/issues/3) | Grouped recipes and gate bodies in `tools/`, so the justfile stays a table of contents — not started |
 | [docs/plans/future/bootstrap-future.md](docs/plans/future/bootstrap-future.md) | Deferred work, each entry with the trigger that promotes it into the plan |
 
 Plans live in the issue tracker, not in this tree: `gh issue list --label plan`.

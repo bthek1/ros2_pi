@@ -124,8 +124,9 @@ gh issue close 2 --reason completed --comment "All gates green; see body for mea
 
 | Plan | Status | Future file |
 | --- | --- | --- |
-| [#2 Hello-world plan](https://github.com/bthek1/ros2_pi/issues/2) | Open — P0–P4, the first C++ package on both machines | [future/hello-world-future.md](future/hello-world-future.md) |
+| [#2 Hello-world plan](https://github.com/bthek1/ros2_pi/issues/2) | **Closed 2026-09-08** — P0–P4 done, all five gates green; kept as the build log | [future/hello-world-future.md](future/hello-world-future.md) |
 | [#1 Bootstrap plan](https://github.com/bthek1/ros2_pi/issues/1) | Open, `deferred` — P0–P8, the whole pipeline | [future/bootstrap-future.md](future/bootstrap-future.md) |
+| [#3 Justfile plan](https://github.com/bthek1/ros2_pi/issues/3) | Open — P0–P3, group the recipes and move the gate bodies to `tools/` | — |
 
 This table is a convenience, not the source of truth —
 `gh issue list --label plan --state all` is.

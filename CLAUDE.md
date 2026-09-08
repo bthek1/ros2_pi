@@ -23,11 +23,22 @@ copy its structure wholesale: the point of the rewrite is to do in one process
 with `rclcpp` components what Python needed three processes and two interpreters
 to do.
 
-### Status: nothing is built yet
+### Status: the scaffolding runs, the pipeline does not
 
-As of 2026-09-01 this repo contains documentation only — no `src/`, no packages,
-no builds. Everything in `docs/` is **design intent**, not a description of
-running code. When you build something, change the doc that describes it from
+As of **2026-09-08** there is exactly one package, `src/pimesh_hello/`, and it
+exists to prove the structure rather than to do anything: a C++ `ament_cmake`
+package, two `rclcpp_components` components composed into one container with
+intra-process comms measured handing over the pointer, parameters from a keyed
+YAML, the same source built from scratch under **both** distros, and a session
+that tears itself down on either machine. Five `just gate-hello-*` recipes
+assert all of it — [gh issue #2](https://github.com/bthek1/ros2_pi/issues/2)
+carries the numbers each one printed.
+
+**Nothing of the actual pipeline exists.** No camera, no depth, no fusion, no
+mesh, no dashboard — that is
+[gh issue #1](https://github.com/bthek1/ros2_pi/issues/1), and everything the
+rest of `docs/` says about those stages is **design intent**, not a description
+of running code. When you build something, change the doc that describes it from
 future tense to a measured statement, and say what you measured it with.
 
 Do not write "the node publishes X at Y Hz" until a node has published X and you
@@ -278,7 +289,8 @@ somebody once.
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause, mostly inherited and worth reading before debugging |
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones and their status |
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: a GitHub issue of stable phases, a command for a test, executable-only, and the future file |
-| `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — the first C++ package on both machines; [#1 bootstrap](https://github.com/bthek1/ros2_pi/issues/1) — the whole pipeline, P0–P8 |
+| `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#1 bootstrap](https://github.com/bthek1/ros2_pi/issues/1) — the whole pipeline, P0–P8, not started; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — group the recipes, move gate bodies to `tools/`, not started |
+| [docs/plans/future/hello-world-future.md](docs/plans/future/hello-world-future.md) | Work deferred out of the hello-world plan, each entry with its trigger |
 | [docs/plans/future/bootstrap-future.md](docs/plans/future/bootstrap-future.md) | Work deferred out of the bootstrap plan, each entry with the trigger that would make it executable |
 
 When hardware facts change (camera replugged, Pi reflashed, IP moved), update

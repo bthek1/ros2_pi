@@ -544,3 +544,84 @@ gate-hello-lan:
     echo "payload          : \"${payload}\"  (assert \"${marker}\")"
     echo "received         : ${received} of 40 in 20 s at 2 Hz  (assert >= 34)"
     echo "PASS gate-hello-lan"
+
+# Run the composed container here. seconds = how long to run it
+hello-compose seconds="30":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{ ws }}"
+    source "{{ ws }}/tools/ros-env.sh" --overlay
+
+    cleanup() {
+        pkill -f 'rclcpp_components/[c]omponent_container' 2>/dev/null || true
+        sleep 0.5
+        pkill -f 'ros2 launch pimesh_[a-z]*' 2>/dev/null || true
+    }
+    trap cleanup EXIT INT TERM HUP
+
+    timeout -s INT {{ seconds }} ros2 launch pimesh_hello hello.launch.py
+
+# P4 gate: Ctrl-C and a closed window both leave nothing running, on either machine
+gate-hello-clean:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{ ws }}"
+    source "{{ ws }}/tools/ros-env.sh" --overlay
+    echo "== gate-hello-clean =="
+
+    log=$(mktemp -d)/clean.log
+
+    # Start with a clean slate, or the gate cannot tell its own leak from
+    # somebody else's.
+    if ! {{ just_executable() }} stragglers >/dev/null 2>&1; then
+        echo "FAIL: something was already running before the gate started"
+        {{ just_executable() }} stragglers || true
+        exit 1
+    fi
+
+    # setsid so the session gets its own process group. That is what makes the
+    # kill below realistic: a terminal sends Ctrl-C to the foreground *group*,
+    # not to one pid, and a trap that only covers the pid it was installed on
+    # would pass a weaker test than the one it has to survive.
+    run_and_signal() {          # $1 = INT or HUP
+        setsid {{ just_executable() }} hello-lan 45 >"$log" 2>&1 &
+        local launcher=$! pgid up=0
+        pgid=$(ps -o pgid= -p "$launcher" | tr -d ' ')
+
+        # Both ends must actually be up, or killing them proves nothing.
+        for _ in $(seq 45); do
+            if pgrep -f '/lib/[p]imesh_hello/' >/dev/null 2>&1 &&
+               ssh {{ ssh_opts }} {{ pi }} "bash -lc 'pgrep -f \"/lib/[p]imesh_[a-z]*/\"'" \
+                   >/dev/null 2>&1; then
+                up=1; break
+            fi
+            sleep 1
+        done
+        if [[ $up -ne 1 ]]; then
+            echo "FAIL: the session never got both ends running, so there was nothing to kill"
+            tail -20 "$log"; return 1
+        fi
+
+        kill -"$1" -"$pgid" 2>/dev/null || true
+        sleep 3
+        return 0
+    }
+
+    counts=""
+    for sig in INT HUP; do
+        run_and_signal "$sig"
+        # `just stragglers` is the assertion: it prints a count per host and
+        # exits non-zero if any survived.
+        out=$({{ just_executable() }} stragglers 2>&1) && rc=0 || rc=$?
+        echo "--- after SIG${sig} ---"
+        echo "$out"
+        if [[ $rc -ne 0 ]]; then
+            echo "FAIL: SIG${sig} left processes behind"
+            exit 1
+        fi
+        counts+="SIG${sig}: $(grep -o '[0-9]*$' <<<"$out" | tr '\n' '/' | sed 's:/$::')  "
+    done
+
+    echo
+    echo "survivors dev/pi : ${counts}(assert 0/0 after each signal)"
+    echo "PASS gate-hello-clean"

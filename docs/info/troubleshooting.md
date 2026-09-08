@@ -117,6 +117,24 @@ With driver 595.84 it reports OpenGL 4.6 in hardware — the old software-GL
 workaround (`LIBGL_ALWAYS_SOFTWARE=1`) is obsolete and should not be
 reintroduced.
 
+## `pkill -f` killed the shell that ran it
+
+`pkill -f` matches full command lines, and the command line running the `pkill`
+is one of them. Typing `pkill -f component_container_mt` at a terminal kills that
+terminal's shell. Measured three times in one afternoon, 2026-09-08.
+
+Two defences, both used by the recipes in the root `justfile`:
+
+- **Bracket the first character** — `[c]omponent_container_mt` matches the
+  process and not the pattern's own text.
+- **Anchor on the installed path** — `/lib/[p]imesh_hello/` rather than a bare
+  word. The bracket only protects the pattern's own characters; a command that
+  mentions the plain word anywhere else, in a comment included, still matches.
+
+`just stragglers` goes further and drops every process in the caller's own
+process group, which is the complete fix: a genuine straggler has outlived its
+session and is therefore in a different one.
+
 ## Nodes keep logging after a recipe ends
 
 Killing a background `bash -lc` wrapper orphans its ros2 grandchildren, which
