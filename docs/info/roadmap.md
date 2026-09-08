@@ -1,7 +1,7 @@
 # Roadmap
 
 Status as of **2026-09-01**. The build order and per-phase tests live in
-[../plans/in-progress/bootstrap-plan.md](../plans/in-progress/bootstrap-plan.md);
+the bootstrap plan, [issue #1](https://github.com/bthek1/ros2_pi/issues/1);
 this page is the one-line status view. Milestones map to plan phases: M1 = P0,
 M2 = P1, and so on through M9 = P8.
 
@@ -38,8 +38,8 @@ Work that is real but not executable yet is **not** in the plan. It sits in
 [../plans/future/bootstrap-future.md](../plans/future/bootstrap-future.md), each
 entry with the trigger that would make it executable — CUDA TSDF kernels, the
 TensorRT provider, relocalisation, a CUDA OpenCV build, and the loop-closure
-work that becomes M10. When a trigger fires, the entry moves into the plan as
-the next phase number. Nothing waits in both places.
+work that becomes M10. When a trigger fires, the entry moves into the plan
+issue's body as the next phase number. Nothing waits in both places.
 
 ## Never in scope
 

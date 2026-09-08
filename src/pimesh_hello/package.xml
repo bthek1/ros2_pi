@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pimesh_hello</name>
+  <version>0.1.0</version>
+  <description>
+    The smallest package that exercises this workspace's structural decisions:
+    a C++ ament_cmake package, an rclcpp_components component with a thin main,
+    parameters from a keyed YAML, and two components composed into one container
+    with intra-process comms. It publishes "hello world" — the payload is
+    trivial so that every failure is a failure of the scaffolding.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Every dependency here must also exist on Jazzy: the Pi builds this same
+       package.xml from source (P3). Nothing else goes in this list. -->
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>std_msgs</depend>
+
+  <!-- Launch only: the container is composed by launch/hello.launch.py.
+       exec_depend, not depend — nothing here compiles against it. -->
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

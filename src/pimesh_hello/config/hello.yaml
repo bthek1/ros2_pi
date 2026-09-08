@@ -1,0 +1,16 @@
+# Parameters for the composed hello session, keyed by node name.
+#
+# `/**` matches any namespace, so `/**/hello_node` reaches the node whether it
+# is at /hello_node or pushed under a namespace by the launch file. A key that
+# does not match the node's fully-qualified name is not an error: the file loads,
+# the parameter is never applied, and the node runs on its code default. That
+# silent no-op has cost this project's predecessor real time, which is why
+# gate-hello-ipc asserts on the *value* rather than on the file loading.
+/**/hello_node:
+  ros__parameters:
+    rate_hz: 2.0
+    text: "hello world"
+
+/**/echo_node:
+  ros__parameters:
+    input_topic: /hello_node/hello

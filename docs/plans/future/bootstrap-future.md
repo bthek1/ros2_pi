@@ -1,11 +1,11 @@
 # Future — deferred out of the bootstrap plan
 
-Companion to [../in-progress/bootstrap-plan.md](../in-progress/bootstrap-plan.md).
+Companion to the bootstrap plan, [issue #1](https://github.com/bthek1/ros2_pi/issues/1).
 
 Everything here is **not executable yet**, which is why it is not a phase. Each
 entry names the **trigger** that would make it executable. When a trigger fires,
-the entry is **deleted from this file** and appended to the plan as the next
-unused phase number, with a test — see [../README.md](../README.md).
+the entry is **deleted from this file** and appended to that issue's body as the
+next unused phase number, with a test — see [../README.md](../README.md).
 
 "Later" is not a trigger. If an entry's trigger is not something that can be
 observed happening, it is not written down properly yet.
@@ -25,8 +25,8 @@ correcting (P6), and it is a plan of its own — four phases at least, with its 
 gates and its own reference bag.
 
 **Trigger.** P7 done **and** `just gate-odom` showing drift over the 60 s clip
-that a closure could remove. At that point it becomes its own plan
-(`slam-plan.md`), not a phase appended here.
+that a closure could remove. At that point it becomes its own plan issue, not a
+phase appended here.
 
 ---
 

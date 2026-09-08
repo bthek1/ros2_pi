@@ -150,10 +150,15 @@ strong priors, re-verify before quoting a number as this project's own.
   an address the Pi cannot route to. After changing any `ROS_*` or DDS variable,
   `ros2 daemon stop && ros2 daemon start` — it caches discovery state and will
   otherwise show you a stale graph and mask a fix that worked.
-- **The dev box's `python3` is PlatformIO's venv**, which shadows the system
-  Python for `#!/usr/bin/env python3` shebangs — rqt and other GUI tools crash
-  with `No module named 'yaml'`. Prefix `PATH=/usr/bin:$PATH` for those. C++
-  nodes are immune; launch files are not.
+- **Two Pythons shadow the system one on this box**, and they break different
+  things. PlatformIO's venv wins `#!/usr/bin/env python3`, so rqt and other GUI
+  tools crash with `No module named 'yaml'` — prefix `PATH=/usr/bin:$PATH`. A
+  uv-managed `~/.local/bin/python3.14` wins CMake's `FindPython3`, so **every
+  `ament_cmake` package fails at `ament_package()`** with
+  `No module named 'catkin_pkg'` (measured 2026-09-08): ament shells out to
+  Python at *configure* time, so a C++-only package is not immune. Build with
+  `--cmake-args -DPython3_EXECUTABLE=/usr/bin/python3`, which `just build`
+  already passes. Running C++ nodes are immune; building them is not.
 - **The session is Wayland.** `rviz2` renders through GLX and needs
   `QT_QPA_PLATFORM=xcb`; it was measured working with hardware GL (4.6) on
   driver 595.84 as of 2026-08-31, so the old software-GL workaround is obsolete.
@@ -205,11 +210,23 @@ strong priors, re-verify before quoting a number as this project's own.
   "needs a human" for the physical world — a tape-measure scale check, exposure
   in a real room, whether the mesh looks like the room. The RViz window is a
   viewer, not the evidence.
-- **Docs split by kind**: reference in `docs/info/`, plans in `docs/plans/`. A
-  plan starts in `docs/plans/in-progress/` and is *moved* to `completed/` when
-  done — moving the file is the status change, so fix inbound links when it
-  moves.
-- **Every plan is a markdown file of executable phases, and nothing else.** The
+- **Docs split by kind**: reference lives in `docs/info/`; `docs/plans/` holds
+  only the rules and the future files.
+- **A plan is a GitHub issue, never a markdown file in this repo.** When asked
+  to write a plan, open one with
+  `gh issue create --label plan --title "<name> plan — <one line>" --body-file <file>`
+  — the issue body *is* the plan. Do not create `docs/plans/*.md`, and do not
+  paste a plan into chat instead of filing it. Add the `deferred` label if it is
+  written down but not being started now.
+- **Completion is closing the issue** —
+  `gh issue close <n> --reason completed` — and that is the only status change
+  there is. Close it only when **every phase is annotated done in the body and
+  its gate has been run**, not when the code exists; abandoned work is closed
+  with `--reason "not planned"` and a comment saying what replaced it. A closed
+  plan issue is the **build log**: annotate phases as you go with the date and
+  what the test printed, and never edit that history out. Fix inbound links in
+  `docs/plans/README.md` and here when a plan's status changes.
+- **Every plan is a list of executable phases, and nothing else.** The
   three rules, in full in [docs/plans/README.md](docs/plans/README.md):
   1. **Stable phases.** `## P0`, `## P1`, … Once written, a phase's number and
      scope never change, so "P3" means the same thing in every doc, commit
@@ -226,13 +243,13 @@ strong priors, re-verify before quoting a number as this project's own.
      back in 48 hours", "monitor for a week", "revisit once we have more data",
      or "decide later whether to keep it".
 - **Deferred work lives in `docs/plans/future/`, never in a plan.** Each plan
-  may have one companion `docs/plans/future/<name>-future.md` holding the items
+  issue may have one companion `docs/plans/future/<name>-future.md` holding the items
   that are not executable yet. Every entry there names **the trigger that would
   make it executable** — the measurement, the phase, or the hardware it is
   waiting on. When the trigger fires, the entry is deleted from the future file
-  and appended to the plan as the **next unused phase number**, with a test.
-  Moving work into a plan is the only way it gets built; moving it into the
-  future file is the only way it gets deferred. It never sits in both.
+  and appended to the plan **issue's body** as the **next unused phase number**,
+  with a test. Moving work into a plan is the only way it gets built; moving it
+  into the future file is the only way it gets deferred. It never sits in both.
 - `build/`, `install/`, `log/`, model weights and bag files are git-ignored.
 
 ## Working here
@@ -260,8 +277,8 @@ somebody once.
 | [docs/info/setup.md](docs/info/setup.md) | Getting both machines to build and run this, including the GPU stack |
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause, mostly inherited and worth reading before debugging |
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones and their status |
-| [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: stable phases, a command for a test, executable-only, and the future file |
-| [docs/plans/in-progress/bootstrap-plan.md](docs/plans/in-progress/bootstrap-plan.md) | The build order, P0–P8 — each phase startable now and ending in a test recipe |
+| [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: a GitHub issue of stable phases, a command for a test, executable-only, and the future file |
+| `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — the first C++ package on both machines; [#1 bootstrap](https://github.com/bthek1/ros2_pi/issues/1) — the whole pipeline, P0–P8 |
 | [docs/plans/future/bootstrap-future.md](docs/plans/future/bootstrap-future.md) | Work deferred out of the bootstrap plan, each entry with the trigger that would make it executable |
 
 When hardware facts change (camera replugged, Pi reflashed, IP moved), update

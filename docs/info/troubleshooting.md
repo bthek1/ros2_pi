@@ -85,8 +85,30 @@ is a decision to state out loud, not a fix to slip in.
 ## rqt or another Python tool crashes with `No module named 'yaml'`
 
 The dev box's `python3` is PlatformIO's venv, which shadows the system Python
-for `#!/usr/bin/env python3` shebangs. Prefix `PATH=/usr/bin:$PATH`. C++ nodes
-are immune.
+for `#!/usr/bin/env python3` shebangs. Prefix `PATH=/usr/bin:$PATH`. Running C++
+nodes are immune — *building* them is not, see the next entry.
+
+## A C++ package fails to build with `No module named 'catkin_pkg'`
+
+Measured on the dev box 2026-09-08, on the very first `colcon build` this
+workspace ever ran:
+
+```
+CMake Error at .../ament_package_xml.cmake:95 (message):
+  execute_process(/home/proxmox-ml5/.local/bin/python3.14 .../package_xml_2_cmake.py ...)
+  returned error code 1
+```
+
+`ament_cmake` is not a pure-CMake buildtool: it shells out to Python at
+*configure* time to turn `package.xml` into CMake variables. CMake's
+`FindPython3` picks the highest version it can see, and this box has two 3.14s
+on `PATH` — apt's in `/usr/bin`, which owns ROS's `dist-packages`, and a
+uv-managed one in `~/.local/bin`, which has never heard of `catkin_pkg`.
+
+Name the interpreter rather than reordering `PATH`, which only moves the
+coin-flip: `colcon build --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3`.
+`just build` passes this already; a hand-run `colcon build` does not, which is
+the main reason to use the recipe.
 
 ## `rviz2` will not start
 
