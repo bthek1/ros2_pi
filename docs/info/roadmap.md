@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of **2026-09-07**. The build order and per-phase tests live in
+Status as of **2026-09-08**. The build order and per-phase tests live in
 [../plans/in-progress/bootstrap-plan.md](../plans/in-progress/bootstrap-plan.md);
 this page is the one-line status view. Milestones map to plan phases: M1 = P0,
 M2 = P1, and so on through M9 = P8, plus **M11 = P9** and **M12 = P11**. M10 is
@@ -16,7 +16,7 @@ mesh.
 | M2 | `pimesh_camera` on the Pi — V4L2 MJPEG, honest capture stamps, fails loudly | **done 2026-09-02** — `just gate-capture` PASS, 5 ms stamps with 0.00 ms drift across launches |
 | M3 | Dev-box container — `decode_node` with intra-process comms proven zero-copy | **done 2026-09-04** — `just gate-ipc` PASS ×2, 10/10 frames at the same address, 10/10 differing in the control run |
 | M4 | `keypoint_node` — ORB, matching, annotated preview | **done 2026-09-07** — `just gate-keypoints` PASS ×2, 6.99 ms/frame, 94.1% matched, keeping up with 96.4% of what decode delivers |
-| M5 | `depth_node` — ONNX Runtime C++ on the GPU, metric depth published | not started |
+| M5 | `depth_node` — ONNX Runtime C++ on the GPU, metric depth published | **done 2026-09-08** — `just gate-depth` PASS ×2, 55-61 ms/frame on CUDAExecutionProvider, 10/10 RGB twins byte-identical. Depth is *relative* until P5's tape measure |
 | M6 | `fusion_node` — TSDF integration with per-frame scale alignment | not started |
 | M7 | `mesh_node` — marching cubes, cleanup, Marker + PLY export | not started |
 | M8 | 6-DoF odometry from RGB-D keypoints, so the surface stops smearing | not started |
@@ -28,7 +28,7 @@ mesh.
 ## Tests
 
 Separate from the milestones, because they are a layer rather than a step. As
-of 2026-09-07, **0 failures**: `just test` reports **58 gtest** and **50
+of 2026-09-08, **0 failures**: `just test` reports **71 gtest** and **50
 pytest** on the dev box, `just test-pi` **11 gtest** under Jazzy on aarch64.
 The gtest cases cover `pimesh_camera` (timestamp arithmetic, failure paths) and
 `pimesh_perception` (the one-deep mailbox, JPEG decode, the rotation geometry,

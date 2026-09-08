@@ -1,10 +1,10 @@
 # Testing
 
-*Current as of 2026-09-07: 53 gtest cases (10 in `pimesh_camera`, 43 in
-`pimesh_perception`) and 50 pytest cases for the gate tools, plus five gates.
+*Current as of 2026-09-08: 65 gtest cases (10 in `pimesh_camera`, 55 in
+`pimesh_perception`) and 50 pytest cases for the gate tools, plus six gates.
 All passing. The Pi builds only `pimesh_msgs` and `pimesh_camera`, so
 `just test-pi` runs the 10 that belong to it; `just test` runs everything here
-and reports 58 through `colcon test-result`, which counts each test binary
+and reports 71 through `colcon test-result`, which counts each test binary
 alongside its cases.*
 
 ## Two layers, and they answer different questions
@@ -13,7 +13,7 @@ alongside its cases.*
 | --- | --- | --- |
 | Ask | is this logic right? | does the real system do what we claim? |
 | Need hardware | **never** | yes — camera, Wi-Fi, two machines |
-| Run with | `just test`, `just test-pi` | `just gate-build`, `just gate-capture`, `just gate-ipc`, `just gate-keypoints`, `just gate-provision` |
+| Run with | `just test`, `just test-pi` | `just gate-build`, `just gate-capture`, `just gate-ipc`, `just gate-keypoints`, `just gate-depth`, `just gate-provision` |
 | Take | under a second | 1–4 minutes |
 | Live in | `src/*/test/`, `tools/test_*.py` | the justfile, one per plan phase |
 
@@ -49,7 +49,7 @@ has no camera.
   and the errno in the message. These matter most and would otherwise only be
   exercised by accident.
 
-### `pimesh_perception` — 43 cases, `src/pimesh_perception/test/`
+### `pimesh_perception` — 55 cases, `src/pimesh_perception/test/`
 
 - **The mailbox (9 cases).** The pipeline's back-pressure policy: newest frame
   wins, the unread one is dropped and counted. The cases pin the property that
@@ -125,6 +125,42 @@ it.
   known: a pure 5 px translation must show a 5 px median displacement.
 - **A featureless frame yields nothing rather than garbage**, and the tracker
   survives it — a hand over the lens mid-session must not poison the state.
+
+### `test_depth_convert.cpp` — 12 cases, the P4 arithmetic
+
+The two pure steps either side of the depth model, pulled out of `DepthModel`
+so they could be tested at all: inside that class they sit either side of an
+`Ort::Session`, which needs a 99 MB model file and a GPU to exist. They live in
+`perception_core` and **not** `depth_core`, so nothing near them includes an
+ONNX Runtime header and they run on a machine that has never installed it.
+
+What they cover is the class of bug this stage is most exposed to — the kind
+that produces a plausible depth map that is quietly wrong and throws nothing.
+
+- **BGR to RGB (1 case).** OpenCV hands us BGR; the model was trained on RGB.
+  A pure-blue BGR image must land in the *last* plane. Swapping them throws
+  nothing and yields depth that looks roughly right.
+- **CHW, not HWC (1 case).** A left-black / right-white frame must show that
+  split independently in every plane; interleaved layout would alternate every
+  three elements instead.
+- **ImageNet normalisation (1 case).** Checked against the arithmetic —
+  `(v/255 − mean) / std` per channel — rather than against itself.
+- **The patch constraint (2 cases).** A side that is not a multiple of 14 fails
+  here, loudly, rather than inside ONNX Runtime.
+- **Inverse depth (3 cases).** The model emits relative *inverse* depth: bigger
+  means nearer. A stage that forgot the inversion would build a room turned
+  inside out, so one case asserts the ordering directly. Another asserts that
+  doubling `depth_scale` doubles every distance and changes nothing else,
+  because that is the one knob P5's tape measure will move.
+- **The bound, and why it comes first (2 cases).** Zero and negative values are
+  what the model emits for "background, no idea". Flooring the *denominator*
+  bounds the output by construction; dividing first and clipping after leaves
+  infinities and NaNs, and one NaN propagates through a TSDF integration
+  silently.
+
+Both load-bearing cases were mutation-checked: skipping the BGR→RGB conversion
+turns `ConvertsBgrToRgb` red, and dividing before bounding turns
+`NeverProducesInfinityOrNaN` red.
 
 ### The gate tools — 50 cases, `tools/test_check_*.py`
 
@@ -238,6 +274,7 @@ just gate-build      # P0: builds on both distros, interfaces identical
 just gate-capture    # P1: the camera, against real hardware
 just gate-ipc        # P2: the container is really zero-copy, both machines
 just gate-keypoints  # P3: ORB keeps up and matches, replayed off bags/desk1
+just gate-depth      # P4: the GPU runs the model, and /depth/rgb is the right frame
 just gate-provision  # P9: the playbook is idempotent and the Pi matches
 ```
 

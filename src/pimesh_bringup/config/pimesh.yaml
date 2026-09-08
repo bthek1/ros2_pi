@@ -80,3 +80,37 @@ keypoint_node:
 
     stats_period_s: 1.0
     stale_after_s: 2.0
+
+# --- P4, in the container --------------------------------------------------
+
+depth_node:
+  ros__parameters:
+    # model_path is NOT here: models/ lives in the source workspace, not in the
+    # installed share/ tree, so the launch passes it through the PIMESH_MODEL
+    # environment variable that the `just` recipes export.
+
+    # The ViT works on 14x14 patches, so this MUST be a multiple of 14.
+    # 518 = 37 x 14 is the size the model was trained at; measured 52.5 ms a
+    # frame on this GPU (2026-09-08), against the predecessor's 72-79 ms for
+    # the same model through Python.
+    input_side: 518
+    # false forces the CPU path — for measuring the fallback deliberately
+    # rather than discovering it. ~290 ms a frame.
+    use_cuda: true
+
+    # THIS NUMBER IS ARBITRARY. Monocular depth is relative: the model says
+    # "twice as far", never "three metres". z = depth_scale / output, and
+    # nothing pins the scale until P5's tape measure does — the predecessor's
+    # room came out at 2.69. No stage downstream may assume metres are real
+    # before then.
+    depth_scale: 10.0
+    # Everything further reads as exactly this. Applied BEFORE the reciprocal,
+    # by flooring the inverse depth, so 1/x never explodes on the values the
+    # model means as "background, no idea".
+    max_depth_m: 6.0
+
+    stats_period_s: 1.0
+    # Longer than the other stages' 2 s: this one runs at ~19 Hz by design and
+    # a GPU hiccup should not flap the stale flag.
+    stale_after_s: 5.0
+    optical_frame: camera_optical_frame

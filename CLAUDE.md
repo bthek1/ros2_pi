@@ -23,9 +23,9 @@ copy its structure wholesale: the point of the rewrite is to do in one process
 with `rclcpp` components what Python needed three processes and two interpreters
 to do.
 
-### Status: P0-P3, P9 and P10 done — P4 next
+### Status: P0-P4, P9 and P10 done — P5 next
 
-As of 2026-09-07: `pimesh_msgs` and `pimesh_bringup` build on both machines
+As of 2026-09-08: `pimesh_msgs` and `pimesh_bringup` build on both machines
 (`just gate-build`), `ansible/` provisions the Pi (`just gate-provision`,
 idempotent), **the Pi captures** — `pimesh_camera` publishes
 `/image_raw/compressed` at up to 59 Hz with `CLOCK_MONOTONIC` capture stamps
@@ -34,8 +34,16 @@ container for **1.9-2.1 ms/frame**, and the zero-copy claim is measured, not
 assumed (`just gate-ipc`) — and **finds keypoints**: `keypoint_node` runs ORB
 at 500 features for **7.0 ms/frame**, holds **94.1% matched** against the
 predecessor's ~90%, and keeps up with 96.4% of what decode delivers
-(`just gate-keypoints`, replayed off `bags/desk1`). Live against the camera the
-keypoint stage measured **59-60 Hz**.
+(`just gate-keypoints`, replayed off `bags/desk1`) — and **infers depth on the
+GPU**: `depth_node` runs Depth Anything V2 Small through ONNX Runtime's CUDA
+provider at **55-61 ms/frame**, publishing `/depth` alongside `/depth/rgb`,
+which is byte-identical to the frame each map was inferred on (`just
+gate-depth`). Live against the camera the keypoint stage measured **59-60 Hz**.
+
+**Depth is RELATIVE, not metric.** `depth_scale` is 10.0 and arbitrary: the
+model says "twice as far", never "three metres". Every metre figure the pipeline
+publishes is provisional until P5's tape measure pins it — the predecessor's
+room came out at 2.69.
 
 **The rotation odometer exists but has never run on a real frame.** K is all
 zeros, so it reports `regime=detect_only` and rejects every frame with
@@ -43,11 +51,11 @@ zeros, so it reports `regime=detect_only` and rejects every frame with
 **P11 closes that** — it was promoted out of the future file on 2026-09-07 for
 exactly this reason, and needs a person with a checkerboard.
 
-Nothing downstream of keypoints exists yet. Everything else in `docs/` is still
+Nothing downstream of depth exists yet. Everything else in `docs/` is still
 **design intent**, not a description of running code.
 
-**0 test failures** — `just test` reports 58 gtest and 50 pytest on the dev box,
-`just test-pi` 11 gtest under Jazzy — alongside the five gates. See
+**0 test failures** — `just test` reports 71 gtest and 50 pytest on the dev box,
+`just test-pi` 11 gtest under Jazzy — alongside the six gates. See
 [docs/info/testing.md](docs/info/testing.md).
 
 **This repo now owns the Pi's configuration.** Its login shells source
@@ -121,16 +129,18 @@ message types and rates: [docs/info/pipeline.md](docs/info/pipeline.md).
 | --- | --- | --- | --- |
 | Capture | `camera_node` | Pi | 1280×720 MJPEG, up to 60 fps, stamped at `VIDIOC_DQBUF` |
 | Keypoints | `keypoint_node` | dev box | ORB, 500 features over 4 pyramid levels, **7.0 ms/frame measured** |
-| Depth | `depth_node` | dev box, **GPU** | Depth Anything V2 Small, 518², **72–79 ms/frame measured on this GPU** |
+| Depth | `depth_node` | dev box, **GPU** | Depth Anything V2 Small, 518², **55–61 ms/frame measured in the node** (52.5 ms for the model alone) |
 | Fusion | `fusion_node` | dev box | TSDF, 1.5 cm voxels, integrate at depth rate |
 | Surface | `mesh_node` | dev box | marching cubes, re-mesh every ~10 s |
 | View | `dashboard_node` | dev box | web UI, 10 Hz stats, ~10 fps preview |
 
-The 72–79 ms figure is real: it is what `piros2` measured for the same ONNX model
-on this exact GPU through the CUDA execution provider (CPU fallback was
-280–305 ms). **Depth is the pipeline's clock.** Nothing downstream of it can run
-faster than ~13 Hz, and design accordingly — do not build a fusion stage that
-assumes 30 Hz input.
+Measured here 2026-09-08: **52.5 ms** for the model alone (`just gpu-probe`)
+and 55–61 ms in the node, against the predecessor's 72–79 ms for the same ONNX
+file on the same GPU. A CPU fallback is 280–305 ms. **Depth is the pipeline's
+clock.** Nothing downstream of it can run faster than ~18 Hz, and design
+accordingly — do not build a fusion stage that assumes 30 Hz input. At 42 Hz
+input the depth stage processes ~30% of frames and drops the rest in its
+one-deep mailbox, which is the design working, not a fault.
 
 ## Constraints that are easy to get wrong
 
@@ -175,12 +185,19 @@ strong priors, re-verify before quoting a number as this project's own.
   megabyte frames does not drop tiny ones equally.
 - **`/dev/video1` is not a capture device** — it is the C922's UVC metadata node.
   Capture is `/dev/video0`.
-- **The GPU has no CUDA toolkit installed** (measured: `nvcc` absent, no
-  `libcudart` in `/usr/lib`). The driver is there (595.84) and Python's
-  `onnxruntime-gpu` works because pip wheels vendor the CUDA runtime. **A C++
-  build gets none of that** — `depth_node` needs the ONNX Runtime GPU release
-  tarball, and any hand-written CUDA kernel needs a real toolkit install first.
-  [docs/info/setup.md](docs/info/setup.md#gpu) has the plan; do not assume `nvcc`.
+- **The GPU still has no CUDA toolkit, and does not need one.** `nvcc` is
+  absent and there is no `libcudart` in `/usr/lib`; that is correct and
+  deliberate. `just install-onnxruntime` puts ONNX Runtime's GPU tarball and a
+  pinned CUDA *runtime* (from NVIDIA's pip wheels, ~2 GB, no root) under
+  `~/.local/opt`. **Two traps live here**, both measured 2026-09-08:
+  the tarball ships **no** CUDA runtime — `objdump -p` on its CUDA provider
+  names `libcudart.so.13`, `libcublas.so.13`, `libcublasLt.so.13` and
+  `libcurand.so.10` as needed-and-absent; and those libraries are **dlopened by
+  ONNX Runtime's provider, not linked by our binary**, so no rpath of ours
+  reaches them and every recipe that starts the container must export
+  `LD_LIBRARY_PATH`. Get it wrong and the session silently falls back to the
+  CPU: five times slower, still producing correct-looking depth. Any
+  hand-written CUDA kernel would still need a real toolkit install first.
 - **The GPU is Turing TU116: compute capability 7.5, 6 GB, no tensor cores.**
   fp16 buys bandwidth, not math throughput. Budget fp32 and do not plan around
   TensorRT fp16 speedups you have not measured.

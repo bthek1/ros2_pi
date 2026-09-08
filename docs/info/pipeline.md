@@ -191,7 +191,22 @@ is the calibration that switches it on.
 
 - **Depth Anything V2 Small (ViT-S/14), ONNX.** RGB in, ImageNet-normalised,
   spatial dims a multiple of 14 — **518 = 37×14** is the trained size. ~99 MB of
-  weights, fetched and checksummed, never committed.
+  weights, fetched and checksummed by `just fetch-model`, never committed.
+  Measured 2026-09-08: **52.5 ms/frame** for the model alone and **55–61 ms** in
+  the node, against the predecessor's 72–79 ms for the same file on the same
+  GPU. The extra few milliseconds are the resize down, the BGR→RGB and HWC→CHW
+  pass, the resize back up to 1280×720, and one memcpy into the message.
+- **A CPU fallback is a failed test, not a degraded mode.** ONNX Runtime will
+  build a session with no CUDA provider, run at ~290 ms, and produce depth maps
+  that are *correct* — just five times too slow, reported as a warning nobody
+  reads. `depth_node` logs the provider it got at ERROR level when it is not
+  CUDA, and the gate asserts it from two independent places.
+- **The output is relative INVERSE depth**, larger for nearer things, on a scale
+  the model invents per frame. Metres are `depth_scale / output`, bounded by
+  flooring the *denominator* rather than clipping the quotient — dividing first
+  runs 1/x on the values the model means as "background, no idea" and leaves
+  infinities behind, and one NaN propagates through a TSDF integration
+  silently. **`depth_scale` is arbitrary until P5's tape measure pins it.**
 - **ONNX Runtime C++ with the CUDA execution provider**, CPU as an explicit
   fallback that logs which provider it got. Do not let it silently land on CPU
   and then wonder why the mesh stopped updating.

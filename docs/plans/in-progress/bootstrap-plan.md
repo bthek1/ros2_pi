@@ -1,6 +1,6 @@
 # Bootstrap plan — one webcam to a live mesh, in C++
 
-**Started 2026-09-01. Last updated 2026-09-07.** The build order for the whole
+**Started 2026-09-01. Last updated 2026-09-08.** The build order for the whole
 pipeline.
 
 Written to the rules in [../README.md](../README.md): **stable phase numbers**,
@@ -31,16 +31,16 @@ date and what the test printed).
 | **P1** | `camera_node` on the Pi | `just gate-capture` | **✓ 2026-09-02** — PASS ×2, 0.00 ms stamp drift |
 | **P2** | `decode_node` + the container | `just gate-ipc` | **✓ 2026-09-04** — PASS ×2, 10/10 frames at the same address |
 | **P3** | `keypoint_node`, `bags/desk1` | `just gate-keypoints` | **✓ 2026-09-07** — PASS ×2, 6.99 ms/frame, 94.1% matched |
-| **P4** | `depth_node` on the GPU | `just gate-depth` | ☐ **next** |
-| **P5** | `fusion_node` (TSDF) | `just gate-fusion` | ☐ |
+| **P4** | `depth_node` on the GPU | `just gate-depth` | **✓ 2026-09-08** — PASS ×2, 55-61 ms/frame on CUDA, 10/10 RGB twins byte-identical |
+| **P5** | `fusion_node` (TSDF) | `just gate-fusion` | ☐ **next** |
 | **P6** | `mesh_node` (marching cubes) | `just gate-mesh` | ☐ |
 | **P7** | 6-DoF odometry | `just gate-odom` | ☐ |
 | **P8** | `dashboard_node` | `just gate-dashboard` | ☐ |
 | **P9** | `ansible/` — the Pi's configuration as code | `just gate-provision` | **✓ 2026-09-02** — PASS ×2, idempotent (11 → 0) |
-| **P10** | Unit tests and the recipes that run them | `just test`, `just test-pi` | **✓ 2026-09-04** — 0 failures; now 58 gtest here, 11 on the Pi, 50 pytest |
+| **P10** | Unit tests and the recipes that run them | `just test`, `just test-pi` | **✓ 2026-09-04** — 0 failures; now 71 gtest here, 11 on the Pi, 50 pytest |
 | **P11** | Camera calibration, loaded and published | `just gate-calibration` | ☐ — promoted out of the future file by P3 |
 
-**6 of 12 phases done.** No phase has been abandoned or rescoped. **One entry
+**7 of 12 phases done.** No phase has been abandoned or rescoped. **One entry
 has been promoted** out of
 [../future/bootstrap-future.md](../future/bootstrap-future.md): loading a camera
 calibration, which became P11 when P3 shipped a rotation estimator that K-all-
@@ -51,7 +51,7 @@ been written after the ones that follow it and executed before them: P9 on
 2026-09-02, ahead of P1, putting the Pi's toolchain under version control before
 P1 built against it; and P10 on 2026-09-04, ahead of P2, so that every phase
 from P2 on inherits a place to put a unit test instead of inventing one.
-**Next is P4.** Rule 1 says a plan never grows a phase in the middle, so all of
+**Next is P5.** Rule 1 says a plan never grows a phase in the middle, so all of
 these were appended at the next unused number and the table's Status column
 carries the ordering. That is the rule working, not a wart: "P1" still means the
 same thing it meant yesterday. P11 arrived the same way — a promotion out of the
@@ -450,6 +450,82 @@ measured 72–79 ms on this GPU), and that `/depth/rgb` is byte-identical to the
 frame each depth map was inferred on. Prints mean, p95, and the provider.
 
 A CPU fallback is a **failed** test however good the mesh looks.
+
+### What happened
+
+Landed 2026-09-08. `just gate-depth` PASS ×2:
+
+```
+ok  the startup log names CUDAExecutionProvider
+ok  the running session reports provider=CUDAExecutionProvider
+ok  the model loaded and warmed (state=ready)
+ok  mean per-frame cost 55.4 ms <= 80 ms budget
+ok  55.4 ms is GPU-shaped (< 150 ms; the CPU path measured 280-305 ms)
+ok  179/187 depth messages (96%) have a /depth/rgb at the same stamp
+ok  10/10 /depth/rgb frames are BYTE-IDENTICAL to the camera frame
+```
+
+**The setup risk did not materialise, and the standalone-first order is why.**
+`just gpu-probe` — 130 lines of C++ with no ROS, no colcon and no CMake in it —
+printed `CUDAExecutionProvider, 52.5 ms/frame` before a single line of
+`depth_node` existed. Every later failure could therefore be attributed to our
+code rather than to the toolchain, which is the whole value of doing it in that
+order.
+
+**52.5 ms, against the predecessor's 72-79 ms** for the same ONNX file on the
+same GPU. The rewrite is 1.4× faster here and the budget has real headroom. In
+the node the figure is **55-61 ms**, the difference being preprocessing, the
+resize back up to 1280×720, and one memcpy into the message.
+
+**ONNX Runtime's GPU tarball ships no CUDA runtime.** It carries
+`libonnxruntime.so` and the CUDA provider and expects `libcudart.so.13`,
+`libcublas`, `libcublasLt` and `libcurand` to already be on the loader path —
+`objdump -p` on the provider names all four. They come from NVIDIA's pip wheels
+rather than the apt toolkit: the runtime alone is ~2 GB against the toolkit's
+~5, it needs no root and no apt repo, and the pinned versions are the ones the
+predecessor already had working on driver 595.84. `nvcc` is still absent
+afterwards, which is correct — nothing in this phase compiles CUDA.
+
+**It installs to a user-owned prefix, not `/opt`.** `sudo` on this box needs a
+password, and a recipe that stops to prompt for one cannot be run by a gate.
+`docs/info/setup.md` said `/opt`; it now says why it does not. `PIMESH_OPT`
+overrides it for anyone who does install as root.
+
+**The CUDA libraries are dlopened by ONNX Runtime's provider, not linked by
+us**, so no rpath of ours reaches them and `LD_LIBRARY_PATH` has to be exported
+by every recipe that starts the container. Get that wrong and the session falls
+back to the CPU — five times slower, still producing correct-looking depth, and
+reported as a warning nobody reads. That is why the gate asserts the provider
+from **two independent places**: the startup log line and the per-second stats
+field.
+
+**The pairing probe was wrong twice, in the same way P3's rate assertion was.**
+It first reported "1 depth message has no `/depth/rgb`" — but it subscribes from
+outside the container with `KEEP_LAST(1)` and services one callback per
+`spin_once`, so it dropped independently on each topic and compared different
+subsets: 9 depth against 11 rgb. Deepening the queue was not enough, because it
+also *stopped* at its tenth byte comparison and truncated both stamp sets
+mid-stream, leaving the boundary frame looking orphaned. Running the full window
+and judging only the interior of it took the sample from 8 depth messages to
+187. **Both fixes removed an artefact rather than loosening a threshold**, which
+is the distinction that matters: the pairing figure is asserted as a ratio and
+labelled as bounded by the probe's own reception, while the exactness claim
+rides on the byte comparison, which no amount of dropping can fake.
+
+**Tests: 12 new gtest cases**, and the refactor that made them possible.
+`preprocess_frame` and `relative_to_metres` were pulled out of `DepthModel`
+into `perception_core`, where nothing includes an ONNX Runtime header — so they
+run on a machine that has never installed it, and on the Pi's toolchain if it
+ever needs to. They cover the class of bug this stage is most exposed to: the
+kind that yields a plausible depth map that is quietly wrong and throws
+nothing. Both were mutation-checked — skipping the BGR→RGB conversion turns
+`ConvertsBgrToRgb` red, and dividing before bounding instead of after turns
+`NeverProducesInfinityOrNaN` red.
+
+**`depth_scale` is still 10.0 and still arbitrary.** Monocular depth is
+relative; every metre figure this stage publishes is provisional until P5's tape
+measure pins it. The gate says so on every run rather than letting a reader
+assume otherwise.
 
 ---
 

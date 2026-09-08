@@ -29,13 +29,32 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(tf2_ros REQUIRED)
 
+# P4: ONNX Runtime, the GPU build, installed by `just install-onnxruntime` into
+# a user-owned prefix. NOT a system package and NOT findable by pkg-config's
+# default search path, so the location is passed in explicitly — `just build`
+# sets ONNXRUNTIME_ROOT. Without it this package still builds, minus depth_node,
+# which is deliberate: a fresh clone should compile before it has downloaded
+# 2 GB of CUDA runtime.
+set(ONNXRUNTIME_ROOT "$ENV{ONNXRUNTIME_ROOT}" CACHE PATH
+  "root of an ONNX Runtime GPU install (see just install-onnxruntime)")
+set(PIMESH_HAVE_ORT FALSE)
+if(ONNXRUNTIME_ROOT AND EXISTS "${ONNXRUNTIME_ROOT}/include/onnxruntime_cxx_api.h")
+  set(PIMESH_HAVE_ORT TRUE)
+  message(STATUS "pimesh: ONNX Runtime at ${ONNXRUNTIME_ROOT}")
+else()
+  message(WARNING
+    "pimesh: no ONNX Runtime — SKIPPING depth_node. "
+    "Run `just install-onnxruntime`, then rebuild.")
+endif()
+
 # The ROS-free half, so the logic can be tested without a node or a camera.
 # `mailbox.hpp` is header-only (a template); the rest need a TU.
 #
 # This library is where P3's real content lives. `rotation.cpp` is driven by
 # test_rotation with synthetic ray bundles and known rotations — a thing the
 # node could never be tested for, because the node needs a camera and a room.
-add_library(perception_core src/jpeg.cpp src/orb_tracker.cpp src/rotation.cpp)
+add_library(perception_core
+  src/jpeg.cpp src/orb_tracker.cpp src/rotation.cpp src/depth_convert.cpp)
 target_include_directories(perception_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -75,6 +94,41 @@ target_link_libraries(keypoint_node_component PUBLIC
 rclcpp_components_register_node(keypoint_node_component
   PLUGIN "pimesh_perception::KeypointNode"
   EXECUTABLE keypoint_node_composed)
+
+# P4: monocular depth on the GPU. The only target in the workspace that needs
+# something outside apt and ROS, hence the guard.
+if(PIMESH_HAVE_ORT)
+  add_library(depth_core src/depth_model.cpp)
+  target_include_directories(depth_core PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    ${ONNXRUNTIME_ROOT}/include)
+  # perception_core holds the pure preprocessing and the inverse-depth
+  # conversion — the parts of this stage that are testable without a GPU.
+  target_link_libraries(depth_core PUBLIC
+    perception_core ${ONNXRUNTIME_ROOT}/lib/libonnxruntime.so)
+
+  add_library(depth_node_component SHARED src/depth_node.cpp)
+  target_include_directories(depth_node_component PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+  target_link_libraries(depth_node_component PUBLIC
+    depth_core
+    rclcpp::rclcpp
+    rclcpp_components::component
+    ${sensor_msgs_TARGETS}
+    ${pimesh_msgs_TARGETS})
+  rclcpp_components_register_node(depth_node_component
+    PLUGIN "pimesh_perception::DepthNode"
+    EXECUTABLE depth_node_composed)
+
+  add_executable(depth_node src/depth_node_main.cpp)
+  target_link_libraries(depth_node PRIVATE depth_node_component rclcpp::rclcpp)
+
+  install(TARGETS depth_core depth_node_component
+    ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+  install(TARGETS depth_node DESTINATION lib/${PROJECT_NAME})
+endif()
 
 # The zero-copy probe. A diagnostic, loaded only when the launch is asked for
 # it (`probe:=true`) and by `just gate-ipc`.
@@ -125,6 +179,12 @@ if(BUILD_TESTING)
   # be exercised without the Pi.
   ament_add_gtest(test_orb_tracker test/test_orb_tracker.cpp)
   target_link_libraries(test_orb_tracker perception_core)
+
+  # The two pure steps either side of the depth model. In perception_core and
+  # not depth_core on purpose: these run on a machine with no ONNX Runtime and
+  # no GPU.
+  ament_add_gtest(test_depth_convert test/test_depth_convert.cpp)
+  target_link_libraries(test_depth_convert perception_core)
 endif()
 
 ament_package()

@@ -24,6 +24,41 @@ camera_by_id := "/dev/v4l/by-id/usb-046d_C922_Pro_Stream_Webcam_5461327F-video-i
 # trap it sits in. Never drop these two options.
 ssh_opts := "-o BatchMode=yes -o ConnectTimeout=5"
 
+# --- P4: the depth model and the runtime that executes it -------------------
+#
+# Depth Anything V2 Small, ONNX, ~99 MB. Fetched and checksummed, never
+# committed — `models/` is git-ignored, and the model never goes to the Pi
+# (`sync-pi` excludes it): the Pi is a sensor head, inference is dev-box only.
+model_url  := "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx"
+model_sha  := "afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c"
+model_path := justfile_directory() / "models/depth_anything_v2_small.onnx"
+
+# ONNX Runtime, the GPU build. **cuda13**, not cuda12: the CUDA runtime that is
+# known to work on this box with driver 595.84 is 13.3, measured in the
+# predecessor's environment. Picking the cuda12 tarball would load, find no
+# matching runtime, and fall back to CPU — which is a 4x slowdown reported as a
+# warning nobody reads. See docs/info/setup.md#gpu.
+ort_version := "1.29.0"
+ort_tarball := "onnxruntime-linux-x64-gpu_cuda13-" + ort_version + ".tgz"
+ort_sha     := "844c64acfc43ab9423215c26493055ea229268e28283146cc644ecef0bdae048"
+
+# A USER-OWNED prefix, not /opt, and that is deliberate. `sudo` on this box
+# needs a password, and a recipe that stops to prompt for one cannot be run by
+# a gate — gates run unattended or they are not gates. Nothing here needs root:
+# it is a library and a model, read by one user's processes. Override with
+# PIMESH_OPT to put it elsewhere (`/opt`, if you install it as root).
+opt_prefix := env_var_or_default("PIMESH_OPT", env_var("HOME") / ".local/opt")
+ort_root   := opt_prefix / "onnxruntime"
+# The CUDA runtime ONNX Runtime needs at load time. NOT bundled in the tarball:
+# that ships libonnxruntime and the providers and expects libcudart,
+# libcublas, libcublasLt and libcurand to already be on the loader path.
+cuda_root  := opt_prefix / "cuda-runtime"
+# Both, for LD_LIBRARY_PATH. The CUDA libraries are opened by ONNX Runtime's
+# provider .so and not by our binary, so an rpath on our own target does not
+# reach them — this is how they get found, and it must be exported for every
+# process that creates a session.
+ort_ld     := ort_root / "lib" + ":" + cuda_root / "lib"
+
 # List the recipes.
 default:
     @just --list
@@ -41,6 +76,11 @@ build *args:
     export PATH="/usr/bin:${PATH}"
     source "{{ros}}/setup.bash"
     cd "{{ws}}"
+    # Where depth_node finds ONNX Runtime. Exported rather than passed with
+    # --cmake-args so that `just build --packages-select ...` keeps it too; the
+    # package builds WITHOUT it, minus depth_node, so a fresh clone compiles
+    # before it has downloaded 2 GB of CUDA runtime.
+    export ONNXRUNTIME_ROOT="{{ort_root}}"
     # The compiled packages export a compile database (see their CMakeLists);
     # colcon writes one per package, so they are merged into
     # build/compile_commands.json, which .vscode/c_cpp_properties.json reads.
@@ -153,6 +193,14 @@ pipeline *args:
     trap 'pkill -f component_container_mt >/dev/null 2>&1 || true' EXIT
     source "{{ros}}/setup.bash"
     source "{{ws}}/install/setup.bash"
+    # depth_node's CUDA libraries are dlopened by ONNX Runtime's provider .so,
+    # not linked by our binary, so no rpath of ours reaches them — without this
+    # the CUDA provider fails to load and the session falls back to the CPU,
+    # which is ~290 ms a frame reported as a warning nobody reads.
+    export LD_LIBRARY_PATH="{{ort_ld}}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    # models/ is in the source workspace, not the installed share/ tree, so the
+    # launch cannot compute this path.
+    export PIMESH_MODEL="{{model_path}}"
     ros2 launch pimesh_bringup pimesh.launch.py {{args}}
 
 # A leaked camera process holds /dev/video0 exclusively and every later session
@@ -172,6 +220,100 @@ stragglers:
         echo "pi:      STRAGGLERS"; echo "${pi_hits}"; fi
 
 # ---------------------------------------------------------------- gates ----
+
+# Asserts: the startup log names CUDAExecutionProvider, the running session
+# agrees, one frame costs <= 80 ms on the node's own clock, and every /depth/rgb
+# is BYTE-IDENTICAL to the camera frame its depth map was inferred from.
+#
+# A CPU fallback is a FAILED test however good the depth looks.
+#
+# P4 gate — monocular depth on the GPU, replayed off bags/desk1.
+[group('gate')]
+gate-depth bag='desk1':
+    #!/usr/bin/env bash
+    set -o pipefail
+    fail=0
+    out=$(mktemp -d)
+    trap 'rm -rf "${out}"' EXIT
+    export PATH="/usr/bin:${PATH}"
+    source "{{ros}}/setup.bash"
+    source "{{ws}}/install/setup.bash"
+    export LD_LIBRARY_PATH="{{ort_ld}}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    export PIMESH_MODEL="{{model_path}}"
+
+    echo "== P4 gate: depth on the GPU =="
+
+    if [ ! -f "{{model_path}}" ]; then
+        echo "  FAIL  the model is missing — run 'just fetch-model'"
+        echo "P4 GATE FAIL"; exit 1
+    fi
+    bag="{{ws}}/bags/{{bag}}"
+    if [ ! -d "${bag}" ]; then
+        echo "  FAIL  bags/{{bag}} does not exist — record it with 'just record {{bag}} 60'"
+        echo "P4 GATE FAIL"; exit 1
+    fi
+    echo "-- hardware --"
+    nvidia-smi --query-gpu=name,driver_version,memory.used,memory.total \
+        --format=csv,noheader | sed 's/^/  /'
+
+    # Loading and warming a CUDA session takes ~0.7 s, so the replay starts
+    # later here than in the P3 gate. Everything is bounded up front and the
+    # launch runs in the FOREGROUND under `timeout -s INT` — a shell without
+    # job control sets SIGINT to SIG_IGN for background children, which leaves
+    # a backgrounded launch un-interruptible and orphans its components.
+    ( sleep 14
+      timeout -s INT 20 ros2 topic echo --full-length /pipeline/stats \
+          > "${out}/stats.txt" 2>&1 || true ) &
+    stats_pid=$!
+    # The pairing probe subscribes /depth/rgb, so it costs real loopback
+    # bandwidth. It runs once, for a handful of frames, and stops.
+    ( sleep 14
+      # --timeout is the probe's OWN deadline and is shorter than the
+      # `timeout` around it: the outer one is a backstop, and a probe killed by
+      # it prints a traceback where its numbers should be.
+      timeout -s INT 26 python3 "{{ws}}/tools/depth_pair_probe.py" \
+          --frames 10 --timeout 18 > "${out}/pairs.txt" 2>&1 || true ) &
+    probe_pid=$!
+    ( sleep 10
+      timeout -s INT -k 10 30 ros2 bag play "${bag}" > "${out}/play.log" 2>&1 || true ) &
+    play_pid=$!
+
+    # -k is required: `ros2 launch` has a SIGINT race that hangs it forever
+    # roughly one run in three, and `timeout` without a backstop waits forever.
+    timeout -s INT -k 15 46 ros2 launch pimesh_bringup pimesh.launch.py \
+        > "${out}/run.log" 2>&1
+    rc=$?
+    wait "${stats_pid}" 2>/dev/null || true
+    wait "${probe_pid}" 2>/dev/null || true
+    wait "${play_pid}" 2>/dev/null || true
+
+    echo "-- assertions --"
+    python3 "{{ws}}/tools/check_depth.py" \
+        --stats "${out}/stats.txt" --log "${out}/run.log" || fail=1
+
+    echo "-- the RGB twin --"
+    cat "${out}/pairs.txt" 2>/dev/null || echo "  FAIL  the pairing probe wrote nothing"
+    grep -q 'FAIL' "${out}/pairs.txt" 2>/dev/null && fail=1
+    grep -q 'BYTE-IDENTICAL' "${out}/pairs.txt" 2>/dev/null || fail=1
+
+    echo "-- teardown --"
+    case "${rc}" in
+      124) echo "  ok    the launch shut down on SIGINT" ;;
+      137) echo "  warn  the launch needed the SIGKILL backstop — ros2 launch's"\
+                " event-loop race, not the container" ;;
+      *)   echo "  info  the launch exited ${rc}" ;;
+    esac
+    sleep 2
+    left=$(pgrep -f '[c]omponent_container_mt' | wc -l | tr -d ' ')
+    if [ "${left}" = "0" ]; then
+        echo "  ok    dev box clean"
+    else
+        echo "  FAIL  ${left} container(s) still running"; fail=1
+    fi
+
+    echo
+    if [ "${fail}" -eq 0 ]; then echo "P4 GATE PASS"; else echo "P4 GATE FAIL"; fi
+    exit "${fail}"
 
 # Asserts: both builds succeed, all five interface definitions are byte-identical
 # across the two distros, and camera_link → camera_optical_frame resolves.
@@ -396,6 +538,152 @@ gate-provision:
     echo "g++ on the Pi: $(get gpp)   apply: changed ${changed1} → ${changed2}"
     if [ "${fail}" -eq 0 ]; then echo "P9 GATE PASS"; else echo "P9 GATE FAIL"; fi
     exit "${fail}"
+
+# ONNX Runtime's GPU tarball ships libonnxruntime and its CUDA provider, and
+# NOTHING ELSE — no libcudart, no libcublas, no cuDNN. Those have to be on the
+# loader path or the CUDA provider fails to load and ONNX Runtime falls back to
+# CPU, which on this GPU is a 4x slowdown reported as a warning nobody reads.
+# So this recipe installs both halves and then PROVES the provider resolves.
+#
+# The CUDA half comes from NVIDIA's pip wheels rather than the apt toolkit:
+# they are the runtime alone (~2 GB against the toolkit's ~5), they need no
+# root and no apt repo, and these exact versions are the ones measured working
+# on this box with driver 595.84. `nvcc` is still absent afterwards, which is
+# correct — nothing here compiles CUDA. The day a hand-written TSDF kernel
+# needs one, that is a real toolkit install and a separate decision.
+#
+# Install ONNX Runtime (GPU) and the CUDA runtime it needs. Idempotent.
+[group('build')]
+install-onnxruntime:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    export PATH="/usr/bin:${PATH}"
+
+    # --- ONNX Runtime itself ------------------------------------------------
+    if [ -f "{{ort_root}}/VERSION_NUMBER" ] && \
+       [ "$(cat "{{ort_root}}/VERSION_NUMBER")" = "{{ort_version}}" ]; then
+        echo "onnxruntime {{ort_version}} already at {{ort_root}}"
+    else
+        tmp=$(mktemp -d)
+        trap 'rm -rf "${tmp}"' EXIT
+        echo "fetching {{ort_tarball}} (~191 MB)"
+        curl -fL --progress-bar -o "${tmp}/ort.tgz" \
+            "https://github.com/microsoft/onnxruntime/releases/download/v{{ort_version}}/{{ort_tarball}}"
+        got=$(sha256sum "${tmp}/ort.tgz" | cut -d' ' -f1)
+        if [ "${got}" != "{{ort_sha}}" ]; then
+            echo "CHECKSUM FAILED — got ${got}, want {{ort_sha}}"
+            echo "nothing was installed"
+            exit 1
+        fi
+        tar xzf "${tmp}/ort.tgz" -C "${tmp}"
+        mkdir -p "$(dirname "{{ort_root}}")"
+        rm -rf "{{ort_root}}"
+        mv "${tmp}/onnxruntime-linux-x64-gpu_cuda13-{{ort_version}}" "{{ort_root}}"
+        echo "installed onnxruntime {{ort_version}} → {{ort_root}}"
+    fi
+
+    # --- the CUDA runtime it dlopens ----------------------------------------
+    #
+    # Pinned, all of them. An unpinned `nvidia-cublas` would silently move to a
+    # CUDA 14 build the day one ships, and the failure mode is a provider that
+    # no longer loads — reported as a CPU fallback, not as an error.
+    wheels="nvidia-cuda-runtime==13.3.29 nvidia-cublas==13.6.0.2"
+    wheels="${wheels} nvidia-curand==10.4.3.29 nvidia-cudnn-cu13==9.24.0.43"
+    wheels="${wheels} nvidia-nvjitlink==13.3.33"
+    echo "installing the CUDA 13 runtime (~2 GB) → {{cuda_root}}"
+    # --no-deps because these wheels depend on each other by unpinned range,
+    # and resolving that would undo the pinning above.
+    /usr/bin/python3 -m pip install --quiet --no-deps --upgrade \
+        --target "{{cuda_root}}" ${wheels}
+
+    # The wheels scatter their libraries under nvidia/<component>/lib. One flat
+    # directory of symlinks is what LD_LIBRARY_PATH can actually name.
+    rm -rf "{{cuda_root}}/lib"
+    mkdir -p "{{cuda_root}}/lib"
+    find "{{cuda_root}}/nvidia" -name '*.so*' -type f \
+        -exec ln -sf {} "{{cuda_root}}/lib/" \;
+    echo "linked $(ls "{{cuda_root}}/lib" | wc -l) libraries into {{cuda_root}}/lib"
+
+    # --- prove it ------------------------------------------------------------
+    #
+    # An install that "succeeded" but leaves the provider unable to resolve its
+    # dependencies is exactly the silent CPU fallback this recipe exists to
+    # prevent, so the check is part of installing rather than a separate step.
+    echo "-- resolving the CUDA provider --"
+    missing=$(LD_LIBRARY_PATH="{{ort_ld}}" ldd "{{ort_root}}/lib/libonnxruntime_providers_cuda.so" \
+        | grep 'not found' || true)
+    if [ -n "${missing}" ]; then
+        echo "FAIL — the CUDA provider cannot resolve:"
+        echo "${missing}"
+        exit 1
+    fi
+    echo "  ok    libonnxruntime_providers_cuda.so resolves every dependency"
+    echo
+    echo "onnxruntime {{ort_version}}  {{ort_root}}"
+    echo "cuda runtime               {{cuda_root}}"
+    echo "LD_LIBRARY_PATH            {{ort_ld}}"
+
+# P4 says: no ROS code until this prints CUDAExecutionProvider. The failure it
+# guards against is silent — ONNX Runtime will create a CPU session, run the
+# model at ~290 ms instead of ~75, and report it as a warning nobody reads. So
+# the probe treats the CUDA provider as a hard requirement AND checks the
+# timing, because a session can hold the provider and still have fallen back
+# per-node. Built with g++ directly: no colcon, no ROS, no CMake, nothing else
+# to blame.
+#
+# Prove ONNX Runtime runs the depth model on the GPU. Standalone, no ROS.
+[group('build')]
+gpu-probe runs='20':
+    #!/usr/bin/env bash
+    set -eo pipefail
+    export PATH="/usr/bin:${PATH}"
+    if [ ! -f "{{ort_root}}/lib/libonnxruntime.so" ]; then
+        echo "onnxruntime is not installed — run 'just install-onnxruntime'"
+        exit 1
+    fi
+    if [ ! -f "{{model_path}}" ]; then
+        echo "the depth model is not present — run 'just fetch-model'"
+        exit 1
+    fi
+    out=$(mktemp -d)
+    trap 'rm -rf "${out}"' EXIT
+    g++ -O2 -std=c++17 -o "${out}/ort_probe" "{{ws}}/tools/ort_probe.cpp" \
+        -I "{{ort_root}}/include" -L "{{ort_root}}/lib" -lonnxruntime
+    nvidia-smi --query-gpu=name,driver_version,memory.used,memory.total \
+        --format=csv,noheader
+    LD_LIBRARY_PATH="{{ort_ld}}" "${out}/ort_probe" "{{model_path}}" {{runs}}
+
+# Verifies the checksum BEFORE the file lands at its final path, so a truncated
+# or corrupted download can never become the file `depth_node` loads.
+#
+# Fetch the depth model into models/ (idempotent).
+[group('build')]
+fetch-model:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    if [ -f "{{model_path}}" ]; then
+        have=$(sha256sum "{{model_path}}" | cut -d' ' -f1)
+        if [ "${have}" = "{{model_sha}}" ]; then
+            echo "model present and verified: {{model_path}}"
+            echo "sha256 {{model_sha}}"
+            exit 0
+        fi
+        echo "model present but sha256 MISMATCH — refetching"
+        echo "  have ${have}"
+        echo "  want {{model_sha}}"
+    fi
+    mkdir -p "$(dirname "{{model_path}}")"
+    echo "fetching Depth Anything V2 Small (~99 MB)"
+    curl -fL --progress-bar -o "{{model_path}}.part" "{{model_url}}"
+    got=$(sha256sum "{{model_path}}.part" | cut -d' ' -f1)
+    if [ "${got}" != "{{model_sha}}" ]; then
+        rm -f "{{model_path}}.part"
+        echo "CHECKSUM FAILED — got ${got}, want {{model_sha}}"
+        echo "nothing was written; the model was NOT installed"
+        exit 1
+    fi
+    mv "{{model_path}}.part" "{{model_path}}"
+    echo "verified and installed: {{model_path}}"
 
 # ---------------------------------------------------------------- camera ----
 

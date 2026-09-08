@@ -19,9 +19,12 @@ The dashboard and RViz stay OUTSIDE this container on purpose: they are
 viewers, they can afford serialisation, and they must be able to die without
 taking the pipeline with them.
 
-As of P3 the container holds `decode_node` and `keypoint_node`, plus an
-optional zero-copy probe (`probe:=true`, which is what `just gate-ipc`
-launches). Each later phase adds its own component to the list below, and the
+As of P4 the container holds `decode_node`, `keypoint_node` and `depth_node`,
+plus an optional zero-copy probe (`probe:=true`, which is what `just gate-ipc`
+launches). The three consume the same decoded buffer at three different rates —
+keypoints at the camera's, depth at whatever the GPU sustains (~19 Hz) — and
+the one-deep mailbox in each is what lets them disagree without a queue growing
+between them. Each later phase adds its own component to the list below, and the
 container is what makes the phase's intra-process guarantee testable.
 """
 
@@ -31,7 +34,8 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import (EnvironmentVariable, LaunchConfiguration,
+                                  PythonExpression)
 from launch.conditions import IfCondition
 from launch_ros.actions import ComposableNodeContainer, LoadComposableNodes
 from launch_ros.descriptions import ComposableNode
@@ -44,6 +48,7 @@ def generate_launch_description():
 
     config = LaunchConfiguration('config')
     probe = LaunchConfiguration('probe')
+    model = LaunchConfiguration('model')
 
     # One knob, not two. `probe:=true` has to switch on BOTH sides of the
     # comparison — decode_node logging what it published and the probe logging
@@ -76,6 +81,16 @@ def generate_launch_description():
             description='pass buffers between components instead of '
                         'serialising them. false is for gate-ipc, which proves '
                         'the check can fail, and for nothing else'),
+        DeclareLaunchArgument(
+            'model',
+            # models/ lives in the source workspace, not in the installed
+            # share/ tree, so the launch cannot compute this path. The `just`
+            # recipes export PIMESH_MODEL; an empty value makes depth_node say
+            # so at startup rather than failing somewhere less obvious.
+            default_value=EnvironmentVariable('PIMESH_MODEL', default_value=''),
+            description='absolute path to the Depth Anything V2 ONNX file. '
+                        '`just fetch-model` puts it in models/, and the just '
+                        'recipes pass it through PIMESH_MODEL'),
         DeclareLaunchArgument(
             'probe', default_value='false',
             description='load ipc_probe_node, which logs the address of every '
@@ -118,7 +133,16 @@ def generate_launch_description():
                     parameters=[config],
                     extra_arguments=[intra_process],
                 ),
-                # P4: depth_node
+                ComposableNode(
+                    package='pimesh_perception',
+                    plugin='pimesh_perception::DepthNode',
+                    name='depth_node',
+                    parameters=[
+                        config,
+                        {'model_path': ParameterValue(model, value_type=str)},
+                    ],
+                    extra_arguments=[intra_process],
+                ),
                 # P5: fusion_node
                 # P6: mesh_node
             ],

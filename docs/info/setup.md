@@ -25,8 +25,19 @@ sudo apt install -y \
 
 ### GPU
 
-This is the part that needs doing and is not trivial. The driver (595.84) is
-installed. Nothing else is.
+**Done at P4, 2026-09-08.** `just install-onnxruntime` installs both halves and
+proves the CUDA provider resolves; `just gpu-probe` then measures the model on
+the GPU with no ROS in the picture. Measured: **52.5 ms/frame** for Depth
+Anything V2 Small at 518², against the predecessor's 72-79 ms for the same ONNX
+file on the same GPU.
+
+```bash
+just install-onnxruntime   # ONNX Runtime 1.29.0 (cuda13) + the CUDA runtime
+just fetch-model           # the model, checksummed
+just gpu-probe             # prints the provider and the per-frame cost
+```
+
+What follows is what that automates, and the traps it took to get there.
 
 **`nvcc` is absent and there is no CUDA runtime in `/usr/lib`.** Python's
 `onnxruntime-gpu` works anyway because its wheels vendor the CUDA libraries — a
@@ -35,14 +46,32 @@ C++ build gets none of that.
 Two things need the toolkit, and they are separable:
 
 1. **ONNX Runtime with the CUDA execution provider** — needed by `depth_node`.
-   The lowest-friction route is the **prebuilt GPU release tarball** from ONNX
-   Runtime's GitHub releases: headers plus `libonnxruntime.so` and the CUDA
-   provider shared library, unpacked into `/opt/onnxruntime` and found by CMake
-   via an explicit `ONNXRUNTIME_ROOT`. It still needs the matching CUDA runtime
-   and cuDNN present at load time — check the release's stated versions against
-   what driver 595.84 supports before downloading, and **log which provider the
-   session actually got at startup** so a silent CPU fallback is visible in one
-   line rather than as "the mesh got slow".
+   The **prebuilt GPU release tarball**, `onnxruntime-linux-x64-gpu_cuda13`:
+   headers, `libonnxruntime.so`, the CUDA provider, and a CMake config. Found
+   by CMake through `ONNXRUNTIME_ROOT`, which `just build` exports.
+   **cuda13, not cuda12** — the runtime that works on this box with driver
+   595.84 is 13.3, and picking the wrong one loads, finds nothing, and falls
+   back to CPU.
+
+   **The tarball ships no CUDA runtime.** `objdump -p` on the CUDA provider
+   names four sonames it needs and does not carry: `libcudart.so.13`,
+   `libcublas.so.13`, `libcublasLt.so.13`, `libcurand.so.10`. Those come from
+   NVIDIA's **pip wheels**, pinned — the runtime alone is ~2 GB against the apt
+   toolkit's ~5, needs no root and no apt repo, and these versions are the ones
+   already measured working here. `nvcc` stays absent, which is correct:
+   nothing in P4 compiles CUDA.
+
+   **It installs to `~/.local/opt`, not `/opt`.** `sudo` on this box needs a
+   password, and a recipe that stops to prompt for one cannot be run by a gate.
+   Set `PIMESH_OPT=/opt` if you would rather install it as root.
+
+   **The CUDA libraries are dlopened by ONNX Runtime's provider, not linked by
+   our binary**, so no rpath of ours reaches them. Every recipe that starts the
+   container exports `LD_LIBRARY_PATH`. Forget it and the session silently
+   falls back to the CPU: ~290 ms a frame instead of ~55, correct-looking depth,
+   and a warning nobody reads. `depth_node` logs the provider it got at
+   **ERROR** level when it is not CUDA, and `just gate-depth` asserts it from
+   two independent places — the startup log and the per-second stats field.
 2. **Hand-written CUDA kernels** (a future TSDF integrator) — needs a real
    `cuda-toolkit` install and a `find_package(CUDAToolkit)` in CMake. **Do not
    plan on this until the CPU integrator works and has been profiled.**
@@ -50,9 +79,10 @@ Two things need the toolkit, and they are separable:
 Sanity checks, in order:
 
 ```bash
-nvidia-smi                       # driver alive, GPU visible
-nvcc --version                   # currently absent — expected
-ls /opt/onnxruntime/lib          # after installing the tarball
+nvidia-smi                            # driver alive, GPU visible
+nvcc --version                        # absent, and expected to be
+ls ~/.local/opt/onnxruntime/lib       # after just install-onnxruntime
+just gpu-probe                        # the answer that actually matters
 ```
 
 ### Model weights
@@ -65,9 +95,14 @@ https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/
 sha256  afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c
 ```
 
-The fetch belongs in a `just fetch-model` recipe that verifies the checksum and
-exits early if the file is already good. **The model does not go on the Pi** —
-inference is dev-box-only, so any sync to the Pi excludes it.
+`just fetch-model` verifies the checksum and exits early if the file is already
+good. It checks **before** the file lands at its final path, so a truncated
+download can never become the file `depth_node` loads. **The model does not go
+on the Pi** — inference is dev-box-only, and `sync-pi` excludes `models/`.
+
+`models/` is in the source workspace, not the installed `share/` tree, so the
+launch cannot compute the path: the `just` recipes export `PIMESH_MODEL` and
+the launch reads it, overridable with `model:=`.
 
 ## Raspberry Pi
 
@@ -110,9 +145,17 @@ The repo is the colcon workspace. Both machines build **from source** — there 
 no ABI compatibility between Lyrical and Jazzy, so nothing is copied between
 them but source.
 
+**Use `just build`, not a bare `colcon build`.** The recipe carries three
+things a hand-typed command does not: `/usr/bin` first on `PATH` (rosidl
+generates message code in Python), `ONNXRUNTIME_ROOT` (without it the package
+still builds, minus `depth_node`), and **`-DCMAKE_BUILD_TYPE=RelWithDebInfo`**.
+That last one is not a preference: colcon's default build type is the empty
+string, which passes no `-O` flag at all, and the rotation estimator measured
+1.19 ms/frame unoptimised against 0.03 ms optimised.
+
 ```bash
 # dev box: everything
-colcon build --symlink-install
+just build
 source install/setup.bash
 
 # Pi: the two packages it runs
@@ -127,30 +170,36 @@ both distros. A build that only succeeds here is half a build.
 
 ## Running
 
-Recipes that exist today (P0, P1 and P9):
+Recipes that exist today (P0-P4, P9, P10):
 
 ```bash
-just build              # colcon build here
+just build              # colcon build here, optimised, with ONNXRUNTIME_ROOT set
 just sync-pi            # source only — no build products cross the distro boundary
 just build-pi           # sync, then build on the Pi
+just fetch-model        # the depth model, checksummed (P4)
+just install-onnxruntime  # ONNX Runtime GPU + the CUDA runtime it dlopens (P4)
+just gpu-probe          # prove the GPU runs the model, with no ROS involved (P4)
 just provision-check    # dry-run the Pi's playbook, with diffs
 just provision          # apply it
 just cam                # run the Pi's camera (just cam 30 bounds it at 30 s)
 just camera             # every V4L2 control, current vs default
-just camera-reset       # restore the C922's known-good baseline
-just pipeline           # the dev-box container (empty until P2)
+just camera-reset       # restore the C922's known-good baseline — DO THIS BEFORE RECORDING
+just record NAME SECS   # record the camera stream to bags/NAME (P3)
+just pipeline           # the dev-box container: decode + keypoints + depth
 just test               # gtest + pytest on the dev box
-just test-pi            # the same gtest cases under Jazzy
-just gate-build         # the P0 gate
-just gate-capture       # the P1 gate
-just gate-provision     # the P9 gate
+just test-pi            # the Pi's gtest cases under Jazzy
+just gate-build         # P0
+just gate-capture       # P1
+just gate-ipc           # P2
+just gate-keypoints     # P3
+just gate-depth         # P4
+just gate-provision     # P9
 just stragglers         # sweep both machines for leftovers
 ```
 
-Later phases add `just provision` / `just provision-check` (P9), `just cam`
-(Pi-side camera, P1), `just dev` (the whole session), `just dash` (P8), and one
-`just gate-*` per phase. **Keep this list and the justfile in agreement** — a
-recipe documented but absent is worse than one that was never mentioned.
+Later phases add `just mesh-views` (P6), `just dash` (P8), and one `just gate-*`
+per phase. **Keep this list and the justfile in agreement** — a recipe
+documented but absent is worse than one that was never mentioned.
 
 Every session recipe **tears itself down on both machines**: the viewer runs in
 the foreground and a `trap … EXIT` `pkill -f`s each node pattern the recipe
