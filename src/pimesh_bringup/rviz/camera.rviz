@@ -44,11 +44,22 @@ Visualization Manager:
 
     # The Pi is capturing and the LAN hop works.
     #
-    # The topic is the *base* name and the transport is named separately:
-    # image_transport appends "/compressed", so this subscribes to
-    # /image_raw/compressed and decodes the JPEG here. Writing the full
-    # /image_raw/compressed in Topic instead would have RViz look for
-    # /image_raw/compressed/compressed and show an empty panel with no error.
+    # **The topic is the full name, suffix included.** RViz's Image display does
+    # not take a base name plus a transport: it infers the transport *from the
+    # topic name* (rviz_default_plugins/displays/image/get_transport_from_topic.cpp),
+    # so `/image_raw/compressed` gives it transport `compressed` and the JPEG is
+    # decoded here. There is no "Transport Hint" property on this display — the
+    # only transport hints in the plugin library belong to DepthCloud ("Color
+    # Transport Hint", "Depth Map Transport Hint").
+    #
+    # This was wrong in the first version of this file, and the way it was wrong
+    # is the lesson: `Topic.Value: /image_raw` with a `Transport Hint:
+    # compressed` key beside it. RViz silently ignores an unknown key, infers
+    # `raw` from the name, and subscribes to `/image_raw` — which nothing
+    # publishes. Measured 2026-09-09: `ros2 topic info -v
+    # /image_raw/compressed` reported **Subscription count: 0** with RViz open
+    # and the camera streaming at 59 Hz. The panel is then grey, and nothing in
+    # it, in the log, or in the display's status says the topic does not exist.
     - Class: rviz_default_plugins/Image
       Enabled: true
       Name: Image
@@ -64,8 +75,7 @@ Visualization Manager:
         # drop frames — a QoS mismatch means the subscription never connects at
         # all, and RViz says nothing about it beyond a grey panel.
         Reliability Policy: Reliable
-        Value: /image_raw
-      Transport Hint: compressed
+        Value: /image_raw/compressed
       Value: true
 
     # The static tree from P0 is present and rigid.

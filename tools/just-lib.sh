@@ -83,20 +83,68 @@ PIMESH_LAUNCH_PAT='ros2 [l]aunch pimesh_[a-z]*'
 # The viewer counts as a straggler. It holds no device and leaks nothing
 # expensive, which is exactly why it would have been left out — and then a
 # `just view-camera` whose RViz outlived its Ctrl-C would have gone unnoticed
-# by a gate whose whole subject is sessions ending. Anchored on *our* config
-# path, so somebody else's rviz2 on this machine is none of our business.
-PIMESH_VIEWER_PAT='[r]viz2 -d .*pimesh_'
+# by a gate whose whole subject is sessions ending. Scoped to *our* config, so
+# somebody else's rviz2 on this machine is none of our business.
+#
+# **Anchored at the start of the command line**, and the `^` is the whole
+# lesson. Every other pattern here is path-qualified — `/lib/[p]imesh_camera/`
+# is what the *process* shows, while a shell launching it says
+# `ros2 run pimesh_camera camera_node`, so the two cannot be confused. rviz2
+# has no such distinction: the viewer's command line and the command line of
+# whatever started it contain the same `rviz2 -d …/pimesh_bringup/…` text. The
+# unanchored version therefore matched the shell that ran it and `kill_local`
+# killed its own caller — measured 2026-09-09, three ad-hoc diagnostic runs
+# dying at exit 144 before the output could be read. This is the same trap the
+# brackets exist for, arriving by a different door: the bracket only protects
+# the pattern's own text. The real process has `rviz2` at argv[0]; a launcher
+# has `bash`, `timeout` or `just` there instead.
+PIMESH_VIEWER_PAT='^[r]viz2 -d .*pimesh_'
+
+# The static transform publishers pimesh_bringup's launch starts. They are
+# ours, they are not ours to *name* — the binary lives in tf2_ros — and leaving
+# them out of this list cost an hour of confusion on 2026-09-09.
+#
+# Nine of them, from three separate sessions, were found still running while
+# `tools/stragglers.sh` reported 0 on both machines and `gates/hello-clean.sh`
+# had been printing `view-camera/SIGINT: 0/0`. Every pattern above matches a
+# path containing `pimesh_`, and these run out of `/opt/ros/*/lib/tf2_ros/`, so
+# nothing looked at them. The symptom was not subtle once seen — `ros2 node
+# list` warning about nodes sharing an exact name, three `/map_to_odom`s, and
+# `hello-lan` failing with `publisher count was 0` off the back of a graph that
+# had nine stale participants in it.
+#
+# **Duplicate publishers on one TF edge is the specific failure this project
+# says makes a mesh smear and shows up in no single log.** So this pattern is
+# deliberately broader than the rest: it matches any tf2_ros static publisher on
+# the machine, not only ones whose node names we recognise. Naming ours would
+# mean keeping a list here in step with STATIC_TRANSFORMS in the launch file,
+# and a drifted list would silently stop matching — which is how this got missed
+# the first time. A person running one by hand for unrelated work will lose it
+# to a gate; that is cheap, and a corrupted frame tree is not.
+PIMESH_TF_PAT='tf2_ros/[s]tatic_transform_publisher'
+
 # shellcheck disable=SC2034  # read by tools/stragglers.sh
 PIMESH_PATTERNS=(
-    "$PIMESH_NODE_PAT" "$PIMESH_CONTAINER_PAT" "$PIMESH_LAUNCH_PAT" "$PIMESH_VIEWER_PAT"
+    "$PIMESH_NODE_PAT" "$PIMESH_CONTAINER_PAT" "$PIMESH_LAUNCH_PAT"
+    "$PIMESH_VIEWER_PAT" "$PIMESH_TF_PAT"
 )
 
 # Container before launcher, always: killing the launcher first orphans the
 # container, which then holds the topics nobody can find a publisher for.
 kill_local() {
+    # SIGINT to the launcher *first*, and a moment to act on it. `ros2 launch`
+    # shuts its own children down on an interrupt, which is the only way they
+    # get a clean exit — TERM to the launcher tends to leave the tree behind,
+    # and that is how nine static_transform_publishers accumulated. The pattern
+    # kills below are the backstop for whatever that misses, not the mechanism.
+    pkill -INT -f "$PIMESH_LAUNCH_PAT" 2>/dev/null || true
+    pkill -INT -f "$PIMESH_VIEWER_PAT" 2>/dev/null || true
+    sleep 1
+
     pkill -f "$PIMESH_VIEWER_PAT" 2>/dev/null || true
     pkill -f "$PIMESH_CONTAINER_PAT" 2>/dev/null || true
     pkill -f "$PIMESH_NODE_PAT" 2>/dev/null || true
+    pkill -f "$PIMESH_TF_PAT" 2>/dev/null || true
     sleep 0.5
     pkill -f "$PIMESH_LAUNCH_PAT" 2>/dev/null || true
 }

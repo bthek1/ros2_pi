@@ -111,6 +111,42 @@ coin-flip: `colcon build --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3`.
 `just build` passes this already; a hand-run `colcon build` does not, which is
 the main reason to use the recipe.
 
+## The RViz Image panel is grey while the camera is streaming
+
+**The display's topic must be the full name, transport suffix included** —
+`/image_raw/compressed`, not `/image_raw`.
+
+RViz 2's Image display has no transport property. It infers the transport *from
+the topic name* (`rviz_default_plugins/displays/image/get_transport_from_topic.cpp`),
+so the suffix is the only thing that selects the compressed subscriber. The ROS 1
+habit of naming the base topic and setting a transport hint beside it does not
+apply, and there is no such property to set: the only transport hints in the
+plugin library belong to the DepthCloud display (`Color Transport Hint`,
+`Depth Map Transport Hint`).
+
+The failure is completely silent. RViz ignores an unknown key in a `.rviz`
+without comment, infers `raw` from the shorter name, and subscribes to a topic
+nothing publishes. The panel is grey, the display's status is not an error, and
+the log says nothing — it looks exactly like a camera that is not running.
+Measured 2026-09-09: `ros2 topic info -v /image_raw/compressed` reported
+**Subscription count: 0** with the window open and the Pi capturing at 59 fps
+(`camera_node` logged 3040 frames that session).
+
+**How to tell in one command**, with the viewer open:
+
+```bash
+ros2 topic info -v /image_raw/compressed | grep -E 'count|Node name'
+```
+
+Two endpoints — `camera_node` publishing, `rviz` subscribing — means the config
+is right and the problem is elsewhere. A subscription count of 0 means RViz is
+listening to a different name than the one you think.
+`ros2 node info /rviz` lists what it actually subscribed to, and needs no
+publisher to answer.
+
+`bash tools/gates/view-configs.sh` asserts every topic in a committed `.rviz` is
+one `src/` actually publishes, exactly so this cannot ship again.
+
 ## `rviz2` will not start
 
 It renders through GLX and needs `QT_QPA_PLATFORM=xcb` on this Wayland session.

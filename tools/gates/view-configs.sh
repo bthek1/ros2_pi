@@ -1,34 +1,60 @@
 #!/usr/bin/env bash
 #
-# View gate: every topic a committed .rviz config references is a topic this
-# workspace's nodes actually advertise.
+# View gate: every topic a committed .rviz config names is a topic this
+# workspace publishes, **and RViz actually subscribes to it**.
 #
-# The failure this exists for is silent by construction. RViz subscribes to
-# whatever name is in the config; if nothing publishes it, the display shows an
-# empty panel and RViz reports "No messages received" — which looks exactly like
-# a camera that is not running, a Wi-Fi link that is down, or a QoS mismatch.
-# There is nothing in that panel that says "this topic does not exist and never
-# did". So a renamed topic costs somebody an evening of debugging the wrong
-# thing, and it costs it *later*, when the rename is no longer the obvious
-# suspect. Better that it fails a script the moment the rename lands.
+# Two stages, and the second one exists because the first was not enough. The
+# failure this gate is for is silent by construction: RViz subscribes to
+# whatever name is in the config, and if nothing publishes it the display shows
+# an empty panel that looks exactly like a camera that is not running, a Wi-Fi
+# link that is down, or a QoS mismatch. Nothing in the panel, the log, or the
+# display's status says "this topic does not exist".
 #
-# The topic set is read from the source, not from a running graph. A gate that
-# needed the pipeline up to check a config file would only ever be run when
-# somebody already suspected something.
+# **Measured 2026-09-09: the static half passed over a config that showed
+# nothing.** camera.rviz named `Topic.Value: /image_raw` with a
+# `Transport Hint: compressed` key beside it — which is how the display works in
+# ROS 1 and not how it works here. rviz_default_plugins infers the transport
+# *from the topic name* (displays/image/get_transport_from_topic.cpp); there is
+# no "Transport Hint" property on the Image display at all, so RViz ignored the
+# unknown key, inferred `raw` from the name, and subscribed to `/image_raw`,
+# which nothing publishes. `ros2 topic info -v /image_raw/compressed` reported
+# **Subscription count: 0** with the window open and the camera streaming at
+# 59 Hz.
+#
+# And this gate said PASS, because it had been written to treat a base name as
+# published whenever the `/compressed` form was — a leniency invented to
+# describe a mechanism that does not exist here. It was not a check with a gap
+# in it; it was a check whose one special case was precisely the bug.
+#
+# **Stage 1's exactness is what catches that, and stage 2 does not.** This was
+# tested rather than assumed: with the broken config restored, stage 1 reports
+# `/image_raw NOT PUBLISHED` and stage 2 reports `rviz subscribed` — because
+# RViz *did* subscribe, to exactly the name it was given, and being given a
+# useless name is not something RViz has an opinion about. Saying otherwise
+# would repeat the mistake this gate is here to document.
+#
+# So stage 2 earns its place on a narrower claim: that rviz2 can load this file
+# at all, and comes up subscribed to the literal topic it names. That is what
+# fails when a display class is renamed by a distro upgrade, when the YAML is
+# malformed enough for RViz to skip a display, or when RViz rewrites a name on
+# its way to the graph. It is a real check and it is not the one that would
+# have saved the grey panel.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
 echo "== gate-view-configs =="
 
 fail=0
 note() { echo "FAIL: $*"; fail=1; }
 
-# What the workspace publishes, gathered from the create_publisher calls in
-# src/. Relative names are resolved into the root namespace, which is where the
-# launch files put these nodes.
+arm_cleanup
+
+# --- What the workspace publishes -------------------------------------------
 #
-# grep over source is a blunt instrument and it is the right one here: the
-# alternative is a hand-maintained list, which is a second place for the truth
-# to live and the exact thing this gate is trying to stop existing.
+# Gathered from the create_publisher calls in src/, resolved into the root
+# namespace, which is where the launch files put these nodes. grep over source
+# is a blunt instrument and it is the right one: the alternative is a
+# hand-maintained list, which is a second place for the truth to live and the
+# exact thing this gate is trying to stop existing.
 mapfile -t published < <(
     grep -rhoP 'create_publisher<[^>]+>\(\s*"\K[^"]+' "$PIMESH_WS/src" |
         sed 's|^~/|/|; s|^\([^/]\)|/\1|' | sort -u
@@ -39,16 +65,6 @@ if (( ${#published[@]} == 0 )); then
     exit 1
 fi
 
-# image_transport's convention: a display subscribing to /image_raw with
-# transport `compressed` connects to /image_raw/compressed. The config names the
-# base and the transport separately — writing the full name in Topic makes RViz
-# look for /image_raw/compressed/compressed — so the base has to count as
-# published when the suffixed topic is.
-for topic in "${published[@]}"; do
-    [[ $topic == */compressed ]] && published+=("${topic%/compressed}")
-done
-mapfile -t published < <(printf '%s\n' "${published[@]}" | sort -u)
-
 echo "topics published by src/:"
 printf '  %s\n' "${published[@]}"
 
@@ -58,15 +74,11 @@ if (( ${#configs[@]} == 0 )); then
     exit 1
 fi
 
-checked=0
-for config in "${configs[@]}"; do
-    echo
-    echo "$(realpath --relative-to="$PIMESH_WS" "$config"):"
-
-    # Parse as YAML rather than grep for "Value:". A .rviz is YAML, and the same
-    # key means different things at different depths — `Value: true` on a
-    # display is its enabled flag. Only Topic.Value is a topic name.
-    mapfile -t referenced < <(python3 - "$config" <<'PY'
+# Parse as YAML, not with grep for "Value:". A .rviz is YAML and the same key
+# means different things at different depths — `Value: true` on a display is its
+# enabled flag. Only Topic.Value is a topic name.
+config_topics() {       # $1 = path to a .rviz
+    python3 - "$1" <<'PY'
 import sys
 import yaml
 
@@ -75,16 +87,28 @@ with open(sys.argv[1]) as fh:
 
 for display in config.get('Visualization Manager', {}).get('Displays', []):
     topic = display.get('Topic')
+    name = display.get('Name', '?')
     if isinstance(topic, dict) and topic.get('Value'):
-        print(display.get('Name', '?'), topic['Value'])
+        print(name, topic['Value'])
     elif isinstance(topic, str) and topic:
-        print(display.get('Name', '?'), topic)
+        print(name, topic)
 PY
-)
+}
 
-    # A TF display carries no topic and is not a gap in the check: /tf and
-    # /tf_static are subscribed by the display's own machinery, and P0's static
-    # publishers are what put anything on them.
+# --- Stage 1: the names exist -----------------------------------------------
+#
+# Exact match. A display's topic is the *full* name including any transport
+# suffix, because that suffix is what tells RViz which transport to use.
+
+echo
+echo "-- stage 1: every .rviz topic is published by src/ (exact match) --"
+checked=0
+for config in "${configs[@]}"; do
+    echo "$(realpath --relative-to="$PIMESH_WS" "$config"):"
+    mapfile -t referenced < <(config_topics "$config")
+
+    # A TF display carries no topic and that is not a gap: /tf and /tf_static
+    # are subscribed by the display's own machinery.
     if (( ${#referenced[@]} == 0 )); then
         note "$(basename "$config") references no topics at all — is the parse right?"
         continue
@@ -97,15 +121,92 @@ PY
             printf '  %-12s %-34s ok\n' "$display" "$topic"
         else
             printf '  %-12s %-34s NOT PUBLISHED\n' "$display" "$topic"
-            note "$(basename "$config") display '${display}' subscribes ${topic}, which nothing in src/ publishes"
+            note "$(basename "$config") display '${display}' names ${topic}, which nothing in src/ publishes"
         fi
     done < <(printf '%s\n' "${referenced[@]}")
 done
+
+# --- Stage 2: RViz agrees ----------------------------------------------------
+#
+# Start each config for real and ask RViz what it subscribed to. No publisher
+# and no Pi are needed — a subscription is in the ROS graph whether or not
+# anything is publishing to it — so this costs one rviz2 startup per config and
+# needs no hardware. It is the only check here that can see a display silently
+# reinterpreting the name it was given.
+
+echo
+echo "-- stage 2: RViz subscribes to those topics when the config is loaded --"
+
+if [[ -z ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]]; then
+    echo "FAIL: no display available, so RViz cannot be started and stage 2 cannot run."
+    echo "      This gate does not report PASS on a check it did not perform."
+    exit 1
+fi
+
+# rviz2 renders through GLX on this Wayland session.
+export QT_QPA_PLATFORM=xcb
+
+for config in "${configs[@]}"; do
+    mapfile -t referenced < <(config_topics "$config")
+    (( ${#referenced[@]} == 0 )) && continue
+
+    run_for 45 rviz2 -d "$config" >/dev/null 2>&1 &
+
+    # Wait for the node, then for its subscriptions — RViz creates the node
+    # before it has finished building the displays, so the first `node info`
+    # after the node appears can legitimately be empty.
+    node=""
+    subs=""
+    for _ in $(seq 40); do
+        sleep 1
+        [[ -z $node ]] && node=$(timeout 10 ros2 node list 2>/dev/null | grep -m1 '^/rviz' || true)
+        [[ -z $node ]] && continue
+        subs=$(timeout 10 ros2 node info "$node" 2>/dev/null |
+               sed -n '/Subscribers:/,/Publishers:/p' |
+               awk 'NF && $1 ~ /^\// {sub(/:$/, "", $1); print $1}')
+        [[ -n $subs ]] && break
+    done
+
+    echo "$(realpath --relative-to="$PIMESH_WS" "$config"):"
+    if [[ -z $node ]]; then
+        note "rviz2 never appeared in the graph for $(basename "$config")"
+    elif [[ -z $subs ]]; then
+        note "$node subscribed to nothing at all with $(basename "$config") loaded"
+    else
+        while read -r display topic; do
+            [[ -z ${topic:-} ]] && continue
+            if grep -qx -- "$topic" <<<"$subs"; then
+                printf '  %-12s %-34s rviz subscribed\n' "$display" "$topic"
+            else
+                printf '  %-12s %-34s RVIZ DID NOT SUBSCRIBE\n' "$display" "$topic"
+                note "RViz loaded '${display}' but did not subscribe to ${topic} — it subscribed to [$(tr '\n' ' ' <<<"$subs")]"
+            fi
+        done < <(printf '%s\n' "${referenced[@]}")
+    fi
+
+    # SIGINT, not the pattern kill, and then the pattern kill as a backstop.
+    # rviz2 segfaults on SIGTERM — measured 2026-09-09, "Segmentation fault
+    # (core dumped)" on every kill_local — and while that happens after the
+    # measurement and cannot change the result, a gate that drops a core file
+    # per run is teaching whoever reads its output to ignore a crash. SIGINT is
+    # also the path `just view-camera` actually takes, so this exercises the
+    # shutdown a person gets rather than one only the gate ever sees.
+    pkill -INT -f "$PIMESH_VIEWER_PAT" 2>/dev/null || true
+    for _ in $(seq 10); do
+        pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 || break
+        sleep 1
+    done
+    kill_local
+    sleep 2
+done
+
+cleanup_both
 
 echo
 echo "configs          : ${#configs[@]}"
 echo "topics referenced: ${checked}  (assert every one is published by src/)"
 echo "topics published : ${#published[@]}"
+echo "live check       : RViz's own subscriber list, per config"
 
 (( fail == 0 )) || { echo "FAIL gate-view-configs"; exit 1; }
 echo "PASS gate-view-configs"
