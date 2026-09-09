@@ -359,6 +359,40 @@ tables side by side.
 
 ---
 
+## ☐ P9 — Calibrate the C922 *(promoted 2026-09-10, [#9](https://github.com/bthek1/ros2_pi/issues/9))*
+
+**Goal:** real intrinsics for this camera at 1280×720, so every unprojection
+downstream is honest.
+
+**Numbered P9, sequenced before P3.** Those are not in conflict — the number is
+an identity that never moves, the order is a schedule. It arrived after P8
+existed, so it takes the next unused number; it runs early because P3 is the
+first phase to unproject pixels (bearing-ray odometry, gated on mean ray
+residual) *and* the phase that records `bags/desk1`, which carries
+`/camera_info` and is replayed by everything after it.
+
+Promoted out of `milestone-a-future.md`, where its trigger was recorded as the
+P5 tape-measure session. That trigger was wrong: P5's measurement needs a fusion
+volume and genuinely cannot happen earlier, while calibration needs only a
+checkerboard. Pairing them to save one trip would have cost three phases and
+baked nominal intrinsics into the reference clip.
+
+**Test:** `bash tools/gates/calibration.sh` — asserts `/camera_info` serves
+non-zero distortion and a non-placeholder `K` with no `NOMINAL intrinsics`
+warning; undistorts the saved board frames in `calib/c922_720p/` and asserts
+board rows are straighter with the calibrated `K`/`D` than with the nominal
+placeholder **and** under 1.0 px; and asserts the recorded reprojection error in
+`calib/c922_720p/report.txt` is ≤ 0.5 px. The with/without control is required
+for the same reason `hello-ipc` needs one — a board near the optical axis is
+nearly straight before any correction. The 1.0 px figure is a budget, not
+something measured; record what the first run prints.
+
+Full body, including the precondition that could make it non-executable (a
+*rigid* board — a flexing printout converges happily and is wrong), in
+[#9](https://github.com/bthek1/ros2_pi/issues/9).
+
+---
+
 # Part 2 — Deferred
 
 Everything here is **not executable yet**, which is why it is not a phase. Each

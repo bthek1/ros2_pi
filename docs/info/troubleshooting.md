@@ -111,6 +111,45 @@ coin-flip: `colcon build --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3`.
 `just build` passes this already; a hand-run `colcon build` does not, which is
 the main reason to use the recipe.
 
+## The camera feed stutters — freezes, then catches up in a burst
+
+**A RELIABLE subscriber on a lossy link delivers in sequence, so one lost
+fragment blocks every frame behind it** until the loss is resolved by a
+heartbeat round trip. At ~56 fps that reads as flicker.
+
+Measured 2026-09-09, same publisher and same session, changing only the
+*reader's* QoS, 20 s windows of ~1100 frames:
+
+| reader | gaps > 50 ms | worst gap | p99 gap |
+| --- | --- | --- | --- |
+| RELIABLE | 10 of 1116 | 490 ms | 36.2 ms |
+| BEST_EFFORT | 3 of 1097 | 181 ms | 27.4 ms |
+
+So the viewer's `.rviz` asks for **Best Effort** against the RELIABLE publisher.
+That pairing is legal — reliability is request-offered, and a RELIABLE writer
+satisfies a BEST_EFFORT reader; only the reverse is incompatible. A dropped
+frame in a live view costs nothing and a half-second stall looks broken.
+
+**It reduces the stutter, it does not remove it.** The residue is Wi-Fi loss
+bursts, and no QoS setting fixes those. If it matters more later, the levers are
+fewer packets on the wire — a lower capture rate, or smaller frames — not
+reliability.
+
+**Rule out the other cause first**, because it looks identical in the panel and
+has the opposite fix: if the *image content* is pulsing rather than the stream
+stalling, that is lighting or exposure, not transport — a `power_line_frequency`
+that does not match the local mains, or auto-exposure hunting. Decide it by
+measuring, not by looking. On 2026-09-09 the per-frame mean luma over 1113
+frames swung 0.73 of 255 levels (0.3% of full scale, std 0.11), which ruled
+lighting out and left transport as the only candidate. In the same run 0 of 1113
+frames failed to decode, which ruled out corrupt JPEGs too.
+
+**This does not overturn the BEST_EFFORT rule** in
+[CLAUDE.md](../../CLAUDE.md). That rule is about megabyte-class *raw* images:
+2.7 MB is ~1900 UDP fragments, losing one per frame is near-certain, and the
+result is zero frames delivered. These are ~80 kB compressed, about 56
+fragments. Size is the whole difference — do not carry this to a raw image topic.
+
 ## The RViz Image panel is grey while the camera is streaming
 
 **The display's topic must be the full name, transport suffix included** —

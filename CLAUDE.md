@@ -186,9 +186,22 @@ strong priors, re-verify before quoting a number as this project's own.
   perfectly and quietly copies. **Address equality alone is not evidence** —
   two allocations in one process can coincide, and one did, at 1/22 — so any
   future zero-copy claim needs the with/without control, not a single run.
-- **BEST_EFFORT delivers zero large frames** *(inherited)*. Megabyte-class
-  messages fragment past the socket buffer and never reassemble. Every image and
-  depth topic here is `RELIABLE` + `KEEP_LAST(1)` — freshest frame, no backlog.
+- **BEST_EFFORT delivers zero large frames** *(inherited, and it is about
+  size)*. Megabyte-class messages fragment past the socket buffer and never
+  reassemble. Every image and depth **publisher** here is `RELIABLE` +
+  `KEEP_LAST(1)` — freshest frame, no backlog.
+
+  **A viewer subscribing to the ~80 kB compressed stream is the exception, and
+  it is measured.** A RELIABLE reader delivers in sequence, so one lost fragment
+  head-of-line blocks every frame behind it for a heartbeat round trip; over the
+  Pi's Wi-Fi that is a visible freeze several times a minute. Changing only the
+  reader's QoS, 20 s windows of ~1100 frames (2026-09-09): RELIABLE gave 10 gaps
+  over 50 ms with a worst of 490 ms; BEST_EFFORT gave 3, worst 181 ms, with 0
+  undecodable frames. `rviz/camera.rviz` therefore asks for BEST_EFFORT, which a
+  RELIABLE writer satisfies (only the reverse is incompatible). At 80 kB a frame
+  is ~56 fragments; at 2.7 MB raw it is ~1900, which is why this scopes the rule
+  rather than contradicting it. **Do not carry it to a raw image topic**, and
+  treat the same head-of-line question as open for `decode_node` in P2.
 - **Never gate on `header.stamp` age** *(inherited, and now only half true)*.
   `usb_cam` 0.8.1 has a once-per-process epoch bug that puts stamps a random
   sub-second amount in the past, redrawn at every launch. A stamp-age freshness

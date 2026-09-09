@@ -71,10 +71,35 @@ Visualization Manager:
         Depth: 1
         Durability Policy: Volatile
         History Policy: Keep Last
-        # RELIABLE, matching the publisher. BEST_EFFORT here would not merely
-        # drop frames — a QoS mismatch means the subscription never connects at
-        # all, and RViz says nothing about it beyond a grey panel.
-        Reliability Policy: Reliable
+        # BEST_EFFORT, deliberately, against a RELIABLE publisher.
+        #
+        # That pairing is legal and is not a mismatch: reliability is a
+        # request-offered property, and a RELIABLE writer satisfies a
+        # BEST_EFFORT reader. (The reverse is the incompatible one, and it fails
+        # the way QoS mismatches always do here — the subscription never
+        # connects, RViz shows a grey panel and says nothing.)
+        #
+        # It is BEST_EFFORT because a RELIABLE reader delivers samples *in
+        # sequence*, so one lost fragment blocks every frame behind it until the
+        # loss is resolved by a heartbeat round trip. On this Wi-Fi link that is
+        # a visible freeze-then-catch-up several times a minute. Measured
+        # 2026-09-09, same writer and same session, only the reader's QoS
+        # changed, 20 s windows of ~1100 frames each:
+        #
+        #   RELIABLE reader     10 gaps over 50 ms, worst 490 ms, p99 36.2 ms
+        #   BEST_EFFORT reader   3 gaps over 50 ms, worst 181 ms, p99 27.4 ms
+        #
+        # A dropped frame in a live view costs nothing; a half-second stall is
+        # the thing that looks broken. The residue is Wi-Fi loss bursts and is
+        # not fixed by QoS.
+        #
+        # **This does not overturn the project's BEST_EFFORT rule.** That rule
+        # is about megabyte-class *raw* images — 2.7 MB is ~1900 fragments, and
+        # losing one of those on every frame means delivering none. These frames
+        # are ~80 kB, about 56 fragments, and 1097 of them arrived intact with
+        # 0 undecodable. Size is the whole difference; do not carry this over to
+        # a raw image topic.
+        Reliability Policy: Best Effort
         Value: /image_raw/compressed
       Value: true
 
