@@ -37,6 +37,12 @@ code compiles, and not when it looked right in RViz once. Each phase in
 prints the number it asserted on; the phase is then annotated with the date and
 what that recipe printed.
 
+Unit tests are a different instrument and do not close a milestone on their own.
+`bash tools/test.sh` runs 29 hermetic tests on both machines — the stamp
+arithmetic, a matrix layout, the static-transform quaternions — and they catch
+the things that are wrong *silently*. A gate is what says the running system did
+the thing. Both are required; neither substitutes for the other.
+
 The exceptions are physical-world checks that no script can close: the tape
 measure that pins `depth_scale`, exposure in a real room, and whether the mesh
 looks like the room. Those say "needs a human" explicitly and name the one

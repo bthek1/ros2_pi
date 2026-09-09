@@ -7,8 +7,10 @@
 #
 #   bash tools/gates/build.sh         P0: one source tree, two distros, same msgs
 #   bash tools/gates/capture.sh       P1: 720p MJPEG on the LAN, stamped honestly
+#   bash tools/gates/test.sh          the unit tests pass on both machines
 #   bash tools/gates/view-configs.sh  every .rviz topic is one src/ publishes
 #   bash tools/camera-reset.sh        clear the camera's persistent V4L2 controls
+#   bash tools/test.sh                ...just run them here (tools/test-pi.sh there)
 #
 #   bash tools/gates/hello-build.sh   scaffolding: one real package builds
 #   bash tools/gates/hello-talk.sh    P1: the talker honours its rate parameter

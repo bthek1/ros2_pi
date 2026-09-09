@@ -45,6 +45,25 @@ Each issue also carries a **`just view-*` RViz recipe** — a viewer for a perso
 never the evidence. The gates below are what pass or fail a phase. The view
 layer adds no new topics, so it adds no scope to any phase.
 
+**Machinery every phase from P2 on extends rather than reinvents**, all of it
+built in A and all of it failing a script when skipped:
+
+- the new `.rviz` goes into `tools/gates/view-configs.sh`'s reach (it globs
+  `src/**/*.rviz`, so this is automatic — but its topics must be ones `src/`
+  publishes);
+- the new `view-*` recipe goes into `RECIPES` in `tools/gates/hello-clean.sh`,
+  or its teardown is untested — that gate found `view-camera` leaking RViz and
+  the Pi's camera the day it was added to the list;
+- `MIN_TESTS` in `tools/gates/test.sh` goes up when unit tests are added;
+- the gate's measuring instrument is written in **C++**, the way
+  `pimesh_camera/capture_probe` is — `ros2 topic hz` is Python over
+  megabyte-class messages and its own scheduling lands in the number;
+- anything on the Pi goes through `pi_run_for`, which puts `timeout` inside the
+  login shell rather than orphaning the node;
+- **no tight bound on a number measured across the two machines** — P1's stamp
+  assertion had to move to the Pi because a cross-host figure carries the NTP
+  relationship, which moved +8 ms to −19 ms in an afternoon.
+
 ---
 
 # Part 1 — The build order
@@ -170,9 +189,17 @@ were measured under.
 **Work**
 
 - `pimesh_perception/decode_node`: subscribe `/image_raw/compressed`,
-  `cv::imdecode`, publish `bgr8` intra-process.
-- The bringup container with `use_intra_process_comms=True`, and a temporary
-  probe component that logs the address of the buffer it received.
+  `cv::imdecode`, publish `bgr8` intra-process. **Budget it for up to 59 Hz** —
+  P1 measured 44.3–58.6 Hz arriving on the dev box at ~80 kB/frame, not the
+  30 fps the older parts of these docs assume.
+- **Add `use_intra_process_comms=True` to the bringup container.** The container
+  itself exists and runs from P0, with an empty `composable_node_descriptions`;
+  what P2 adds is the first `ComposableNode` in that list and the
+  `extra_arguments` carrying the option. There is deliberately no
+  `intra_process` launch argument yet, because `use_intra_process_comms` is a
+  per-*component* option and a container with no components has nowhere to put
+  it.
+- A temporary probe component that logs the address of the buffer it received.
 
 **Test:** `bash tools/gates/ipc.sh` — asserts the probe's received-buffer address **equals**
 the publisher's (a serialised path cannot produce that), and that
@@ -227,7 +254,10 @@ prints the provider and the time. No ROS code until that prints
   startup.
 - Publish `/depth` (32FC1, metres, clipped at 6 m before the reciprocal) and
   `/depth/rgb`, both carrying the **input frame's** stamp and
-  `camera_optical_frame`.
+  `camera_optical_frame`. Both are real as of P1: the input frame's stamp is the
+  Pi kernel's capture time, and `camera_optical_frame` is a static edge
+  published by `pimesh_bringup` and unit-tested to be the optical convention —
+  do not re-derive that rotation inside a node.
 
 **Test:** `bash tools/gates/depth.sh` — replays `bags/desk1`, asserts the startup log names
 `CUDAExecutionProvider`, mean per-frame cost **≤ 80 ms** (the predecessor

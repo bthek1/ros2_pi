@@ -65,6 +65,42 @@ install(TARGETS camera_node capture_probe
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# --- Tests ------------------------------------------------------------------
+#
+# BUILD_TESTING is on by default under `colcon test` and off for a plain build,
+# so this costs the Pi nothing on the ordinary path. Every test here runs
+# *without a camera* — that is a requirement rather than an accident, because
+# the dev box has no capture device and a test suite that only runs on the Pi is
+# one that stops being run.
+#
+# What needs hardware is covered by tools/gates/capture.sh instead: the frame
+# rate, the two-launch stamp comparison against a real sensor, and the busy
+# device. The split is deliberate — these are fast, hermetic and assert on
+# logic; the gate is slow, physical and asserts on numbers.
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  # The stamp arithmetic, which is the claim this whole package exists to make.
+  ament_add_gtest(test_stamp test/test_stamp.cpp)
+  if(TARGET test_stamp)
+    target_include_directories(test_stamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  endif()
+
+  ament_add_gtest(test_camera_info test/test_camera_info.cpp)
+  if(TARGET test_camera_info)
+    target_include_directories(test_camera_info PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(test_camera_info ${sensor_msgs_TARGETS})
+  endif()
+
+  # The refusal paths. Links the real library, because the thing under test is
+  # the ioctl sequence's error handling and a reimplementation of it would test
+  # itself.
+  ament_add_gtest(test_v4l2_capture test/test_v4l2_capture.cpp)
+  if(TARGET test_v4l2_capture)
+    target_link_libraries(test_v4l2_capture camera_components)
+  endif()
+endif()
+
 ament_export_include_directories(include)
 ament_export_libraries(camera_components)
 ament_export_dependencies(rclcpp rclcpp_components sensor_msgs)

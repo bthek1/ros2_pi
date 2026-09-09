@@ -89,6 +89,8 @@ them but source.
 ```bash
 just build                   # dev box
 bash tools/build-pi.sh       # rsync source to the Pi, then build there under Jazzy
+bash tools/test.sh           # build, then colcon test, then colcon test-result
+bash tools/test-pi.sh        # the same, on the Pi, under Jazzy
 bash tools/clean.sh          # drop build/ install/ log/ here
 bash tools/clean-pi.sh       # and there
 ```
@@ -150,22 +152,41 @@ cloned this, `just build && just hello-compose` is the entire getting-started
 path.
 
 **Everything else is a script in `tools/`, run directly.** The gates especially
-— there are six, they are run constantly, and as recipes they had buried
+— there are ten, they are run constantly, and as recipes they had buried
 `hello-compose` under an alphabetised wall of `gate-*`:
 
 ```bash
-bash tools/gates/hello-build.sh   # P0: one real package builds
-bash tools/gates/hello-talk.sh    # P1: the talker honours its rate parameter
-bash tools/gates/hello-ipc.sh     # P2: one process, message handed over as a pointer
-bash tools/gates/hello-lan.sh     # P3: one source tree, two distros, over the LAN
-bash tools/gates/hello-clean.sh   # P4: Ctrl-C leaves nothing running, either machine
-bash tools/gates/justfile.sh      # this file's own shape
+# The pipeline, phase by phase
+bash tools/gates/build.sh         # P0: one source tree, two distros, same messages
+bash tools/gates/capture.sh       # P1: 720p MJPEG on the LAN, stamped honestly
 
+# Across all phases
+bash tools/gates/test.sh          # the unit tests pass on both machines, and there are some
+bash tools/gates/view-configs.sh  # every .rviz topic is one src/ publishes
+bash tools/gates/justfile.sh      # the justfile's own shape, plus shellcheck over tools/
+
+# The scaffolding (gh issue #2), still asserted
+bash tools/gates/hello-build.sh   # one real package builds
+bash tools/gates/hello-talk.sh    # the talker honours its rate parameter
+bash tools/gates/hello-ipc.sh     # one process, message handed over as a pointer
+bash tools/gates/hello-lan.sh     # one source tree, two distros, over the LAN
+bash tools/gates/hello-clean.sh   # Ctrl-C leaves nothing running, either machine,
+                                  #   for every recipe in the justfile's `run` group
+
+bash tools/camera-reset.sh        # clear the camera's persistent V4L2 controls
 bash tools/stragglers.sh          # assert nothing outlived its session
 bash tools/sync-pi.sh             # ship source to the Pi — source only
 bash tools/build-pi.sh            # ...and build it there, under Jazzy
 bash tools/clean.sh               # delete the colcon trees (clean-pi.sh for the Pi's)
 ```
+
+**A gate and a unit test are different things.** The gates above are the phase
+tests — slow, mostly needing the Pi and the camera, and what actually closes a
+claim. `bash tools/test.sh` runs `colcon test`: 29 hermetic tests over four
+suites that need no hardware and run identically under both distros. Note that
+`colcon test` exits 0 when a test *fails*, and again when a package has no tests
+at all, so `colcon test-result --all` is what decides — which is why
+`tools/gates/test.sh` asserts on the counts rather than on the exit status.
 
 Each gate exits non-zero and prints the number it asserted on.
 [gh issue #2](https://github.com/bthek1/ros2_pi/issues/2) records what each

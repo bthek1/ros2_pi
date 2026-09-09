@@ -295,6 +295,26 @@ strong priors, re-verify before quoting a number as this project's own.
   `launch/*.launch.py`. A key that does not match the node name silently applies
   nothing — a trap that has cost this project's predecessor real time. Declare
   every parameter with a description and validate ranges at declaration.
+- **Two kinds of test, and conflating them is a mistake.** The
+  `tools/gates/*.sh` scripts are the **phase tests**: slow, often needing the Pi
+  and the camera, and they are what closes a claim. `bash tools/test.sh` runs
+  the **unit tests** (`colcon test`) — fast, hermetic, no hardware, and they run
+  on both machines. Write a unit test for logic that can be got wrong silently
+  (the stamp arithmetic, a matrix layout, a quaternion); write a gate for
+  anything that is a number about a running system.
+
+  **`colcon test` exits 0 when a test fails**, because it is reporting that the
+  run completed — and it exits 0 again when a package has no tests at all, which
+  is what an unbuilt tree looks like. `colcon test-result --all` is the thing
+  that decides, and `bash tools/gates/test.sh` asserts on the counts: zero
+  failures, zero skips, a floor on how many tests ran, and the same suites at
+  both ends. Raise the floor when you add tests; never lower it to make a run
+  pass.
+
+  Tests that need a camera do not belong in `colcon test` — the dev box has no
+  capture device, and a suite that only runs on the Pi is one that stops being
+  run. `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a
+  temp file; the busy-device case is `tools/gates/capture.sh`'s job.
 - **Build with `just build`**, not bare `colcon`. The recipe is
   `colcon build --symlink-install --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3`,
   and without that argument every `ament_cmake` package fails at configure time
@@ -444,6 +464,7 @@ somebody once.
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: a GitHub issue of stable phases, a command for a test, executable-only, and the future file |
 | [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this is going.** The whole pipeline as phases P0–P8, none started, each ending in a `tools/gates/*.sh` test, followed by the deferred register |
 | [#4](https://github.com/bthek1/ros2_pi/issues/4) **(closed 2026-09-09)** [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A is done — P0 and P1, the cross-distro workspace and capture. Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
+| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 29 of them across four suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, and the static transforms and launch conversion in `test_transforms` |
 | `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the shell lives in `tools/`; the justfile was trimmed further the same day to `build` + `run` only, so that issue's `just gate-*` spelling is history, not instruction |
 | [docs/plans/future/milestone-a-future.md](docs/plans/future/milestone-a-future.md) | Work deferred out of milestone A, each entry with its trigger: the checkerboard calibration (waiting on P5's tape-measure visit), `PipelineStats` from `camera_node` (waiting on the dashboard), the dev-box rate margin, and device reconnection |
 

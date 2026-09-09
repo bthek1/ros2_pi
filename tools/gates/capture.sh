@@ -85,6 +85,22 @@ measure() {             # $1 = tag, $2 = probe window in seconds
     wait "$pi_job" 2>/dev/null || true
     kill_pi
     sleep 1
+
+    # Did the camera ever start? Ask its log, not the frame count.
+    #
+    # This is here because the absence of it was expensive. When the Pi's
+    # workspace is in a state where `ros2 run` cannot resolve the package — a
+    # half-finished sync, an install/ that was cleaned and not rebuilt —
+    # `pi_run_for` fails in under a second and says so only in a log nobody
+    # reads. The gate then measured whatever happened to be on the topic and
+    # reported it as a rate: once, "62.27 Hz over 30s" built from 16 frames
+    # spanning 0.24 s, with a PASS. The window check below catches the symptom;
+    # this catches the cause and names it, which is the difference between a
+    # gate that fails and a gate that fails *usefully*.
+    if ! grep -q 'publishing /image_raw/compressed' "$work/camera.$tag"; then
+        note "camera_node never started for the '${tag}' run — nothing below measures it"
+        grep -vE 'ROS_LOCALHOST|localhost_only' "$work/camera.$tag" | tail -6 | sed 's/^/    /'
+    fi
 }
 
 # 0. Nothing of ours already running, or every count below is somebody else's.
@@ -107,6 +123,7 @@ dynamic_fps=$(awk -F= '$1 == "camera-reset exposure_dynamic_framerate" {print $2
 measure rate "$RATE_WINDOW_S"
 
 frames=$(probe_value "$work/probe.rate" frames)
+span=$(probe_value "$work/probe.rate" span_s)
 unique=$(probe_value "$work/probe.rate" unique_frames)
 rate=$(probe_value "$work/probe.rate" rate_hz)
 bytes=$(probe_value "$work/probe.rate" bytes_mean)
@@ -118,6 +135,24 @@ if [[ -z ${rate:-} || ${frames:-0} -eq 0 ]]; then
     sed 's/^/  /' "$work/camera.rate" | tail -20
     exit 1
 fi
+
+# **Assert the measurement happened before asserting on its result.** A rate is
+# a ratio, and a ratio over a quarter of a second is a perfectly respectable
+# number that says nothing about a 30-second window. This gate once printed
+# "62.27 Hz on the dev box over 30s" from 16 frames spanning 0.24 s, and passed:
+# the rate cleared the floor, 16 distinct payloads equalled 16 frames, and the
+# "over 30s" in the summary was a hard-coded string rather than anything
+# measured. That is a green gate over a measurement that did not take place,
+# which is worse than a red one. The window the probe actually covered is now
+# checked first, and printed instead of assumed.
+min_span=$(awk -v w="$RATE_WINDOW_S" 'BEGIN {printf "%.1f", w * 0.8}')
+awk -v s="${span:-0}" -v m="$min_span" 'BEGIN {exit !(s >= m)}' ||
+    note "the probe covered ${span:-0}s of a ${RATE_WINDOW_S}s window (floor ${min_span}s) — the stream stopped early, so the rate below is not a measurement of it"
+
+# Belt and braces: a window can be the right length and still be built from too
+# few samples if delivery is pathological.
+(( ${frames:-0} >= MIN_RATE_HZ * RATE_WINDOW_S / 2 )) ||
+    note "only ${frames} frames in ${span}s — too few to call a rate"
 
 in_range "$rate" "$MIN_RATE_HZ" 200 ||
     note "rate was ${rate} Hz on the dev box, budget is >= ${MIN_RATE_HZ} Hz"
@@ -137,6 +172,9 @@ measure stamp "$STAMP_WINDOW_S"
 offset_b=$(probe_value "$work/probe.stamp" offset_median_ms)
 p95_b=$(probe_value "$work/probe.stamp" offset_p95_ms)
 rate_b=$(probe_value "$work/probe.stamp" rate_hz)
+span_b=$(probe_value "$work/probe.stamp" span_s)
+awk -v s="${span_b:-0}" -v w="$STAMP_WINDOW_S" 'BEGIN {exit !(s >= w * 0.8)}' ||
+    note "the second launch covered only ${span_b:-0}s of its ${STAMP_WINDOW_S}s window — its offset is not comparable with the first"
 
 [[ -n ${offset_b:-} ]] || { echo "FAIL: the second launch delivered no frames"; exit 1; }
 
@@ -184,6 +222,9 @@ sleep 1
 
 offset_local=$(probe_value "$work/probe.local" offset_median_ms)
 rate_local=$(probe_value "$work/probe.local" rate_hz)
+span_local=$(probe_value "$work/probe.local" span_s)
+awk -v s="${span_local:-0}" 'BEGIN {exit !(s >= 8.0)}' ||
+    note "the Pi-side probe covered only ${span_local:-0}s of its 10s window"
 if [[ -z ${offset_local:-} ]]; then
     note "the Pi-side probe delivered no frames — the single-clock stamp claim is untested"
     offset_local=unknown
@@ -247,16 +288,17 @@ cleanup_both
 
 echo
 echo "exposure mode    : ${exposure_mode}  (exposure_dynamic_framerate=${dynamic_fps})"
-echo "rate             : ${rate} Hz on the dev box over ${RATE_WINDOW_S}s  (assert >= ${MIN_RATE_HZ})"
+echo "rate             : ${rate} Hz on the dev box over ${span}s of a ${RATE_WINDOW_S}s window"
+echo "                   assert >= ${MIN_RATE_HZ} Hz, and >= ${min_span}s actually covered"
 echo "distinct frames  : ${unique} of ${frames}  (assert equal)"
 echo "mean JPEG        : ${bytes} bytes  ($(awk -v b="$bytes" -v r="$rate" 'BEGIN {printf "%.1f", b * r / 1048576}') MB/s over wlan0)"
 echo "subscribers      : ${subs}  (assert 1; RViz closed)"
-echo "stamp, one clock : ${offset_local} ms measured on the Pi at ${rate_local} Hz"
+echo "stamp, one clock : ${offset_local} ms measured on the Pi at ${rate_local} Hz over ${span_local}s"
 echo "                   assert |offset| <= one frame interval = ${frame_interval_ms} ms"
 echo "stamp, cross-host : launch1=${offset_a} ms (p95 ${p95_a})  launch2=${offset_b} ms (p95 ${p95_b})"
 echo "                   assert |offset| < ${MAX_CROSS_MACHINE_OFFSET_MS} ms; carries an unmeasured dev-to-pi clock term"
 echo "launch delta     : ${delta} ms  (assert < ${MAX_LAUNCH_DELTA_MS} — this is the usb_cam bug)"
-echo "second launch    : ${rate_b} Hz over ${STAMP_WINDOW_S}s"
+echo "second launch    : ${rate_b} Hz over ${span_b}s of a ${STAMP_WINDOW_S}s window"
 echo "busy device      : exit ${busy_rc}, node refused in ${busy_node_s}s  (assert non-zero, < ${BUSY_EXIT_BUDGET_S}s)"
 echo "                   ${busy_wall}s end to end including ssh, login shell and ros2 run startup"
 

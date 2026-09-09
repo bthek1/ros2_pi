@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+#include "pimesh_camera/camera_info.hpp"
+#include "pimesh_camera/stamp.hpp"
 #include "rcl_interfaces/msg/integer_range.hpp"
 #include "rcl_interfaces/msg/parameter_descriptor.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
@@ -189,87 +191,53 @@ sensor_msgs::msg::CameraInfo CameraNode::build_camera_info()
     "distortion_coefficients", std::vector<double>{0.0, 0.0, 0.0, 0.0, 0.0},
     describe("plumb_bob coefficients k1 k2 p1 p2 k3."));
 
-  sensor_msgs::msg::CameraInfo info;
-  info.width = static_cast<std::uint32_t>(get_parameter("width").as_int());
-  info.height = static_cast<std::uint32_t>(get_parameter("height").as_int());
-  info.distortion_model = "plumb_bob";
-  info.d = d;
-  for (std::size_t i = 0; i < std::min<std::size_t>(9, k.size()); ++i) {info.k[i] = k[i]; }
-  // R is identity and P is K with a zero fourth column: a single, unrectified
-  // camera. Filling them in matters — a consumer that reads P and finds zeros
-  // gets a projection matrix that maps everything to the origin.
-  info.r[0] = info.r[4] = info.r[8] = 1.0;
-  info.p[0] = info.k[0]; info.p[2] = info.k[2];
-  info.p[5] = info.k[4]; info.p[6] = info.k[5];
-  info.p[10] = 1.0;
-  return info;
+  return make_camera_info(
+    static_cast<std::uint32_t>(get_parameter("width").as_int()),
+    static_cast<std::uint32_t>(get_parameter("height").as_int()),
+    k, d);
 }
 
 rclcpp::Time CameraNode::stamp_for(const Frame & frame)
 {
-  // ============================================================
-  // The reason this node exists instead of `usb_cam`.
-  // ============================================================
-  //
-  // The frame was captured at `frame.monotonic_ns` on CLOCK_MONOTONIC. The
-  // stamp has to be on the ROS clock, which is the system clock. Those are two
-  // different epochs, and the conversion between them is where usb_cam 0.8.1
-  // goes wrong: it computes the offset between the two clocks **once per
-  // process** and adds it to every frame forever. The result is that every
-  // stamp in a session is displaced by the same random sub-second amount —
-  // measured at 0.223, 0.362 and 0.979 s on three launches of the same binary —
-  // and the amount is redrawn each launch. That is what makes a stamp-age
-  // freshness gate drop 100% of frames, and it is why nothing in this project
-  // is allowed to gate on absolute stamp age.
-  //
-  // The fix is to stop converting epochs at all and convert an *interval*
-  // instead. Read the monotonic clock now, subtract the frame's monotonic
-  // timestamp to get the frame's age — a duration, which is the same number on
-  // any clock — and subtract that age from the current ROS time:
-  //
-  //     stamp = ros_now - (monotonic_now - frame.monotonic)
-  //
-  // Both readings are taken within microseconds of each other on the same
-  // machine, so the two clocks' relative drift over that gap is irrelevant.
-  // There is no per-process constant to be wrong, which is exactly what the
-  // gate checks: two launches of this node must produce the same
-  // stamp-vs-receipt offset, because there is nothing in here that could differ
-  // between them.
+  // The arithmetic itself lives in stamp.hpp as a free function over plain
+  // integers, so that the one claim this node is really making can be tested
+  // without a camera, a network or a ROS context — see test/test_stamp.cpp,
+  // which feeds it deliberately unrelated clock epochs and asserts the answer
+  // does not move. What is left here is reading the clocks and saying out loud
+  // when the good path was not taken.
   const rclcpp::Time ros_now = now();
+  const Stamp stamp = stamp_from_capture(
+    ros_now.nanoseconds(), monotonic_now_ns(), frame.monotonic_ns, frame.monotonic_valid);
 
-  if (!frame.monotonic_valid) {
-    if (!warned_no_monotonic_) {
-      warned_no_monotonic_ = true;
-      RCLCPP_WARN(
-        get_logger(),
-        "the driver is not giving monotonic buffer timestamps — falling back to "
-        "stamping at dequeue. Stamps are still honest to within a frame, but "
-        "they no longer carry the kernel's capture time.");
-    }
-    return ros_now;
+  // Once each, not 47 times a second. Both of these mean "the stamps in this
+  // session are weaker than the ones this node promises", which is worth
+  // saying clearly and exactly once.
+  switch (stamp.source) {
+    case StampSource::kCaptureTime:
+      break;
+    case StampSource::kNoMonotonicClock:
+      if (!warned_no_monotonic_) {
+        warned_no_monotonic_ = true;
+        RCLCPP_WARN(
+          get_logger(),
+          "the driver is not giving monotonic buffer timestamps — falling back to "
+          "stamping at dequeue. Stamps are still honest to within a frame, but "
+          "they no longer carry the kernel's capture time.");
+      }
+      break;
+    case StampSource::kImplausibleAge:
+      if (!warned_implausible_age_) {
+        warned_implausible_age_ = true;
+        RCLCPP_WARN(
+          get_logger(),
+          "buffer timestamp implies an age of %.1f ms, which is not plausible — "
+          "stamping at dequeue instead. The driver's clock is not what its flags claim.",
+          static_cast<double>(monotonic_now_ns() - frame.monotonic_ns) / 1e6);
+      }
+      break;
   }
 
-  const std::int64_t age_ns = monotonic_now_ns() - frame.monotonic_ns;
-
-  // A negative age means the buffer is stamped in the future, and an age of
-  // seconds means it is not the clock we think it is. Either way the arithmetic
-  // above would produce a confidently wrong stamp, which is worse than a
-  // slightly late one. Half a second is far outside anything a 4-buffer pool at
-  // 47 Hz can produce (~85 ms at the very worst).
-  constexpr std::int64_t kMaxPlausibleAgeNs = 500000000LL;
-  if (age_ns < 0 || age_ns > kMaxPlausibleAgeNs) {
-    if (!warned_implausible_age_) {
-      warned_implausible_age_ = true;
-      RCLCPP_WARN(
-        get_logger(),
-        "buffer timestamp is %.1f ms old, which is not plausible — stamping at "
-        "dequeue instead. The driver's clock is not what its flags claim.",
-        static_cast<double>(age_ns) / 1e6);
-    }
-    return ros_now;
-  }
-
-  return rclcpp::Time(ros_now.nanoseconds() - age_ns, ros_now.get_clock_type());
+  return rclcpp::Time(stamp.nanoseconds, ros_now.get_clock_type());
 }
 
 void CameraNode::publish(const Frame & frame)

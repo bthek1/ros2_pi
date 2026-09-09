@@ -16,4 +16,19 @@ install(DIRECTORY launch config rviz
   DESTINATION share/${PROJECT_NAME}
 )
 
+# --- Tests ------------------------------------------------------------------
+#
+# Python, and that is not a crack in the "C++ only" rule: the thing under test
+# is a launch file, which is Python because launch files are, and a set of
+# literal numbers in a YAML. There is no node here to write in C++.
+#
+# What they cover is the only geometry in this project that is written down
+# rather than computed. A mistyped quaternion loads, publishes, and shows three
+# frames in RViz; it fails as a mesh that does not look like the room, several
+# milestones after the typo.
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(test_transforms test/test_transforms.py)
+endif()
+
 ament_package()
