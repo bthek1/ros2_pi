@@ -126,14 +126,28 @@ gh issue close 2 --reason completed --comment "All gates green; see body for mea
 | --- | --- | --- |
 | [#2 Hello-world plan](https://github.com/bthek1/ros2_pi/issues/2) | **Closed 2026-09-08** — P0–P4 done, all five gates green; kept as the build log | [future/hello-world-future.md](future/hello-world-future.md) |
 | [#3 Justfile plan](https://github.com/bthek1/ros2_pi/issues/3) | **Closed 2026-09-09** — P0–P3 done, `tools/gates/justfile.sh` green; 627-line justfile → 102, then → 60 when the gates left it | — |
+| [#4 Milestone A](https://github.com/bthek1/ros2_pi/issues/4) | Open — next up — phases `P0–P1` of the pipeline | [future/project_final_state.md](future/project_final_state.md) |
+| [#5 Milestone B](https://github.com/bthek1/ros2_pi/issues/5) | Open, `deferred` — starts when A closes — phases `P2–P3` of the pipeline | [future/project_final_state.md](future/project_final_state.md) |
+| [#6 Milestone C](https://github.com/bthek1/ros2_pi/issues/6) | Open, `deferred` — starts when B closes — phases `P4` of the pipeline | [future/project_final_state.md](future/project_final_state.md) |
+| [#7 Milestone D](https://github.com/bthek1/ros2_pi/issues/7) | Open, `deferred` — starts when C closes — phases `P5–P6` of the pipeline | [future/project_final_state.md](future/project_final_state.md) |
+| [#8 Milestone E](https://github.com/bthek1/ros2_pi/issues/8) | Open, `deferred` — starts when D closes — phases `P7–P8` of the pipeline | [future/project_final_state.md](future/project_final_state.md) |
 
 This table is a convenience, not the source of truth —
 `gh issue list --label plan --state all` is.
 
-**The pipeline itself is the exception to the rule at the top of this page.**
-The bootstrap plan issue and its future file were combined on 2026-09-09 into
-one in-tree document,
-[future/project_final_state.md](future/project_final_state.md) — phases P0–P8
-followed by the deferred register, in the same file. It still obeys the three
-rules; it just is not an issue. Promotion there moves an entry from the
-deferred half into the phase list, in the same file.
+**The pipeline is split across five milestone issues, over one shared phase
+list.** [future/project_final_state.md](future/project_final_state.md) holds the
+whole thing — phases P0–P8 followed by the deferred register — and issues #4–#8
+each take a **contiguous slice** of it. This is the one place where a plan's
+phase list lives in the tree rather than in an issue body, and rule 1 is the
+reason for the arrangement rather than a casualty of it: one shared numbering
+means `P4` is depth in all five issues, where five separate plans would each
+have started at P0 and collided.
+
+Promotion still works as described above — a fired trigger moves an entry out
+of the deferred half of that file and into the phase list as the next unused
+number, then into whichever milestone issue is open.
+
+Each milestone issue also carries a **`just view-*` RViz recipe**. That is a
+viewer for a person, not a gate: it does not close a phase, and the rule at the
+top of this page still holds — the evidence is the number a script printed.

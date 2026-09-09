@@ -27,6 +27,26 @@ date and what the test printed).
 
 ---
 
+## The five milestones
+
+The nine phases are built as five milestone issues, each a **contiguous slice of
+the phase list below**. No issue renumbers from zero — `P4` means depth in every
+doc, commit and conversation.
+
+| | Issue | Phases | True when it closes |
+| --- | --- | --- | --- |
+| A | [#4](https://github.com/bthek1/ros2_pi/issues/4) | P0–P1 | One source tree builds under both distros; the Pi ships stamped MJPEG |
+| B | [#5](https://github.com/bthek1/ros2_pi/issues/5) | P2–P3 | One reader, one decode, corners on it, and `bags/desk1` exists |
+| C | [#6](https://github.com/bthek1/ros2_pi/issues/6) | P4 | Depth on the GPU at ≤ 80 ms, CUDA provider named in the log |
+| D | [#7](https://github.com/bthek1/ros2_pi/issues/7) | P5–P6 | A triangle mesh you can recognise your room in |
+| E | [#8](https://github.com/bthek1/ros2_pi/issues/8) | P7–P8 | Translation is visible, and one tab shows the pipeline |
+
+Each issue also carries a **`just view-*` RViz recipe** — a viewer for a person,
+never the evidence. The gates below are what pass or fail a phase. The view
+layer adds no new topics, so it adds no scope to any phase.
+
+---
+
 # Part 1 — The build order
 
 ## ☐ P0 — Workspace skeleton
@@ -192,12 +212,12 @@ and the integrate cost.
   never invented.
 - `/world/mesh` as a `Marker` capped at 120 k triangles by **quadric
   decimation, never subsampling**; `/world/save_mesh` writes the full-detail PLY.
-- `just mesh-views` — offscreen renders of a saved PLY from three fixed angles.
+- `tools/mesh-views.sh` — offscreen renders of a saved PLY from three fixed angles.
 
 **Test:** `bash tools/gates/mesh.sh` — replays `bags/desk1` and asserts the integrate rate
 shows **no dip** at mesh time (max inter-integration gap ≤ 2× the median), the
 published triangle count is under the cap, and the mesh has **no pinholes**
-(boundary-loop count below the pre-decimation count). Then runs `just mesh-views`
+(boundary-loop count below the pre-decimation count). Then runs `tools/mesh-views.sh`
 and writes three PNGs. Prints the counts and the paths of the renders — those
 images are the evidence, not the RViz window.
 

@@ -19,8 +19,10 @@ repository holds one package, `src/pimesh_hello/`, which publishes `"hello
 world"` and exists to prove the structure everything else will be built on —
 components composed in one container with the message handed over as a pointer,
 parameters from a keyed YAML, the same source built under both distros, and a
-session that leaves nothing running on either machine. `just` lists the recipes;
-the five `tools/gates/hello-*.sh` scripts are the tests, and
+session that leaves nothing running on either machine. `just build && just
+hello-compose` is the whole getting-started path — the justfile is only ever the
+handful of commands you type on a normal day. The five `tools/gates/hello-*.sh`
+scripts are the tests, run directly, and
 [gh issue #2](https://github.com/bthek1/ros2_pi/issues/2) records what each one
 printed.
 

@@ -21,9 +21,16 @@ Short version:
 - **Build with `just build`, not bare `colcon`** — the recipe passes
   `-DPython3_EXECUTABLE=/usr/bin/python3`, without which every `ament_cmake`
   package fails at configure time on this box.
+- **The justfile is three commands** — `build`, `hello-compose`, `hello-lan` —
+  and that is deliberate. Gates, Pi plumbing and the straggler sweep are
+  `bash tools/gates/<name>.sh` and `bash tools/<name>.sh`, run directly. Resist
+  adding a recipe.
 - **Clean up after yourself**: `bash tools/stragglers.sh` checks both machines and exits
   non-zero if anything survived. A leaked camera process locks `/dev/video0` for
-  everyone.
+  everyone. Bound anything you start by hand with
+  **`timeout --foreground -s INT <secs>`** — a *bare* `timeout` puts the command
+  in a process group your Ctrl-C never reaches, so it cannot be interrupted at
+  all.
 - **A plan is a GitHub issue** (`gh issue create --label plan`), never a markdown
   file in this tree, and **completion is closing it**
   (`gh issue close <n> --reason completed`). Executable phases only — stable

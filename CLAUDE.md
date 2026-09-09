@@ -25,7 +25,7 @@ to do.
 
 ### Status: the scaffolding runs, the pipeline does not
 
-As of **2026-09-08** there is exactly one package, `src/pimesh_hello/`, and it
+As of **2026-09-09** there is exactly one package, `src/pimesh_hello/`, and it
 exists to prove the structure rather than to do anything: a C++ `ament_cmake`
 package, two `rclcpp_components` components composed into one container with
 intra-process comms measured handing over the pointer, parameters from a keyed
@@ -33,6 +33,17 @@ YAML, the same source built from scratch under **both** distros, and a session
 that tears itself down on either machine. Five scripts in `tools/gates/`
 assert all of it — [gh issue #2](https://github.com/bthek1/ros2_pi/issues/2)
 carries the numbers each one printed.
+
+**The teardown claim had to be earned twice, and the way it failed is worth more
+than the fix.** It was true for `hello-lan` and false for `hello-compose` until
+2026-09-09: a foreground `timeout` had put `ros2 launch` in a process group the
+terminal's Ctrl-C never reached, so the recipe swallowed six of them and ended
+on its own when the timer expired. The gate said PASS throughout, because it
+only ever signalled the *other* recipe. That is a green gate over broken
+behaviour — worse than no gate, because it is a false claim with a script's
+authority behind it. Both halves are fixed (`run_for`, and a gate that signals
+both recipes), and the lesson is the one to carry into every later phase: ask
+what the gate does **not** touch.
 
 **Nothing of the actual pipeline exists.** No camera, no depth, no fusion, no
 mesh, no dashboard — that is
@@ -275,15 +286,31 @@ strong priors, re-verify before quoting a number as this project's own.
 - **Sessions tear themselves down — no stragglers.** Ctrl-C and closing the
   window must both end everything the recipe started, **on both machines**. The
   mechanism: viewer in the foreground, `arm_cleanup` in `tools/just-lib.sh`
-  installing a `trap cleanup_both EXIT INT TERM HUP` that `pkill -f`s every node
+  installing a handler on EXIT and on INT/TERM/HUP that `pkill -f`s every node
   pattern, locally and over SSH. (EXIT alone does fire on Ctrl-C; naming the
   signals is what makes the closed-window case deliberate rather than lucky.)
+  The signal handler cleans up **once** and then re-raises after `trap -`,
+  because a bare `trap handler INT` does not end a script — bash runs the
+  handler and resumes at the next line, so an interrupted gate carries on
+  measuring what it just killed, and the caller sees exit 0 where it should see
+  130.
   **A trap is not always installed just because you wrote one**: a command
   started in the background by a non-interactive shell inherits SIGINT as
   SIG_IGN, and bash refuses to trap a signal that was ignored on entry — so any
   test that sends a fake Ctrl-C must reset the disposition first
   (`setsid env --default-signal=INT,TERM,HUP …`, measured 2026-09-09), or it is
-  testing a session that cannot receive the signal. Killing a background `bash -lc` wrapper
+  testing a session that cannot receive the signal.
+  **And a trap that *is* installed still will not run while a foreground child
+  is.** GNU `timeout` puts its child in a new process group so it can kill the
+  tree on expiry; a terminal signals only the *foreground* group, so the command
+  under `timeout` never sees Ctrl-C — and bash will not run the trap until that
+  foreground child returns, which is exactly what it is refusing to do. Use
+  **`run_for`** (`timeout --foreground -s INT`, in `tools/just-lib.sh`) for
+  anything run in the foreground; a backgrounded `timeout … &` plus `wait` is
+  equally sound, because then the trap fires on arrival. Measured 2026-09-09:
+  0.30 s from a real Ctrl-C to a container logging *finished cleanly*, against a
+  30 s timer that used to have to expire first.
+  Killing a background `bash -lc` wrapper
   orphans its grandchildren — always pattern-match the node, never `kill %N`.
   **`bash tools/stragglers.sh` is the check**: it greps both machines and exits non-zero
   with the pid and full path of anything that survived. Every `pkill -f` and
@@ -291,12 +318,14 @@ strong priors, re-verify before quoting a number as this project's own.
   see the troubleshooting entry on why the plain spelling kills the shell that
   runs it.
 - **This applies to ad-hoc runs too — that means you, Claude.** Anything you
-  start by hand while verifying has no EXIT trap. Bound it up front
-  (`timeout -s INT 30 …`, and on the Pi
-  `ssh pi 'timeout -s INT 30 bash -lc "…"'`) or `pkill -f` it when done, and
-  check both hosts are clean before reporting. **A leaked camera process holds
-  `/dev/video0` exclusively** and every later session dies with
-  `Device or resource busy`.
+  start by hand while verifying has no EXIT trap. Bound it up front —
+  **`timeout --foreground -s INT 30 …`**, and on the Pi
+  `ssh pi 'timeout --foreground -s INT 30 bash -lc "…"'` — or `pkill -f` it when
+  done, and check both hosts are clean before reporting. The `--foreground` is
+  not decoration: without it the command is in a process group your own Ctrl-C
+  cannot reach, so a run you meant to bound becomes one you cannot interrupt.
+  **A leaked camera process holds `/dev/video0` exclusively** and every later
+  session dies with `Device or resource busy`.
 - **Claims are closed by scripts, not by eyes.** A gate names its evidence: a
   number on a topic, a log line with a threshold, a rendered image file. Reserve
   "needs a human" for the physical world — a tape-measure scale check, exposure
@@ -371,7 +400,8 @@ somebody once.
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones and their status |
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: a GitHub issue of stable phases, a command for a test, executable-only, and the future file |
 | [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this is going.** The whole pipeline as phases P0–P8, none started, each ending in a `tools/gates/*.sh` test, followed by the deferred register |
-| `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the justfile is a table of contents and the shell lives in `tools/` |
+| [#4](https://github.com/bthek1/ros2_pi/issues/4) [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
+| `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the shell lives in `tools/`; the justfile was trimmed further the same day to `build` + `run` only, so that issue's `just gate-*` spelling is history, not instruction |
 | [docs/plans/future/hello-world-future.md](docs/plans/future/hello-world-future.md) | Work deferred out of the hello-world plan, each entry with its trigger |
 
 When hardware facts change (camera replugged, Pi reflashed, IP moved), update

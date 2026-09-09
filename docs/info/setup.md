@@ -190,11 +190,22 @@ arrive with the phases of
 that build the nodes they run.
 
 Every session recipe **tears itself down on both machines**: the viewer runs in
-the foreground and `arm_cleanup` (in `tools/just-lib.sh`) installs a
-`trap cleanup_both EXIT INT TERM HUP` that `pkill -f`s each node pattern,
-locally and over SSH, so Ctrl-C and closing the window both work. When a session
-gains a node, its pattern goes into `PIMESH_PATTERNS` in the same change — and
-`bash tools/stragglers.sh` is how you find out that it did not.
+the foreground and `arm_cleanup` (in `tools/just-lib.sh`) installs a handler on
+EXIT and on INT/TERM/HUP that `pkill -f`s each node pattern, locally and over
+SSH, so Ctrl-C and closing the window both work. The handler cleans up once and
+re-raises, so an interrupted run exits 130 rather than falling through to the
+next line. When a session gains a node, its pattern goes into `PIMESH_PATTERNS`
+in the same change — and `bash tools/stragglers.sh` is how you find out that it
+did not.
+
+**Bound a foreground command with `run_for`, never a bare `timeout`.** GNU
+`timeout` moves its child into its own process group, where a terminal's Ctrl-C
+cannot reach it, and bash will not run the trap until that foreground child
+returns — so the session ignores Ctrl-C entirely and ends when the timer
+expires. `run_for` (`timeout --foreground -s INT`) keeps the child in the
+caller's group, which is why `just hello-compose` now dies 0.30 s after the
+keypress with `ros2 launch` shutting down gracefully. Full account in
+[troubleshooting.md](troubleshooting.md).
 
 **A leaked camera process holds `/dev/video0` exclusively**, and every later
 session then dies with `Device or resource busy`. Check both machines are clean

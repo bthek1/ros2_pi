@@ -5,10 +5,19 @@ Status as of **2026-09-09**. The build order and per-phase tests live in
 this page is the one-line status view. Milestones map to its phases: M1 = P0,
 M2 = P1, and so on through M9 = P8.
 
+Those phases are **built** as five milestone issues, each a contiguous slice:
+[#4 A](https://github.com/bthek1/ros2_pi/issues/4) = M1–M2,
+[#5 B](https://github.com/bthek1/ros2_pi/issues/5) = M3–M4,
+[#6 C](https://github.com/bthek1/ros2_pi/issues/6) = M5,
+[#7 D](https://github.com/bthek1/ros2_pi/issues/7) = M6–M7,
+[#8 E](https://github.com/bthek1/ros2_pi/issues/8) = M8–M9. Each carries a
+`just view-*` RViz recipe for watching that stage by eye — a viewer, never the
+evidence.
+
 | # | Milestone | Status |
 | --- | --- | --- |
 | M0 | Docs and working agreement | **done 2026-09-01** — this tree |
-| M0.5 | Scaffolding proven: `pimesh_hello`, composed container, both distros, clean teardown | **done 2026-09-08** — [issue #2](https://github.com/bthek1/ros2_pi/issues/2), five `tools/gates/hello-*.sh` scripts |
+| M0.5 | Scaffolding proven: `pimesh_hello`, composed container, both distros, clean teardown | **done 2026-09-08** — [issue #2](https://github.com/bthek1/ros2_pi/issues/2), five `tools/gates/hello-*.sh` scripts. Teardown corrected **2026-09-09**: it held for `hello-lan` but not `hello-compose`, and the gate had only ever signalled the former |
 | M1 | Workspace skeleton: `pimesh_msgs`, `pimesh_bringup`, justfile, both machines build | not started — the justfile, the two-machine build loop and the component pattern already exist from M0.5 |
 | M2 | `pimesh_camera` on the Pi — V4L2 MJPEG, honest capture stamps, fails loudly | not started |
 | M3 | Dev-box container — `decode_node` with intra-process comms proven zero-copy | not started |

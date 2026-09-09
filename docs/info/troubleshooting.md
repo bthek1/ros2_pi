@@ -52,7 +52,8 @@ auto-adjusted on Linux.
 
 A leaked camera process from an earlier session still holds exclusive capture.
 Sweep both machines for stragglers. This is why every recipe has an EXIT trap
-and why ad-hoc runs get `timeout -s INT` or an explicit `pkill -f`.
+and why ad-hoc runs get `run_for` / `timeout --foreground -s INT` or an
+explicit `pkill -f`.
 
 ## `/dev/video1` gives no frames
 
