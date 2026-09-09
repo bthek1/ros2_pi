@@ -35,7 +35,7 @@ doc, commit and conversation.
 
 | | Issue | Phases | True when it closes |
 | --- | --- | --- | --- |
-| A | [#4](https://github.com/bthek1/ros2_pi/issues/4) | P0–P1 | One source tree builds under both distros; the Pi ships stamped MJPEG |
+| A | [#4](https://github.com/bthek1/ros2_pi/issues/4) | P0–P1 | ✓ **closed 2026-09-09** — one source tree builds under both distros; the Pi ships stamped MJPEG |
 | B | [#5](https://github.com/bthek1/ros2_pi/issues/5) | P2–P3 | One reader, one decode, corners on it, and `bags/desk1` exists |
 | C | [#6](https://github.com/bthek1/ros2_pi/issues/6) | P4 | Depth on the GPU at ≤ 80 ms, CUDA provider named in the log |
 | D | [#7](https://github.com/bthek1/ros2_pi/issues/7) | P5–P6 | A triangle mesh you can recognise your room in |
@@ -49,7 +49,24 @@ layer adds no new topics, so it adds no scope to any phase.
 
 # Part 1 — The build order
 
-## ☐ P0 — Workspace skeleton
+## ✓ P0 — Workspace skeleton
+
+**Done 2026-09-09.** `bash tools/gates/build.sh` printed: `mode: scratch`,
+`distros: dev=lyrical pi=jazzy`, `build times: dev=10.2s pi=32.0s`,
+`packages: pimesh_bringup pimesh_camera pimesh_hello pimesh_msgs` identical on
+both, `interfaces equal: 5 of 5`. The gate cleans both colcon trees and rebuilds
+from scratch by default; `--incremental` skips that.
+
+Two things came out of it worth carrying forward. `tools/gates/hello-build.sh`
+asserted the package list was *exactly* `[pimesh_hello]`, so the first new
+package failed it — it now reads the expected set from `src/` instead. And
+`tf2_ros/static_transform_publisher` cannot be configured with
+`parameters=[...]`: it declares `frame_id` and `translation.x` as parameters but
+its `main()` parses `argv` first and exits non-zero with "Frame id must not be
+empty" before reading any of them. The launch file therefore loads
+`config/pimesh.yaml` itself and converts the entries to flags, keeping one
+source of truth. Getting this wrong produces three dead processes and a launch
+that carries on with no TF tree.
 
 **Goal:** the same source builds under two different ROS distros.
 
@@ -71,7 +88,54 @@ half a build.
 
 ---
 
-## ☐ P1 — Capture on the Pi
+## ✓ P1 — Capture on the Pi
+
+**Done 2026-09-09.** `bash tools/gates/capture.sh` printed, on its final run:
+
+```
+exposure mode    : Aperture Priority Mode  (exposure_dynamic_framerate=0)
+rate             : 44.33 Hz on the dev box over 30s  (assert >= 40)
+distinct frames  : 1331 of 1331  (assert equal)
+mean JPEG        : 76152 bytes  (3.2 MB/s over wlan0)
+subscribers      : 1  (assert 1; RViz closed)
+stamp, one clock : 4.207 ms measured on the Pi at 59.33 Hz
+                   assert |offset| <= one frame interval = 22.56 ms
+stamp, cross-host : launch1=-13.510 ms  launch2=-12.518 ms
+launch delta     : 0.992 ms  (assert < 5.0 — this is the usb_cam bug)
+busy device      : exit 1, node refused in 0.24s  (assert non-zero, < 2.0s)
+```
+
+Across five runs: dev-box rate 44.3–58.6 Hz (Pi-side a steady 59.3 Hz),
+0 duplicate payloads every time, launch delta 0.30–1.02 ms.
+
+**The test as specified had to be corrected, and the correction is the
+interesting part.** It asked for the stamp-vs-receipt offset to sit "within one
+frame interval", measured on the dev box. That number cannot carry the claim: it
+contains the two machines' NTP relationship, which measured +8 ms and −19 ms an
+hour apart with the node unchanged, and one frame interval is ~18 ms. So the
+tight assertion is now made **on the Pi**, where the stamp and the receipt come
+from one clock and the residue is the real thing P1 claims — 4.21 ms, repeatable
+to 0.02 ms across runs. The dev-box offsets keep a loose ±100 ms bound, which is
+still far below every usb_cam sample (223/362/979 ms) and far above clock skew.
+The two-launch delta, which is the actual usb_cam detector, was always sound and
+is unchanged.
+
+A first attempt to print the clock skew alongside was removed rather than fixed:
+bracketing `ssh pi date` between two local reads returns roughly +RTT/2 whatever
+the truth, and reported 195–430 ms of skew while explaining offsets of −15 ms.
+A confident, contradictory number in a gate's output is worse than no number.
+
+**The view layer landed with it** — `just view-camera`,
+`src/pimesh_bringup/rviz/camera.rviz`, and `bash tools/gates/view-configs.sh`,
+which parses every committed `.rviz` and asserts each display's topic is one
+`src/` actually publishes (verified by breaking it: a renamed topic exits 1).
+Extending `tools/gates/hello-clean.sh` to signal `view-camera` immediately
+caught that recipe leaking both RViz and the Pi's camera_node: bash will not run
+a trap while a foreground child is running, and an rviz2 signalled during its
+own startup never exits, so the trap that cleans up the Pi never fired. The
+viewer is now backgrounded and waited on. The same change found the gate
+deducing its process group from `$!`, which is empty whenever `setsid` forks —
+a group kill that had been silently doing nothing.
 
 **Goal:** frames off the sensor with honest timestamps, and nothing else.
 
@@ -82,8 +146,10 @@ half a build.
   `CameraInfo`.
 - Stamp from the dequeued buffer's own timestamp, not from `now()` at publish.
 - Exit non-zero with a clear message on a missing or busy device — never idle.
-- A `just camera-reset` recipe that clears the C922's persistent V4L2 controls
-  to a known baseline and prints every control current-vs-default.
+- A `camera-reset` script that clears the C922's persistent V4L2 controls
+  to a known baseline and prints every control current-vs-default. Built as
+  `bash tools/camera-reset.sh`, not a `just` recipe — the justfile is the
+  user-facing surface and this is a tool.
 
 **Test:** `bash tools/gates/capture.sh` — with the camera reset, measures
 `/image_raw/compressed` on the **dev box** over 30 s and asserts **≥ 40 Hz**

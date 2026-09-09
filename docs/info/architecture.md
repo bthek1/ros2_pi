@@ -1,7 +1,10 @@
 # Architecture
 
-*Design intent, 2026-09-01. Nothing here is built yet — see
-[roadmap.md](roadmap.md) for what exists.*
+*Design intent, 2026-09-01, except where a row says otherwise. **Capture and the
+frame tree are built and measured** as of 2026-09-09 (P0–P1,
+[issue #4](https://github.com/bthek1/ros2_pi/issues/4)); everything from
+`decode_node` rightwards is still a plan. See [roadmap.md](roadmap.md) for the
+one-line status view.*
 
 ## The shape of it
 
@@ -82,17 +85,17 @@ zero-copy claim in this project needs the same shape of evidence.
 
 ## Packages
 
-Only `pimesh_hello` exists today; the rest is the plan.
+Four of the seven exist; the rest is the plan.
 
 | Package | Build | Runs on | Contents |
 | --- | --- | --- | --- |
 | `pimesh_hello` | `ament_cmake` | both | **Built 2026-09-08.** `hello_node`, `echo_node` — the scaffolding reference: components, thin mains, keyed YAML, composed launch. Carries no pipeline logic and is not in its path |
-| `pimesh_msgs` | `ament_cmake` (rosidl) | both | `Keypoints.msg`, `PipelineStats.msg`, `MeshStats.msg`, `SaveMesh.srv`, `ResetMap.srv` |
-| `pimesh_camera` | `ament_cmake` | **Pi** | `camera_node` — V4L2 capture, MJPEG passthrough, capture-time stamps |
+| `pimesh_msgs` | `ament_cmake` (rosidl) | both | **Built 2026-09-09.** `Keypoints.msg`, `PipelineStats.msg`, `MeshStats.msg`, `SaveMesh.srv`, `ResetMap.srv`. All five generate identically under Lyrical and Jazzy — `bash tools/gates/build.sh` diffs `ros2 interface show` across the two machines |
+| `pimesh_camera` | `ament_cmake` | **Pi** | **Built 2026-09-09.** `camera_node` — V4L2 capture, MJPEG passthrough, capture-time stamps; plus `capture_probe`, the subscriber `gates/capture.sh` measures the stream with |
 | `pimesh_perception` | `ament_cmake` | dev box | `decode_node`, `keypoint_node`, `depth_node` |
 | `pimesh_world` | `ament_cmake` | dev box | `fusion_node` (TSDF), `mesh_node` (marching cubes, PLY export) |
 | `pimesh_dashboard` | `ament_cmake` | dev box | `dashboard_node` — HTTP + WebSocket server, vendored web UI |
-| `pimesh_bringup` | `ament_cmake` | both | launch files, `config/*.yaml`, the RViz config |
+| `pimesh_bringup` | `ament_cmake` | both | **Built 2026-09-09.** launch files, `config/pimesh.yaml`, `rviz/camera.rviz`. Compiles nothing — every dependency is an `exec_depend` |
 
 `pimesh_hello`, `pimesh_camera` and `pimesh_msgs` build on the Pi under
 **Jazzy**; everything else is dev-box-only under **Lyrical**. Keep the Pi-side pair to C++17 and to
@@ -103,8 +106,8 @@ split.
 
 | Topic | Type | Publisher | QoS | Notes |
 | --- | --- | --- | --- | --- |
-| `/image_raw/compressed` | `sensor_msgs/CompressedImage` | `camera_node` | RELIABLE, KEEP_LAST(1) | The only topic on the LAN. MJPEG straight from V4L2, never re-encoded |
-| `/camera_info` | `sensor_msgs/CameraInfo` | `camera_node` | RELIABLE, KEEP_LAST(1), transient local | Real intrinsics from calibration, not defaults |
+| `/image_raw/compressed` | `sensor_msgs/CompressedImage` | `camera_node` | RELIABLE, KEEP_LAST(1) | **Live 2026-09-09.** The only topic on the LAN. MJPEG straight from V4L2, never re-encoded. ~80 kB/frame, measured 44–59 Hz on the dev box against 59 Hz at the Pi |
+| `/camera_info` | `sensor_msgs/CameraInfo` | `camera_node` | RELIABLE, KEEP_LAST(1), transient local | **Live 2026-09-09**, but carrying *nominal* intrinsics with a startup WARNING, not a calibration. The checkerboard run is deferred to the P5 tape-measure visit — see [milestone-a-future.md](../plans/future/milestone-a-future.md) |
 | `/rgb/image` | `sensor_msgs/Image` (bgr8) | `decode_node` | RELIABLE, KEEP_LAST(1) | Intra-process only. Never crosses the network |
 | `/keypoints` | `pimesh_msgs/Keypoints` | `keypoint_node` | RELIABLE, KEEP_LAST(1) | Positions, descriptors, match ids for the frame |
 | `/keypoints/image/compressed` | `sensor_msgs/CompressedImage` | `keypoint_node` | BEST_EFFORT, KEEP_LAST(1) | Annotated preview for the dashboard. Small, droppable |
@@ -151,6 +154,15 @@ base_link ──(static)──▶ camera_link ──(static)──▶ camera_opt
 - `map → odom` is only published once there is a backend to publish it. Until
   then the launch publishes a static identity so the frame exists and RViz has a
   fixed frame, and that fact is stated in the launch file, not hidden.
+- **All three static edges are published as of 2026-09-09**, by
+  `tf2_ros/static_transform_publisher` instances that `pimesh_bringup`'s launch
+  starts, with their numbers read from `config/pimesh.yaml`. They arrive as
+  command-line flags rather than as a parameter file because that executable
+  parses `argv` and exits non-zero before it ever reads parameters — it declares
+  `frame_id` and `translation.x` and never gets to them. Passing
+  `parameters=[...]` produces three dead processes and a launch that carries on
+  without a TF tree, which is worse than a hard failure because RViz then shows
+  an empty Fixed Frame and looks like its own bug.
 
 ## Where the time goes
 

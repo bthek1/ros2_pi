@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pimesh_msgs</name>
+  <version>0.1.0</version>
+  <description>
+    The message and service types this pipeline defines for itself: what a
+    keypoint frame is, what a stage reports about its own throughput, what the
+    reconstruction looks like, and the two things a person can ask of it. Types
+    only — no nodes, no logic, nothing to run.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- The generators run at build time on each machine and produce that
+       machine's own C++ and Python. They are not a runtime dependency, which is
+       why this pair is split the way it is — and the split is load-bearing
+       here: the Pi builds this package under Jazzy and the dev box under
+       Lyrical, from the same .msg files, and the generated code is never
+       shipped between them. -->
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <!-- Every dependency here exists on both Jazzy and Lyrical. Nothing else
+       goes in this list. -->
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

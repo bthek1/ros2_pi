@@ -1,0 +1,53 @@
+# Every parameter this workspace sets, keyed by node name.
+#
+# `/**` matches any namespace, so a key reaches its node whether it sits at the
+# root or is pushed under one by a launch file. A key that matches *nothing* is
+# not an error and never will be: the file loads, the parameter is silently
+# never applied, and the node runs on its code default. That is the trap this
+# project's predecessor lost real time to, so every gate here asserts on a
+# parameter's *effect* rather than on the file having been read.
+
+# --- The camera's place on the body -----------------------------------------
+#
+# Two static edges, base_link -> camera_link -> camera_optical_frame, published
+# by tf2_ros/static_transform_publisher rather than hand-rolled inside a node.
+# There is exactly one publisher per edge in this project and this is where both
+# of these live; a node that publishes its own base_link -> camera_link is the
+# failure that makes a mesh smear and shows up in no single log.
+
+/**/base_to_camera:
+  ros__parameters:
+    frame_id: base_link
+    child_frame_id: camera_link
+    # Identity, and honestly so: the C922 is hand-held, so there is no measured
+    # offset between the body origin and the camera yet. When it is mounted,
+    # this is the one place that changes and nothing recompiles.
+    translation: {x: 0.0, y: 0.0, z: 0.0}
+    rotation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}
+
+/**/camera_to_optical:
+  ros__parameters:
+    frame_id: camera_link
+    child_frame_id: camera_optical_frame
+    translation: {x: 0.0, y: 0.0, z: 0.0}
+    # The REP-103 body convention (x forward, y left, z up) rotated into the
+    # optical convention (z forward, x right, y down). This exact quaternion,
+    # (-0.5, 0.5, -0.5, 0.5), is the standard -90 deg about z then -90 deg about
+    # x; it is not a number to re-derive per node, which is why it is a static
+    # transform published once and read by everything.
+    #
+    # All geometry in this pipeline — keypoint rays, depth unprojection, TSDF
+    # integration — is done in camera_optical_frame. This edge is what lets the
+    # rest of the tree stay in the body convention.
+    rotation: {x: -0.5, y: 0.5, z: -0.5, w: 0.5}
+
+# The map -> odom edge, published as static identity until there is a pose-graph
+# backend to publish it for real (P8). Stated here rather than hidden, because
+# "the frame exists so RViz has a fixed frame" and "the map is being corrected"
+# look identical in a TF tree and are not the same claim.
+/**/map_to_odom:
+  ros__parameters:
+    frame_id: map
+    child_frame_id: odom
+    translation: {x: 0.0, y: 0.0, z: 0.0}
+    rotation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}

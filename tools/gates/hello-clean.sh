@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 #
-# P4 gate: Ctrl-C and a closed window both leave nothing running, on either
-# machine.
+# Teardown gate: Ctrl-C and a closed window both leave nothing running, on
+# either machine — for *every* recipe a person sits and watches.
+#
+# It was written as the hello-world plan's P4 and keeps that name, because the
+# name is what the closed issue's build log refers to. Its subject was never
+# hello-world though: it is the repo-wide rule that a session ends when you end
+# it. So the table below grows with the justfile's `run` group, and the reason
+# it must is the reason this gate exists in the first place. It passed for a
+# week over a broken `hello-compose` because it only ever signalled
+# `hello-lan` — a green gate over broken behaviour, which is worse than no gate,
+# because it is a false claim with a script's authority behind it. Every recipe
+# a person can Ctrl-C belongs here; the question to ask of this file is always
+# what it does *not* touch.
 
 source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
 echo "== gate-hello-clean =="
@@ -46,49 +57,98 @@ fi
 # until its foreground child returns. Measured 2026-09-09: `just hello-compose`
 # ignored six Ctrl-Cs and ended on its own when the 30 s timer expired. This
 # gate said PASS throughout, because it only ever started the other script.
-session_up() {              # $1 = lan or compose
+#
+# view-camera is the third, and it is the one with the most to lose. It spans
+# both machines like hello-lan, runs its viewer in the foreground like
+# hello-compose, and — unlike either — the thing it leaves behind on the Pi
+# holds /dev/video0 *exclusively*. A leaked camera_node does not merely linger;
+# it makes every later session in this project die with "Device or resource
+# busy", including the ones that would have diagnosed it.
+
+# recipe -> the script under tools/, and what "it is up" means for it.
+RECIPES=(lan compose view-camera)
+script_for() {              # $1 = recipe
+    case $1 in
+        view-camera) echo "$PIMESH_WS/tools/view-camera.sh" ;;
+        *)           echo "$PIMESH_WS/tools/hello-$1.sh" ;;
+    esac
+}
+
+session_up() {              # $1 = recipe
     case $1 in
         # Both ends, or killing them proves nothing.
         lan)     pgrep -f "$PIMESH_NODE_PAT" >/dev/null 2>&1 &&
                  pi_run "pgrep -f '$PIMESH_NODE_PAT'" >/dev/null 2>&1 ;;
         compose) pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 ;;
+        # The camera on the Pi *and* the viewer here. Waiting on only one of
+        # them would signal the session before the other had started, and a
+        # process that was never running is trivially not a straggler.
+        view-camera) pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 &&
+                     pi_run "pgrep -f '$PIMESH_NODE_PAT'" >/dev/null 2>&1 ;;
     esac
 }
 
-run_and_signal() {          # $1 = INT or HUP, $2 = lan or compose
+run_and_signal() {          # $1 = INT or HUP, $2 = recipe
     # 45 s: longer than this gate takes, so the session never ends on its own
     # timer. A recipe that outlives the signal has to be killed *by* the signal
     # for the straggler count below to mean anything.
+    # The session reports its own process group id, rather than this shell
+    # deducing it from $!. `setsid` forks whenever it finds itself already a
+    # process group leader — which depends on whether the *calling* shell has
+    # job control on, so it happens in some contexts and not others. When it
+    # does fork, the pid in $! belongs to a setsid that has already exited,
+    # `ps -o pgid=` prints nothing, and the kill below becomes
+    # `kill -INT -` — an error swallowed by `|| true`. The session then runs to
+    # its own timer and dies of old age, and this gate reports 0 stragglers and
+    # PASS having signalled nothing at all. That is the same shape of false
+    # green this file already carries a paragraph about, so it does not get to
+    # happen twice: after setsid, the new leader's own $$ *is* the pgid, and it
+    # writes it down before exec'ing the script.
+    local pgidfile; pgidfile=$(mktemp)
     setsid env --default-signal=INT,TERM,HUP \
-        bash "$PIMESH_WS/tools/hello-$2.sh" 45 >"$log" 2>&1 &
-    local launcher=$! pgid up=0
-    pgid=$(ps -o pgid= -p "$launcher" | tr -d ' ')
+        bash -c 'echo $$ >"$1"; exec bash "$2" 45' _ "$pgidfile" "$(script_for "$2")" \
+        >"$log" 2>&1 &
+    local pgid up=0
+    for _ in $(seq 50); do
+        pgid=$(cat "$pgidfile" 2>/dev/null || true)
+        [[ -n ${pgid:-} ]] && break
+        sleep 0.1
+    done
+    if [[ -z ${pgid:-} ]]; then
+        echo "FAIL: the $2 session never reported a process group to signal"
+        return 1
+    fi
 
     for _ in $(seq 45); do
         if session_up "$2"; then up=1; break; fi
         sleep 1
     done
     if [[ $up -ne 1 ]]; then
-        echo "FAIL: hello-$2 never came up, so there was nothing to kill"
+        echo "FAIL: $2 never came up, so there was nothing to kill"
         tail -20 "$log"; return 1
     fi
 
-    kill -"$1" -"$pgid" 2>/dev/null || true
+    # A group kill that names no group is the failure this function was just
+    # rewritten to prevent, so it is checked rather than swallowed.
+    if ! kill -"$1" -"$pgid" 2>/dev/null; then
+        echo "FAIL: could not send SIG$1 to process group ${pgid} for $2"
+        return 1
+    fi
     sleep 3
     return 0
 }
 
 counts=""
-for what in lan compose; do
+for what in "${RECIPES[@]}"; do
     for sig in INT HUP; do
-        run_and_signal "$sig" "$what"
+        run_and_signal "$sig" "$what" || exit 1
         # tools/stragglers.sh is the assertion: it prints a count per host and
         # exits non-zero if any survived.
         out=$(bash "$stragglers" 2>&1) && rc=0 || rc=$?
-        echo "--- hello-${what} after SIG${sig} ---"
+        echo "--- ${what} after SIG${sig} ---"
         echo "$out"
         if [[ $rc -ne 0 ]]; then
-            echo "FAIL: SIG${sig} left processes behind after hello-${what}"
+            echo "FAIL: SIG${sig} left processes behind after ${what}"
             exit 1
         fi
         counts+="${what}/SIG${sig}: $(grep -o '[0-9]*$' <<<"$out" | tr '\n' '/' | sed 's:/$::')  "
@@ -97,5 +157,5 @@ done
 
 echo
 echo "survivors dev/pi : ${counts}"
-echo "                   (assert 0/0 after every signal, for both recipes)"
+echo "                   (assert 0/0 after every signal, for all ${#RECIPES[@]} recipes)"
 echo "PASS gate-hello-clean"

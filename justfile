@@ -5,7 +5,12 @@
 # two things there are to watch. Everything that is not a day-to-day action is a
 # script in tools/ and is run as one — no recipe, no wrapper:
 #
-#   bash tools/gates/hello-build.sh   P0: one real package builds
+#   bash tools/gates/build.sh         P0: one source tree, two distros, same msgs
+#   bash tools/gates/capture.sh       P1: 720p MJPEG on the LAN, stamped honestly
+#   bash tools/gates/view-configs.sh  every .rviz topic is one src/ publishes
+#   bash tools/camera-reset.sh        clear the camera's persistent V4L2 controls
+#
+#   bash tools/gates/hello-build.sh   scaffolding: one real package builds
 #   bash tools/gates/hello-talk.sh    P1: the talker honours its rate parameter
 #   bash tools/gates/hello-ipc.sh     P2: one process, message handed over as a pointer
 #   bash tools/gates/hello-lan.sh     P3: one source tree, two distros, over the LAN
@@ -58,3 +63,8 @@ hello-compose seconds="30":
 [group('run')]
 hello-lan seconds="20":
     @bash "{{ ws }}/tools/hello-lan.sh" {{ seconds }}
+
+# The Pi's camera and the frame tree, in RViz. A viewer, not evidence
+[group('run')]
+view-camera seconds="600":
+    @bash "{{ ws }}/tools/view-camera.sh" {{ seconds }}

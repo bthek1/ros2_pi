@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pimesh_camera</name>
+  <version>0.1.0</version>
+  <description>
+    Capture, and nothing else. A V4L2 MJPEG node that puts the camera's own
+    JPEG bytes on the wire stamped with the kernel's capture time, plus the
+    subscriber the capture gate measures that stream with. This is the only
+    package that runs on the Pi in normal operation.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- This is the Pi's package, so this list is the one that matters most in
+       the workspace: every entry must exist on Jazzy, and the set is kept as
+       small as it can be. Notably absent is image_transport — there is no raw
+       image here for it to have an opinion about, the /compressed suffix is a
+       naming convention we can simply follow, and a dependency that only earns
+       its keep on the dev box has no business on the sensor head. V4L2 itself
+       needs no package: <linux/videodev2.h> is kernel UAPI, shipped with libc. -->
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>sensor_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

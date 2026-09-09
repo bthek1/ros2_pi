@@ -1,0 +1,11 @@
+# Write the current surface to a PLY file. The dashboard's [ save mesh ] button
+# and RViz call this same service — there is no other path.
+
+# Empty means the node picks a timestamped name in its configured output
+# directory, which is what the dashboard sends. An explicit path is for scripts.
+string path
+---
+bool success
+string path                     # what was actually written, resolved
+uint32 triangles
+string message                  # why, when success is false

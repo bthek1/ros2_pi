@@ -80,12 +80,21 @@ pi_ws_run() {           # $* = command line to run in the Pi's workspace
 PIMESH_NODE_PAT='/lib/[p]imesh_[a-z]*/'
 PIMESH_CONTAINER_PAT='rclcpp_components/[c]omponent_container'
 PIMESH_LAUNCH_PAT='ros2 [l]aunch pimesh_[a-z]*'
+# The viewer counts as a straggler. It holds no device and leaks nothing
+# expensive, which is exactly why it would have been left out — and then a
+# `just view-camera` whose RViz outlived its Ctrl-C would have gone unnoticed
+# by a gate whose whole subject is sessions ending. Anchored on *our* config
+# path, so somebody else's rviz2 on this machine is none of our business.
+PIMESH_VIEWER_PAT='[r]viz2 -d .*pimesh_'
 # shellcheck disable=SC2034  # read by tools/stragglers.sh
-PIMESH_PATTERNS=("$PIMESH_NODE_PAT" "$PIMESH_CONTAINER_PAT" "$PIMESH_LAUNCH_PAT")
+PIMESH_PATTERNS=(
+    "$PIMESH_NODE_PAT" "$PIMESH_CONTAINER_PAT" "$PIMESH_LAUNCH_PAT" "$PIMESH_VIEWER_PAT"
+)
 
 # Container before launcher, always: killing the launcher first orphans the
 # container, which then holds the topics nobody can find a publisher for.
 kill_local() {
+    pkill -f "$PIMESH_VIEWER_PAT" 2>/dev/null || true
     pkill -f "$PIMESH_CONTAINER_PAT" 2>/dev/null || true
     pkill -f "$PIMESH_NODE_PAT" 2>/dev/null || true
     sleep 0.5
@@ -175,6 +184,35 @@ _pimesh_on_signal() {   # $1 = signal name
 run_for() {             # $1 = seconds, rest = command line
     local secs=$1; shift
     timeout --foreground -s INT "$secs" "$@"
+}
+
+# Run a command on the Pi, in its workspace, under a time limit — and have the
+# limit reach the *node* rather than the login shell wrapping it.
+#
+# This is the remote counterpart of run_for, and it is deliberately spelled
+# differently, because the two ends want opposite things from `timeout`.
+#
+# Locally, run_for passes --foreground so that a person's Ctrl-C reaches a
+# command they are watching. Nobody is typing at the far end of an ssh, and
+# there --foreground is actively wrong: timeout then signals only its direct
+# child. Written as
+#
+#     ssh pi 'timeout --foreground -s INT 12 bash -lc "... ros2 run ..."'
+#
+# the SIGINT lands on the login bash, which dies, and orphans `ros2 run` and the
+# node under it — measured 2026-09-09, a camera_node still holding /dev/video0
+# a minute after its 12 s limit, which is precisely the leak that makes every
+# later session fail with "Device or resource busy". The fix is both halves:
+# `timeout` goes *inside* the login shell, so that ros2 run and the node are its
+# own children, and it keeps its default group-kill so the whole tree gets the
+# signal.
+#
+# The pattern kill in kill_pi is still the backstop, not the mechanism. A node
+# that is signalled shuts down cleanly and logs that it did; one that is pkill'd
+# tells you nothing about whether it would have.
+pi_run_for() {          # $1 = seconds, rest = command line to run in the Pi's workspace
+    local secs=$1; shift
+    pi_ws_run "timeout -s INT $secs $*"
 }
 
 # --- Assertions -------------------------------------------------------------

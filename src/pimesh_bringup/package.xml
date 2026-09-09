@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pimesh_bringup</name>
+  <version>0.1.0</version>
+  <description>
+    How this workspace is started, and the numbers that are true of the robot
+    rather than of any one node: the launch files, config/pimesh.yaml keyed by
+    node name, the static transforms that give the camera a place on the body,
+    and the RViz configs. It compiles nothing — every dependency here is an
+    exec_depend, and it installs to share/.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- exec_depend throughout: nothing in this package is compiled against
+       anything. It builds identically on Jazzy and Lyrical because there is
+       nothing in it to build. -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rclcpp_components</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

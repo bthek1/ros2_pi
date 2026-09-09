@@ -124,10 +124,10 @@ gh issue close 2 --reason completed --comment "All gates green; see body for mea
 
 | Plan | Status | Future file |
 | --- | --- | --- |
-| [#2 Hello-world plan](https://github.com/bthek1/ros2_pi/issues/2) | **Closed 2026-09-08** — P0–P4 done, all five gates green; kept as the build log | [future/hello-world-future.md](future/hello-world-future.md) |
+| [#2 Hello-world plan](https://github.com/bthek1/ros2_pi/issues/2) | **Closed 2026-09-08** — P0–P4 done, all five gates green; kept as the build log | — (merged into [future/project_final_state.md](future/project_final_state.md) on 2026-09-09) |
 | [#3 Justfile plan](https://github.com/bthek1/ros2_pi/issues/3) | **Closed 2026-09-09** — P0–P3 done, `tools/gates/justfile.sh` green; 627-line justfile → 102, then → 60 when the gates left it | — |
-| [#4 Milestone A](https://github.com/bthek1/ros2_pi/issues/4) | Open — next up — phases `P0–P1` of the pipeline | [future/project_final_state.md](future/project_final_state.md) |
-| [#5 Milestone B](https://github.com/bthek1/ros2_pi/issues/5) | Open, `deferred` — starts when A closes — phases `P2–P3` of the pipeline | [future/project_final_state.md](future/project_final_state.md) |
+| [#4 Milestone A](https://github.com/bthek1/ros2_pi/issues/4) | **Closed 2026-09-09** — `P0–P1` done, `tools/gates/build.sh`, `capture.sh` and `view-configs.sh` green; kept as the build log | [future/milestone-a-future.md](future/milestone-a-future.md) |
+| [#5 Milestone B](https://github.com/bthek1/ros2_pi/issues/5) | Open — **next up**, A having closed — phases `P2–P3` of the pipeline | [future/project_final_state.md](future/project_final_state.md) |
 | [#6 Milestone C](https://github.com/bthek1/ros2_pi/issues/6) | Open, `deferred` — starts when B closes — phases `P4` of the pipeline | [future/project_final_state.md](future/project_final_state.md) |
 | [#7 Milestone D](https://github.com/bthek1/ros2_pi/issues/7) | Open, `deferred` — starts when C closes — phases `P5–P6` of the pipeline | [future/project_final_state.md](future/project_final_state.md) |
 | [#8 Milestone E](https://github.com/bthek1/ros2_pi/issues/8) | Open, `deferred` — starts when D closes — phases `P7–P8` of the pipeline | [future/project_final_state.md](future/project_final_state.md) |

@@ -1,0 +1,112 @@
+# Milestone A's viewer: is the camera alive, and is the frame tree real.
+#
+# This is a *viewer*, not evidence. tools/gates/capture.sh is what passes or
+# fails P1 — and note that the rate it measures has to be taken with this window
+# closed, because RViz is a second RELIABLE subscriber on the one topic that
+# crosses Wi-Fi, and the whole architecture is arranged around there being one.
+# It is tolerable here only because a compressed frame is ~86 kB.
+#
+# Two displays, both on topics P0 and P1 already publish. The view layer adds no
+# topics, so it adds no scope to either phase.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Image1
+        - /TF1
+      Splitter Ratio: 0.5
+    Tree Height: 500
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Name: root
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 0.5
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset: {X: 0, Y: 0, Z: 0}
+      Plane: XY
+      Plane Cell Count: 10
+      Reference Frame: <Fixed Frame>
+      Value: true
+
+    # The Pi is capturing and the LAN hop works.
+    #
+    # The topic is the *base* name and the transport is named separately:
+    # image_transport appends "/compressed", so this subscribes to
+    # /image_raw/compressed and decodes the JPEG here. Writing the full
+    # /image_raw/compressed in Topic instead would have RViz look for
+    # /image_raw/compressed/compressed and show an empty panel with no error.
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Image
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Normalize Range: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        # RELIABLE, matching the publisher. BEST_EFFORT here would not merely
+        # drop frames — a QoS mismatch means the subscription never connects at
+        # all, and RViz says nothing about it beyond a grey panel.
+        Reliability Policy: Reliable
+        Value: /image_raw
+      Transport Hint: compressed
+      Value: true
+
+    # The static tree from P0 is present and rigid.
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Frame Timeout: 15
+      Marker Scale: 0.3
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    # base_link, not map: this milestone publishes map -> odom as a static
+    # identity placeholder, and fixing the view to a frame that is standing in
+    # for something makes the placeholder easy to forget. base_link is the
+    # frame the camera is actually rigid to.
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 2.5
+      Focal Point: {X: 0, Y: 0, Z: 0}
+      Name: Current View
+      Pitch: 0.4
+      Target Frame: <Fixed Frame>
+      Yaw: 2.5
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 800
+  Width: 1280
+  Image:
+    collapsed: false

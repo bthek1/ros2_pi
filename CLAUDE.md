@@ -45,13 +45,36 @@ authority behind it. Both halves are fixed (`run_for`, and a gate that signals
 both recipes), and the lesson is the one to carry into every later phase: ask
 what the gate does **not** touch.
 
-**Nothing of the actual pipeline exists.** No camera, no depth, no fusion, no
-mesh, no dashboard — that is
-[docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md),
-and everything the
-rest of `docs/` says about those stages is **design intent**, not a description
-of running code. When you build something, change the doc that describes it from
-future tense to a measured statement, and say what you measured it with.
+### The pipeline has started: capture is real
+
+**As of 2026-09-09 the first two phases are built and measured** — milestone A,
+[gh issue #4](https://github.com/bthek1/ros2_pi/issues/4). `pimesh_msgs`,
+`pimesh_bringup` and `pimesh_camera` join `pimesh_hello`, all four building from
+source under both distros, and the Pi puts stamped 720p MJPEG on the LAN:
+**44–59 Hz received on the dev box** (`bash tools/gates/capture.sh`), 0 duplicate
+payloads, **4.21 ms** median dequeue-to-subscriber measured on the Pi's own
+clock, and two launches agreeing on their stamp offset to **0.30–1.02 ms** —
+which is the assertion that `usb_cam` 0.8.1 fails by hundreds of milliseconds.
+
+**Everything downstream of capture still does not exist.** No decode, no
+keypoints, no depth, no fusion, no mesh, no dashboard — that is
+[docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md)
+and milestone issues [#5](https://github.com/bthek1/ros2_pi/issues/5)–[#8](https://github.com/bthek1/ros2_pi/issues/8),
+and everything the rest of `docs/` says about those stages is **design intent**,
+not a description of running code. When you build something, change the doc that
+describes it from future tense to a measured statement, and say what you
+measured it with.
+
+**Two things P0–P1 cost, and both are the same lesson as the teardown one
+above.** A `static_transform_publisher` given `parameters=[...]` dies before it
+reads them — it parses `argv` first — so the launch came up with no TF tree and
+nothing failing. And extending `gates/hello-clean.sh` to signal `view-camera`
+immediately found that recipe leaking RViz *and* the Pi's camera, because bash
+will not run a trap while a foreground child is running and an rviz2 signalled
+during its own startup never exits. The same gate also turned out to be deducing
+the process group from `$!`, which is empty whenever `setsid` forks — a kill
+that had been silently doing nothing in some contexts. Ask what the gate does
+**not** touch.
 
 Do not write "the node publishes X at Y Hz" until a node has published X and you
 have watched it do Y.
@@ -166,21 +189,40 @@ strong priors, re-verify before quoting a number as this project's own.
 - **BEST_EFFORT delivers zero large frames** *(inherited)*. Megabyte-class
   messages fragment past the socket buffer and never reassemble. Every image and
   depth topic here is `RELIABLE` + `KEEP_LAST(1)` — freshest frame, no backlog.
-- **Never gate on `header.stamp` age** *(inherited)*. `usb_cam` 0.8.1 has a
-  once-per-process epoch bug that puts stamps a random sub-second amount in the
-  past, redrawn at every launch. A stamp-age freshness gate silently dropped
-  100% of frames. Stamp *deltas* are trustworthy (they are kernel capture
-  intervals) — absolute ages are not. **`pimesh_camera` exists partly to fix
-  this**: stamp from `CLOCK_MONOTONIC`-derived `v4l2_buffer.timestamp` at
-  dequeue, and once it is verified, this constraint becomes a non-issue for our
-  own capture path only.
+- **Never gate on `header.stamp` age** *(inherited, and now only half true)*.
+  `usb_cam` 0.8.1 has a once-per-process epoch bug that puts stamps a random
+  sub-second amount in the past, redrawn at every launch. A stamp-age freshness
+  gate silently dropped 100% of frames.
+
+  **`pimesh_camera` fixes this for our own capture path, measured 2026-09-09.**
+  It stamps `ros_now - (monotonic_now - v4l2_buffer.timestamp)` — an *interval*,
+  not an epoch — so there is no per-process constant to be wrong, and two
+  launches agree to within 1 ms. Frames on `/image_raw/compressed` therefore
+  carry honest capture times and may be reasoned about.
+
+  **But not across the two machines.** The stamp is set on the Pi's system clock
+  and read on the dev box's, and the gap between them is NTP's business: it
+  measured +8 ms and −19 ms an hour apart on 2026-09-09 with nothing changed.
+  So a stamp-age gate on the dev box is *still* forbidden — it would be
+  measuring NTP. Compare stamps to stamps (deltas are kernel capture intervals
+  and are trustworthy), and measure latency where one clock covers both ends.
 - **V4L2 controls persist inside the camera** *(inherited)* across processes and
   reboots. A manual exposure left by a benchmark makes every later session
   black; the C922 powers on with `exposure_dynamic_framerate=1`, which costs
   ~10 fps in indoor light. Treat camera state as inspectable machine state and
   reset it before diagnosing black frames or low fps as a software bug.
 - **`/dev/video1` is not a capture device** — it is the C922's UVC metadata node.
-  Capture is `/dev/video0`.
+  Capture is `/dev/video0`. `V4l2Capture` checks `device_caps` rather than
+  `capabilities` for exactly this: the latter is the union over every node the
+  driver owns, so the metadata node reports its sibling's capture bit and passes
+  a naive check, failing later and worse.
+- **Reset the camera before measuring anything about it.**
+  `bash tools/camera-reset.sh` puts every control back to its default, forces
+  `exposure_dynamic_framerate=0` (whose reported default of 0 is a lie about
+  what the camera powers on with), prints the whole control table
+  current-vs-default, and exits non-zero if the one control that matters did not
+  stick. `gates/capture.sh` runs it first; a rate measured without it is a
+  measurement of whatever the last person left behind.
 - **The GPU has no CUDA toolkit installed** (measured: `nvcc` absent, no
   `libcudart` in `/usr/lib`). The driver is there (595.84) and Python's
   `onnxruntime-gpu` works because pip wheels vendor the CUDA runtime. **A C++
@@ -225,9 +267,9 @@ strong priors, re-verify before quoting a number as this project's own.
 ## Conventions
 
 - **This repo is the colcon workspace.** Packages go in `src/`, named
-  `pimesh_<thing>` — `pimesh_hello` (exists), and planned: `pimesh_camera`,
-  `pimesh_perception`, `pimesh_world`, `pimesh_dashboard`, `pimesh_msgs`,
-  `pimesh_bringup`. (Not `ros2_pi_*`: a `ros2_` prefix reads as core tooling.)
+  `pimesh_<thing>` — `pimesh_hello`, `pimesh_msgs`, `pimesh_bringup` and
+  `pimesh_camera` exist; planned: `pimesh_perception`, `pimesh_world`,
+  `pimesh_dashboard`. (Not `ros2_pi_*`: a `ros2_` prefix reads as core tooling.)
   Shared shell helpers live in `tools/` and are rsynced to the Pi, so they must
   work on both distros — `tools/ros-env.sh` discovers the distro rather than
   naming it, and `tools/check-stale.sh` is run by both `gate-hello-build` here
@@ -238,8 +280,9 @@ strong priors, re-verify before quoting a number as this project's own.
   `RCLCPP_COMPONENTS_REGISTER_NODE`, each with a thin `*_main.cpp` so it can also
   run standalone. The bringup launch composes the dev-box ones into a single
   container with `use_intra_process_comms=True`. A node that only works
-  standalone is a bug. **`src/pimesh_hello/` is the worked example** — copy its
-  shape rather than rediscovering it: the class declared in
+  standalone is a bug. **`src/pimesh_hello/` is the worked example** and
+  `src/pimesh_camera/` is the same shape doing real work — copy either rather
+  than rediscovering it: the class declared in
   `include/pimesh_hello/`, defined in `src/`, the register macro at the foot of
   the .cpp, `rclcpp_components_register_nodes` (plural — the singular form
   generates its own `main` and makes the thin one dead code), and the library
@@ -400,9 +443,9 @@ somebody once.
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones and their status |
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: a GitHub issue of stable phases, a command for a test, executable-only, and the future file |
 | [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this is going.** The whole pipeline as phases P0–P8, none started, each ending in a `tools/gates/*.sh` test, followed by the deferred register |
-| [#4](https://github.com/bthek1/ros2_pi/issues/4) [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
+| [#4](https://github.com/bthek1/ros2_pi/issues/4) **(closed 2026-09-09)** [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A is done — P0 and P1, the cross-distro workspace and capture. Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
 | `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the shell lives in `tools/`; the justfile was trimmed further the same day to `build` + `run` only, so that issue's `just gate-*` spelling is history, not instruction |
-| [docs/plans/future/hello-world-future.md](docs/plans/future/hello-world-future.md) | Work deferred out of the hello-world plan, each entry with its trigger |
+| [docs/plans/future/milestone-a-future.md](docs/plans/future/milestone-a-future.md) | Work deferred out of milestone A, each entry with its trigger: the checkerboard calibration (waiting on P5's tape-measure visit), `PipelineStats` from `camera_node` (waiting on the dashboard), the dev-box rate margin, and device reconnection |
 
 When hardware facts change (camera replugged, Pi reflashed, IP moved), update
 [docs/info/hardware.md](docs/info/hardware.md) from real command output and note

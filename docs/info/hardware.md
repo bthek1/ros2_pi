@@ -78,7 +78,16 @@ The `/dev/video2x` nodes on the Pi belong to `pispbe`, the Pi 5's own image
 signal processor. They are not this camera and there is no CSI camera attached —
 `libcamera`/`rpicam` guidance does not apply.
 
-### Capture behaviour (inherited from `piros2`, re-verify here)
+### Capture behaviour (inherited from `piros2`, **re-verified here 2026-09-09**)
+
+The two bullets below about frame rate are no longer inherited. `pimesh_camera`
+was built and measured on 2026-09-09 with `bash tools/gates/capture.sh`, after
+`bash tools/camera-reset.sh`, in Aperture Priority Mode with
+`exposure_dynamic_framerate=0`: **59.3 fps measured at the Pi**, **44.3–58.6 fps
+as received on the dev box** over five runs, **0 duplicate payloads** in any of
+them, ~80 kB per frame. The spread is the Wi-Fi hop, not the camera. The 18–21
+fps stock-settings figure has not been re-measured here and remains inherited.
+
 
 - **Stock settings give 18–21 fps, not 30.** `exposure_dynamic_framerate=1`
   trades frame rate for exposure in indoor light, and the C922 powers on with it

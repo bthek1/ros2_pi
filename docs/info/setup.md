@@ -141,6 +141,7 @@ Available recipes:
     [run]
     hello-compose seconds="30" # Hello world, here: both components in one container. seconds = how long to run
     hello-lan seconds="20"     # Hello world, across the LAN: talker on the Pi, listener here
+    view-camera seconds="600"  # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
 ```
 
 That is the whole list, and the shortness is the point: `build` is how you

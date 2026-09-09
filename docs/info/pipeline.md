@@ -30,34 +30,64 @@ means:
   volume, and the 1/x inversion makes background values explode, so the clip is
   applied *before* the reciprocal.
 
-## Stage 1 — Capture (`camera_node`, on the Pi)
+## Stage 1 — Capture (`camera_node`, on the Pi) — **built 2026-09-09**
 
 **Job:** get frames off the sensor, stamp them honestly, put them on the wire.
 Nothing else. No decode, no re-encode, no processing.
 
-- Open `/dev/video0` (the C922's only capture node — `/dev/video1` is its UVC
-  metadata node), `V4L2_PIX_FMT_MJPEG`, 1280×720, request 60 fps.
-- `mmap` buffer pool, 4 buffers, `VIDIOC_DQBUF` → publish the JPEG bytes
-  verbatim as `CompressedImage` with `format: "jpeg"`.
-- **Stamp at dequeue from the buffer's own timestamp.** `usb_cam` 0.8.1 has a
+This stage is built and measured. `bash tools/gates/capture.sh` is what closes
+it; the numbers below marked **(measured here)** are that gate's output.
+
+- Opens `/dev/video0` (the C922's only capture node — `/dev/video1` is its UVC
+  metadata node), `V4L2_PIX_FMT_MJPEG`, 1280×720, requests 60 fps.
+- `mmap` buffer pool, 4 buffers, `VIDIOC_DQBUF` → publishes the JPEG bytes
+  verbatim as `CompressedImage` with `format: "jpeg"`. One copy in the whole
+  path, kernel buffer to message.
+- **Stamps at dequeue from the buffer's own timestamp.** `usb_cam` 0.8.1 has a
   once-per-process epoch bug that offsets every stamp by a random sub-second
   amount **(measured: 0.223 / 0.362 / 0.979 s on three launches)**. Fixing that
   is a large part of why this node exists rather than reusing `usb_cam`.
-- **Fail loudly.** A missing or busy device exits non-zero with a clear message.
-  `usb_cam` logs one ERROR and then idles forever, which looks like a working
-  node publishing nothing.
-- Publish `/camera_info` transient-local from a calibration YAML. Zero distortion
-  is not good enough for a pipeline that unprojects every pixel — run the
-  checkerboard.
 
-**Cost:** ~16 ms/frame of Pi CPU at 720p MJPEG passthrough (no decode). The Pi
-has four cores and nothing else to do.
+  The fix is to convert an *interval* rather than an epoch:
+  `stamp = ros_now - (monotonic_now - buffer_monotonic)`. Both clock readings
+  are taken microseconds apart on one machine, so their relative drift is
+  irrelevant, and there is no per-process constant left to be wrong.
+  **(measured here)** two launches of the node agreed on their stamp-to-receipt
+  offset to within **0.30–1.02 ms** across five runs — against usb_cam, which
+  redraws hundreds of milliseconds of it every launch. The node also checks the
+  buffer's `V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC` flag rather than trusting the
+  field, and falls back to stamping at dequeue with a warning if the driver is
+  reporting some other clock.
+- **Fails loudly.** A missing or busy device exits non-zero with a clear message
+  naming the cause. **(measured here)** against a device held by another
+  streaming process, the node refused in **0.24 s** with "another process is
+  streaming /dev/video0. Find it with: fuser -v /dev/video0". `usb_cam` logs one
+  ERROR and then idles forever, which looks like a working node publishing
+  nothing.
+- Publishes `/camera_info` transient-local, currently from **nominal**
+  parameters with a startup WARNING rather than from a calibration. Zero
+  distortion is not good enough for a pipeline that unprojects every pixel — the
+  checkerboard run is deferred to the P5 tape-measure visit, see
+  [../plans/future/milestone-a-future.md](../plans/future/milestone-a-future.md).
 
-**Frame rate reality (inherited):** the C922 delivers 18–21 fps on stock settings
-because `exposure_dynamic_framerate=1` trades rate for exposure indoors; with
-the control cleared it delivers **42–60 distinct frames/s at true 720p MJPEG
-(measured 2026-08-04)**. Budget consumers for up to 60 fps and never quote a
-frame rate without saying which exposure mode it was measured under.
+**Latency (measured here):** **4.21 ms** median from the kernel dequeuing a
+buffer to a subscriber holding the message built from it, measured *on the Pi*
+so that the stamp and the receipt come from one clock. The equivalent figure
+taken on the dev box is not a latency at all — it carries the two machines' NTP
+relationship, which moved between +8 ms and −19 ms over one afternoon with the
+node unchanged. Quote the single-clock number; the cross-host one only ever had
+the job of catching an epoch error.
+
+**Frame rate reality:** the C922 delivers 18–21 fps on stock settings because
+`exposure_dynamic_framerate=1` trades rate for exposure indoors; with the
+control cleared it delivers **42–60 distinct frames/s at true 720p MJPEG
+(inherited, measured 2026-08-04)**. **(measured here, 2026-09-09)** with
+`bash tools/camera-reset.sh` run first and the camera in Aperture Priority Mode:
+**59.3 Hz at the Pi**, and **44.3–58.6 Hz as received on the dev box** across
+five runs — 0 duplicate payloads in every run, so those are distinct frames.
+The gap between the two is the Wi-Fi hop, and it is the thing to watch: never
+quote a frame rate without saying which machine measured it and which exposure
+mode it was under.
 
 ## Stage 2 — Decode (`decode_node`, dev box)
 

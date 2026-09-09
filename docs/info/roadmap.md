@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of **2026-09-09**. The build order and per-phase tests live in
+Status as of **2026-09-09** (M1 and M2 done that day). The build order and per-phase tests live in
 [../plans/future/project_final_state.md](../plans/future/project_final_state.md);
 this page is the one-line status view. Milestones map to its phases: M1 = P0,
 M2 = P1, and so on through M9 = P8.
@@ -18,8 +18,8 @@ evidence.
 | --- | --- | --- |
 | M0 | Docs and working agreement | **done 2026-09-01** — this tree |
 | M0.5 | Scaffolding proven: `pimesh_hello`, composed container, both distros, clean teardown | **done 2026-09-08** — [issue #2](https://github.com/bthek1/ros2_pi/issues/2), five `tools/gates/hello-*.sh` scripts. Teardown corrected **2026-09-09**: it held for `hello-lan` but not `hello-compose`, and the gate had only ever signalled the former |
-| M1 | Workspace skeleton: `pimesh_msgs`, `pimesh_bringup`, justfile, both machines build | not started — the justfile, the two-machine build loop and the component pattern already exist from M0.5 |
-| M2 | `pimesh_camera` on the Pi — V4L2 MJPEG, honest capture stamps, fails loudly | not started |
+| M1 | Workspace skeleton: `pimesh_msgs`, `pimesh_bringup`, justfile, both machines build | **done 2026-09-09** — [issue #4](https://github.com/bthek1/ros2_pi/issues/4) P0, `bash tools/gates/build.sh`: clean builds 10.2 s here (Lyrical) / 32.0 s on the Pi (Jazzy), all 5 interfaces byte-identical across the two |
+| M2 | `pimesh_camera` on the Pi — V4L2 MJPEG, honest capture stamps, fails loudly | **done 2026-09-09** — [issue #4](https://github.com/bthek1/ros2_pi/issues/4) P1, `bash tools/gates/capture.sh`: 44–59 Hz on the dev box, stamp offset 4.21 ms single-clock, two launches agreeing to 0.30–1.02 ms, busy device refused in 0.24 s |
 | M3 | Dev-box container — `decode_node` with intra-process comms proven zero-copy | not started |
 | M4 | `keypoint_node` — ORB, matching, annotated preview | not started |
 | M5 | `depth_node` — ONNX Runtime C++ on the GPU, metric depth published | not started |

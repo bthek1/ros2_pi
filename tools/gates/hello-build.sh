@@ -29,11 +29,21 @@ start=$(date +%s.%N)
 bash "$PIMESH_WS/tools/build.sh"
 elapsed=$(awk -v a="$start" -v b="$(date +%s.%N)" 'BEGIN { printf "%.1f", b - a }')
 
-# 3. The package list says exactly what src/ says.
+# 3. The package list says exactly what src/ says — no more and no fewer. The
+#    set is read from src/ rather than written down here, because this gate is
+#    about the *scaffolding* and a workspace that has grown a package is not a
+#    reason for it to fail. What it still refuses is drift in either direction:
+#    a package in install/ that src/ no longer has (step 1 above), or one in
+#    src/ that never got built.
 . "$PIMESH_WS/tools/ros-env.sh" --overlay
-mapfile -t pimesh < <(ros2 pkg list | grep '^pimesh_' || true)
-if [[ ${#pimesh[@]} -ne 1 || ${pimesh[0]} != pimesh_hello ]]; then
-    echo "FAIL: expected exactly [pimesh_hello], ros2 pkg list gave [${pimesh[*]-}]"
+mapfile -t want < <(cd "$PIMESH_WS/src" && ls -d */ | tr -d / | sort)
+mapfile -t pimesh < <(ros2 pkg list | grep '^pimesh_' | sort || true)
+if [[ "${pimesh[*]-}" != "${want[*]}" ]]; then
+    echo "FAIL: ros2 pkg list gave [${pimesh[*]-}], src/ has [${want[*]}]"
+    exit 1
+fi
+if [[ ! " ${pimesh[*]} " == *" pimesh_hello "* ]]; then
+    echo "FAIL: pimesh_hello is not in the package list — this gate is about it"
     exit 1
 fi
 

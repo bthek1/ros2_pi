@@ -1,0 +1,8 @@
+# Throw the TSDF volume away and start the map again from the next frame.
+#
+# The request is empty on purpose. A `bool confirm` field here would be a
+# confirmation the *caller* fills in, which confirms nothing; the dashboard asks
+# the person before it calls, and that is where the guard belongs.
+---
+bool success
+string message                  # what was cleared, or why it was not
