@@ -123,7 +123,7 @@ reintroduced.
 is one of them. Typing `pkill -f component_container_mt` at a terminal kills that
 terminal's shell. Measured three times in one afternoon, 2026-09-08.
 
-Two defences, both used by the recipes in the root `justfile`:
+Two defences, both in `tools/just-lib.sh` and used by every script:
 
 - **Bracket the first character** — `[c]omponent_container_mt` matches the
   process and not the pattern's own text.
@@ -131,9 +131,83 @@ Two defences, both used by the recipes in the root `justfile`:
   word. The bracket only protects the pattern's own characters; a command that
   mentions the plain word anywhere else, in a comment included, still matches.
 
-`just stragglers` goes further and drops every process in the caller's own
+`tools/stragglers.sh` goes further and drops every process in the caller's own
 process group, which is the complete fix: a genuine straggler has outlived its
 session and is therefore in a different one.
+
+## A `trap ... INT` never runs, and the script shrugs off Ctrl-C
+
+Bash will not install a handler for a signal that was **ignored when the shell
+started**, and it says nothing when it declines: `trap cleanup INT` is silently
+a no-op. A command started in the background by a *non-interactive* shell —
+`setsid bash session.sh &` inside a script — inherits SIGINT and SIGQUIT as
+`SIG_IGN` under POSIX job control, so exactly the scripted-test case is the one
+where the trap you are testing does not exist.
+
+Read the disposition rather than guessing; the mask is a hex bitmask with bit
+*n-1* for signal *n*, so SIGINT (2) is `0x2`:
+
+```bash
+grep -E '^Sig(Ign|Cgt):' /proc/<pid>/status
+# SigIgn: ...0006  = SIGINT|SIGQUIT ignored — your INT trap was never installed
+# SigIgn: ...0004  = only SIGQUIT ignored — the trap is real
+```
+
+The fix is to reset the disposition before exec'ing the thing under test:
+
+```bash
+setsid env --default-signal=INT,TERM,HUP bash tools/hello-lan.sh 45 &
+```
+
+That is also the *faithful* spelling, not a workaround: a terminal's Ctrl-C
+reaches a foreground job whose SIGINT is at its default. Measured 2026-09-09,
+when `gate-hello-clean` started launching the session directly instead of
+through `just` — `just` had been resetting the disposition for its child as a
+side effect, so the gate had been passing for a reason it never stated.
+
+## Ctrl-C does nothing at all, and the recipe ends on its own later
+
+The other way a session goes deaf, and it needs no ignored signal — the trap is
+installed and correct, and still nothing happens. Two things have to line up:
+
+**GNU `timeout` moves its child into a new process group** so that it can
+signal the whole tree when the timer fires. A terminal delivers Ctrl-C to the
+**foreground** group only, so the command under `timeout` is not in the blast
+radius:
+
+```
+bash hello-compose.sh   pgid 2565095   <- Ctrl-C lands here
+  timeout 5 sleep 5     pgid 2565096   <- and never here
+    sleep 5             pgid 2565096
+```
+
+**Bash will not run a trap while a foreground child is running**, so the trap
+cannot compensate: the interrupt is recorded and the handler waits for
+`timeout` to return, which is precisely what it is refusing to do. Measured
+2026-09-09, sending SIGINT to the process group at t=1 s against
+`timeout -s INT 8 sleep 8`:
+
+| form | result |
+| --- | --- |
+| plain `timeout`, foreground | trap never fired, script alive at t=3 |
+| `timeout --foreground` | trap fired immediately, group gone |
+| `timeout ... &` then `wait` | trap fired immediately, group gone |
+
+Both fixes work and they are not interchangeable. **`run_for` in
+`tools/just-lib.sh`** (`timeout --foreground -s INT`) is the one for anything a
+person watches: the child stays in the caller's group, so Ctrl-C reaches
+`ros2 launch` directly and ROS shuts down the way it does under a bare launch —
+measured at 0.30 s from keypress to a container that logged *process has
+finished cleanly*. Backgrounding and `wait`ing is equally sound but can only
+ever kill by pattern, so it skips the graceful path.
+
+Giving up `timeout`'s group-kill costs nothing here, because everything run
+this way is a launcher that already shuts its own children down.
+
+Symptomatically this is unmistakable once you know it: the `^C`s echo, the logs
+keep scrolling at their usual rate, and the session exits by itself exactly
+when its timer was due. `just hello-compose` swallowed six of them before
+ending on schedule 30 s in.
 
 ## Nodes keep logging after a recipe ends
 

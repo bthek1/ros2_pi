@@ -30,7 +30,7 @@ recipe someone can run that **exits 0 or non-zero and prints the number it
 asserted on**:
 
 ```
-**Test:** `just gate-depth` — runs 200 frames through depth_node, asserts the
+**Test:** `bash tools/gates/depth.sh` — runs 200 frames through depth_node, asserts the
 startup log names CUDAExecutionProvider and that mean per-frame cost is ≤ 80 ms;
 prints the measured mean and p95.
 ```
@@ -125,8 +125,15 @@ gh issue close 2 --reason completed --comment "All gates green; see body for mea
 | Plan | Status | Future file |
 | --- | --- | --- |
 | [#2 Hello-world plan](https://github.com/bthek1/ros2_pi/issues/2) | **Closed 2026-09-08** — P0–P4 done, all five gates green; kept as the build log | [future/hello-world-future.md](future/hello-world-future.md) |
-| [#1 Bootstrap plan](https://github.com/bthek1/ros2_pi/issues/1) | Open, `deferred` — P0–P8, the whole pipeline | [future/bootstrap-future.md](future/bootstrap-future.md) |
-| [#3 Justfile plan](https://github.com/bthek1/ros2_pi/issues/3) | Open — P0–P3, group the recipes and move the gate bodies to `tools/` | — |
+| [#3 Justfile plan](https://github.com/bthek1/ros2_pi/issues/3) | **Closed 2026-09-09** — P0–P3 done, `tools/gates/justfile.sh` green; 627-line justfile → 102, then → 60 when the gates left it | — |
 
 This table is a convenience, not the source of truth —
 `gh issue list --label plan --state all` is.
+
+**The pipeline itself is the exception to the rule at the top of this page.**
+The bootstrap plan issue and its future file were combined on 2026-09-09 into
+one in-tree document,
+[future/project_final_state.md](future/project_final_state.md) — phases P0–P8
+followed by the deferred register, in the same file. It still obeys the three
+rules; it just is not an issue. Promotion there moves an entry from the
+deferred half into the phase list, in the same file.

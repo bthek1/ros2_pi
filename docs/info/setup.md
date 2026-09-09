@@ -87,33 +87,114 @@ no ABI compatibility between Lyrical and Jazzy, so nothing is copied between
 them but source.
 
 ```bash
-# dev box: everything
-colcon build --symlink-install
-source install/setup.bash
-
-# Pi: the two packages it runs
-rsync -av --delete --exclude build --exclude install --exclude log \
-      --exclude models ~/Documents/ros2_pi/ pi:~/ros2_pi/
-ssh pi "bash -lc 'cd ~/ros2_pi && colcon build --symlink-install \
-        --packages-select pimesh_msgs pimesh_camera'"
+just build                   # dev box
+bash tools/build-pi.sh       # rsync source to the Pi, then build there under Jazzy
+bash tools/clean.sh          # drop build/ install/ log/ here
+bash tools/clean-pi.sh       # and there
 ```
 
-Keep the two `pimesh_camera`-side packages at **C++17** and to APIs that exist in
-both distros. A build that only succeeds here is half a build.
+`just build` is the only one of these in the justfile, because it is the only
+one typed every day; the rest are scripts, like everything else that is not a
+day-to-day action.
+
+**Use these rather than bare `colcon`.** `just build` expands to
+
+```bash
+colcon build --symlink-install --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+```
+
+and that argument is not optional here — without it every `ament_cmake` package
+fails at configure time with `No module named 'catkin_pkg'`. See
+[troubleshooting.md](troubleshooting.md).
+
+`tools/sync-pi.sh` ships `src/`, `tools/` and the `justfile` with `rsync --delete`,
+and **never** `build/`, `install/` or `log/`. It then runs
+`tools/check-stale.sh` on the Pi and clears the Pi's build tree if the sync left
+artefacts whose sources are gone — colcon never forgets a package on its own, so
+a stale overlay will otherwise keep answering `ros2 pkg list` with packages that
+no longer exist.
+
+Keep everything the Pi builds at **C++17** and to APIs that exist in both
+distros. A build that only succeeds here is half a build — and the failure is
+not always in the direction you expect: `ament_target_dependencies()` is gone in
+Lyrical and still present in Jazzy, so that one breaks *here* on CMake the Pi
+would accept.
+
+First-build times, measured 2026-09-08 on `pimesh_hello` (one small package, two
+components): **~9 s** on the dev box, **20.5 s** on the Pi.
 
 ## Running
 
-```bash
-just cam        # Pi-side camera only, with teardown
-just pipeline   # the dev-box container against a running camera
-just dev        # both, plus the dashboard — the day-to-day session
-just dash       # dashboard alone, against a running pipeline
+`just` with no arguments lists what exists, by group. Today that is the
+scaffolding only:
+
+<!-- gate-justfile keeps the block below equal to `just --list`. Edit the
+     justfile, then re-run `bash tools/gates/justfile.sh`; do not edit by hand. -->
+
+```text
+Available recipes:
+    default                    # List the recipes
+
+    [build]
+    build *args                # Build the workspace
+
+    [run]
+    hello-compose seconds="30" # Hello world, here: both components in one container. seconds = how long to run
+    hello-lan seconds="20"     # Hello world, across the LAN: talker on the Pi, listener here
 ```
 
+That is the whole list, and the shortness is the point: `build` is how you
+build, `run` is what you start in order to *watch* something. If you have just
+cloned this, `just build && just hello-compose` is the entire getting-started
+path.
+
+**Everything else is a script in `tools/`, run directly.** The gates especially
+— there are six, they are run constantly, and as recipes they had buried
+`hello-compose` under an alphabetised wall of `gate-*`:
+
+```bash
+bash tools/gates/hello-build.sh   # P0: one real package builds
+bash tools/gates/hello-talk.sh    # P1: the talker honours its rate parameter
+bash tools/gates/hello-ipc.sh     # P2: one process, message handed over as a pointer
+bash tools/gates/hello-lan.sh     # P3: one source tree, two distros, over the LAN
+bash tools/gates/hello-clean.sh   # P4: Ctrl-C leaves nothing running, either machine
+bash tools/gates/justfile.sh      # this file's own shape
+
+bash tools/stragglers.sh          # assert nothing outlived its session
+bash tools/sync-pi.sh             # ship source to the Pi — source only
+bash tools/build-pi.sh            # ...and build it there, under Jazzy
+bash tools/clean.sh               # delete the colcon trees (clean-pi.sh for the Pi's)
+```
+
+Each gate exits non-zero and prints the number it asserted on.
+[gh issue #2](https://github.com/bthek1/ros2_pi/issues/2) records what each
+`hello-*` gate measured, and `tools/gates/justfile.sh` is
+[#3](https://github.com/bthek1/ros2_pi/issues/3)'s.
+
+**The justfile is the user-facing surface; the shell is in `tools/`.** Every
+recipe is one line that runs a script — `tools/build.sh` — because `just` gives a recipe body no way to share code with another recipe, so
+inlined bash gets copy-pasted and drifts. `tools/just-lib.sh` is what they all
+source: the prelude, the single spelling of the Pi's `ssh` invocation, the
+bracketed `pkill` patterns and `in_range`. Two consequences worth knowing:
+the scripts run without `just` (which is why `gate-hello-clean` can signal one
+inside a bare `setsid` session), and they can be linted — `shellcheck` cannot
+parse `{{ }}`, so none of this bash was checked by anything until it moved.
+Install it with `uv tool install shellcheck-py` (no sudo needed) or
+`sudo apt install shellcheck`; `bash tools/gates/justfile.sh` runs it over all
+of `tools/` and asserts zero findings.
+
+**Planned, not yet written** — `just cam` (Pi-side camera), `just pipeline` (the
+dev-box container), `just dev` (both plus the dashboard), `just dash`. They
+arrive with the phases of
+[../plans/future/project_final_state.md](../plans/future/project_final_state.md)
+that build the nodes they run.
+
 Every session recipe **tears itself down on both machines**: the viewer runs in
-the foreground and a `trap … EXIT` `pkill -f`s each node pattern the recipe
-started, so Ctrl-C and closing the window both work. When a session gains a
-node, its pkill pattern goes into the trap in the same change.
+the foreground and `arm_cleanup` (in `tools/just-lib.sh`) installs a
+`trap cleanup_both EXIT INT TERM HUP` that `pkill -f`s each node pattern,
+locally and over SSH, so Ctrl-C and closing the window both work. When a session
+gains a node, its pattern goes into `PIMESH_PATTERNS` in the same change — and
+`bash tools/stragglers.sh` is how you find out that it did not.
 
 **A leaked camera process holds `/dev/video0` exclusively**, and every later
 session then dies with `Device or resource busy`. Check both machines are clean
@@ -133,6 +214,15 @@ before walking away.
 - **`python3` here is PlatformIO's venv**, which shadows the system Python for
   `#!/usr/bin/env python3` shebangs. rqt tools crash with
   `No module named 'yaml'`; prefix `PATH=/usr/bin:$PATH`.
+- **A second Python breaks the *build*.** CMake's `FindPython3` picks
+  `~/.local/bin/python3.14` (uv-managed, no `catkin_pkg`) over `/usr/bin/python3`
+  (apt's, which owns ROS's `dist-packages`), and `ament_cmake` shells out to
+  Python at configure time — so a C++-only package fails to build. `just build`
+  passes `-DPython3_EXECUTABLE=/usr/bin/python3`; a hand-run `colcon build` does
+  not.
+- **`pkill -f <plain word>` kills the shell that runs it**, because `-f` matches
+  full command lines including its own. Bracket the first character and anchor
+  on the installed path: `pkill -f '/lib/[p]imesh_hello/'`.
 - **`rviz2` needs `QT_QPA_PLATFORM=xcb`** on this Wayland session. It was
   measured running on hardware GL (4.6) with driver 595.84, so the old
   software-GL workaround is obsolete.

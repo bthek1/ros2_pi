@@ -13,10 +13,17 @@ Short version:
   put raw images on the LAN.
 - **Two different ROS distros** (Lyrical here, Jazzy on the Pi) — everything
   builds from source on both machines, nothing is shipped as a binary.
-- **Nothing is built yet.** `docs/` describes intent. Do not write it up as if
-  it runs until you have watched it run.
-- **Clean up after yourself**: no orphaned nodes on either machine, and a leaked
-  camera process locks `/dev/video0` for everyone.
+- **The scaffolding runs; the pipeline does not.** One package exists,
+  `src/pimesh_hello/`, and five `tools/gates/hello-*.sh` scripts assert it. Camera,
+  depth, fusion, mesh and dashboard are unwritten, and everything `docs/` says
+  about them is intent. Do not write anything up as if it runs until you have
+  watched it run.
+- **Build with `just build`, not bare `colcon`** — the recipe passes
+  `-DPython3_EXECUTABLE=/usr/bin/python3`, without which every `ament_cmake`
+  package fails at configure time on this box.
+- **Clean up after yourself**: `bash tools/stragglers.sh` checks both machines and exits
+  non-zero if anything survived. A leaked camera process locks `/dev/video0` for
+  everyone.
 - **A plan is a GitHub issue** (`gh issue create --label plan`), never a markdown
   file in this tree, and **completion is closing it**
   (`gh issue close <n> --reason completed`). Executable phases only — stable

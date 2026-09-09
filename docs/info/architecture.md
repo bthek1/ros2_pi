@@ -48,8 +48,8 @@ single reader. The fix there was a relay node — one reader, republished on
 loopback.
 
 C++ makes the relay unnecessary. `rclcpp_components` composed into one container
-with `use_intra_process_comms=True` passes a `std::shared_ptr` between
-publisher and subscriber with no serialisation and no copy. So:
+with `use_intra_process_comms=True` hands the message pointer from publisher to
+subscriber with no serialisation and no copy. So:
 
 - **One network subscriber** (`decode_node`), one JPEG decode, one `cv::Mat`.
 - Downstream components share that buffer. A 1280×720 BGR8 frame is 2.7 MB; at
@@ -61,12 +61,32 @@ publisher and subscriber with no serialisation and no copy. So:
 
 **Rule: a component that only works standalone is a bug.** Publish and subscribe
 with `unique_ptr`/`shared_ptr` message moves, never with stack copies, or intra
-process quietly falls back to serialising.
+process quietly falls back to serialising. Both halves are required: the
+publisher moves a `unique_ptr` into `publish()`, **and** the subscription
+callback takes a `unique_ptr`. A `const &` callback works perfectly and copies
+in silence.
+
+### It is measured, and the measurement needs a control
+
+`bash tools/gates/hello-ipc.sh` runs one container twice — `intra_process:=true` and
+`intra_process:=false`, same binary, same launch file — and compares the payload
+address the publisher logged against the address the subscriber was handed.
+Measured 2026-09-08: **19/19 equal with it on, 0/16 with it off**.
+
+The control run is not ceremony. Two allocations in one process can land on the
+same address by coincidence — the publisher frees, the subscriber allocates the
+same size, malloc obliges — and in an early run that happened at 1/22. So
+address equality on its own proves nothing; the claim is that the addresses
+match *and stop matching the moment the mechanism is switched off*. Any later
+zero-copy claim in this project needs the same shape of evidence.
 
 ## Packages
 
+Only `pimesh_hello` exists today; the rest is the plan.
+
 | Package | Build | Runs on | Contents |
 | --- | --- | --- | --- |
+| `pimesh_hello` | `ament_cmake` | both | **Built 2026-09-08.** `hello_node`, `echo_node` — the scaffolding reference: components, thin mains, keyed YAML, composed launch. Carries no pipeline logic and is not in its path |
 | `pimesh_msgs` | `ament_cmake` (rosidl) | both | `Keypoints.msg`, `PipelineStats.msg`, `MeshStats.msg`, `SaveMesh.srv`, `ResetMap.srv` |
 | `pimesh_camera` | `ament_cmake` | **Pi** | `camera_node` — V4L2 capture, MJPEG passthrough, capture-time stamps |
 | `pimesh_perception` | `ament_cmake` | dev box | `decode_node`, `keypoint_node`, `depth_node` |
@@ -74,8 +94,8 @@ process quietly falls back to serialising.
 | `pimesh_dashboard` | `ament_cmake` | dev box | `dashboard_node` — HTTP + WebSocket server, vendored web UI |
 | `pimesh_bringup` | `ament_cmake` | both | launch files, `config/*.yaml`, the RViz config |
 
-`pimesh_camera` and `pimesh_msgs` build on the Pi under **Jazzy**; everything
-else is dev-box-only under **Lyrical**. Keep the Pi-side pair to C++17 and to
+`pimesh_hello`, `pimesh_camera` and `pimesh_msgs` build on the Pi under
+**Jazzy**; everything else is dev-box-only under **Lyrical**. Keep the Pi-side pair to C++17 and to
 APIs that exist in both distros — see [CLAUDE.md](../../CLAUDE.md) on the ABI
 split.
 

@@ -30,13 +30,14 @@ exists to prove the structure rather than to do anything: a C++ `ament_cmake`
 package, two `rclcpp_components` components composed into one container with
 intra-process comms measured handing over the pointer, parameters from a keyed
 YAML, the same source built from scratch under **both** distros, and a session
-that tears itself down on either machine. Five `just gate-hello-*` recipes
+that tears itself down on either machine. Five scripts in `tools/gates/`
 assert all of it — [gh issue #2](https://github.com/bthek1/ros2_pi/issues/2)
 carries the numbers each one printed.
 
 **Nothing of the actual pipeline exists.** No camera, no depth, no fusion, no
 mesh, no dashboard — that is
-[gh issue #1](https://github.com/bthek1/ros2_pi/issues/1), and everything the
+[docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md),
+and everything the
 rest of `docs/` says about those stages is **design intent**, not a description
 of running code. When you build something, change the doc that describes it from
 future tense to a measured statement, and say what you measured it with.
@@ -62,7 +63,11 @@ Measured 2026-09-01 unless noted.
 `piros2` and it is deliberate, not drift: `packages.ros.org` is pinned by Ubuntu
 suite, so the dev box's 26.04 upgrade replaced every `ros-jazzy-*` package with
 `ros-lyrical-*`. Jazzy ↔ Lyrical interop was measured working over the LAN in
-`piros2` on 2026-08-31 (topics, `camera_info`, `tf_static` all crossed).
+`piros2` on 2026-08-31 (topics, `camera_info`, `tf_static` all crossed), and
+re-measured as **this** project's own on 2026-09-08: a Jazzy publisher on the Pi
+delivered 39 of 40 messages in 20 s at 2 Hz to a Lyrical subscriber here
+(`bash tools/gates/hello-lan.sh`). DDS is wire-compatible across distros; the C++ ABI is
+not, and that one sentence is the whole reason for the build-from-source rule.
 
 **Consequence for C++, and it is the sharpest one in the project:** ROS 2 has no
 ABI compatibility guarantee across distros. A `.so` built here does not run
@@ -70,6 +75,23 @@ there. **Every package must build from source on both machines** — no
 cross-compiled binaries, no shipped `install/` tree, and nothing in
 `pimesh_camera` may depend on a Lyrical-only API. C++17 (Jazzy's baseline), not
 C++20, in anything the Pi builds.
+
+The drift runs in **both** directions, and the dangerous one is the direction
+that fails *here*: `ament_target_dependencies()` was deprecated in Jazzy and is
+**removed in Lyrical**, so the dev box stops with `Unknown CMake command` on
+CMake that the Pi would have built without complaint (measured 2026-09-08).
+Where a build-system API differs, prefer the spelling that exists on **both** —
+plain `target_link_libraries()` against the exported targets — and confirm it on
+both before relying on it, with something like
+
+```bash
+grep -rh "add_library(rclcpp::" /opt/ros/lyrical/share/rclcpp/cmake/*.cmake
+ssh pi 'bash -lc "grep -rh \"add_library(rclcpp::\" /opt/ros/jazzy/share/rclcpp/cmake/*.cmake"'
+```
+
+The reverse case is worse because it is silent: a Lyrical-only API compiles here
+and is only discovered at the far end of an `rsync`. `bash tools/build-pi.sh` is cheap —
+run it before believing a CMake change.
 
 The Pi is reachable non-interactively, so **verify hardware claims by running
 commands over SSH** rather than assuming:
@@ -117,9 +139,19 @@ strong priors, re-verify before quoting a number as this project's own.
   retransmit storm: ~2 frames/s per reader against 14.7 Hz for a single reader.
   In C++ this is solved properly: **the dev box runs one component container
   with intra-process communication on**, so the decode happens once and every
-  downstream component gets a `shared_ptr` to the same buffer. That is the
+  downstream component gets a pointer to the same buffer. That is the
   main structural reason this rewrite exists — do not break it by launching
   components as separate processes "for debugging".
+
+  **This one is no longer inherited: it is measured here.** `bash tools/gates/hello-ipc.sh`
+  runs the same container twice, with intra-process on and off, and compares the
+  payload address the publisher logged against the one the subscriber received —
+  19/19 equal with it on, 0/16 with it off (2026-09-08). It takes both halves to
+  qualify: the publisher must move a `unique_ptr` into `publish()`, and the
+  subscription callback must take a `unique_ptr`. A `const &` callback works
+  perfectly and quietly copies. **Address equality alone is not evidence** —
+  two allocations in one process can coincide, and one did, at 1/22 — so any
+  future zero-copy claim needs the with/without control, not a single run.
 - **BEST_EFFORT delivers zero large frames** *(inherited)*. Megabyte-class
   messages fragment past the socket buffer and never reassemble. Every image and
   depth topic here is `RELIABLE` + `KEEP_LAST(1)` — freshest frame, no backlog.
@@ -182,16 +214,25 @@ strong priors, re-verify before quoting a number as this project's own.
 ## Conventions
 
 - **This repo is the colcon workspace.** Packages go in `src/`, named
-  `pimesh_<thing>` — `pimesh_camera`, `pimesh_perception`, `pimesh_world`,
-  `pimesh_dashboard`, `pimesh_msgs`, `pimesh_bringup`. (Not `ros2_pi_*`: a
-  `ros2_` prefix reads as core tooling.)
+  `pimesh_<thing>` — `pimesh_hello` (exists), and planned: `pimesh_camera`,
+  `pimesh_perception`, `pimesh_world`, `pimesh_dashboard`, `pimesh_msgs`,
+  `pimesh_bringup`. (Not `ros2_pi_*`: a `ros2_` prefix reads as core tooling.)
+  Shared shell helpers live in `tools/` and are rsynced to the Pi, so they must
+  work on both distros — `tools/ros-env.sh` discovers the distro rather than
+  naming it, and `tools/check-stale.sh` is run by both `gate-hello-build` here
+  and `sync-pi` there.
 - **C++ only for nodes.** `ament_cmake`, C++17, no Python nodes. Launch files
   and one-off tools may be Python — that is not a licence to move logic there.
 - **Nodes are `rclcpp_components` components**, registered with
   `RCLCPP_COMPONENTS_REGISTER_NODE`, each with a thin `*_main.cpp` so it can also
   run standalone. The bringup launch composes the dev-box ones into a single
   container with `use_intra_process_comms=True`. A node that only works
-  standalone is a bug.
+  standalone is a bug. **`src/pimesh_hello/` is the worked example** — copy its
+  shape rather than rediscovering it: the class declared in
+  `include/pimesh_hello/`, defined in `src/`, the register macro at the foot of
+  the .cpp, `rclcpp_components_register_nodes` (plural — the singular form
+  generates its own `main` and makes the thin one dead code), and the library
+  installed to `lib/` while the executable goes to `lib/${PROJECT_NAME}/`.
 - **No work in a subscription callback beyond a bounded copy.** Anything that
   costs milliseconds (inference, fusion, meshing) runs on its own thread with a
   single-slot mailbox: newest frame wins, older one dropped. Queues that grow
@@ -200,15 +241,55 @@ strong priors, re-verify before quoting a number as this project's own.
   `launch/*.launch.py`. A key that does not match the node name silently applies
   nothing — a trap that has cost this project's predecessor real time. Declare
   every parameter with a description and validate ranges at declaration.
-- Build with `colcon build --symlink-install`. Day-to-day commands are `just`
-  recipes; add a recipe rather than documenting a long one-off command, and keep
-  recipes and docs in agreement.
+- **Build with `just build`**, not bare `colcon`. The recipe is
+  `colcon build --symlink-install --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3`,
+  and without that argument every `ament_cmake` package fails at configure time
+  on this box (see the Python bullet above). `bash tools/build-pi.sh` does the same over
+  SSH after `bash tools/sync-pi.sh` ships source — source only, never a built tree.
+  Keep the commands and the docs in agreement — `docs/info/setup.md` quotes
+  `just --list` verbatim and a script asserts it has not drifted.
+- **The justfile is the user-facing surface — everything else is a script.**
+  It holds `build`, `hello-compose` and `hello-lan`, and that is the whole of
+  it: what someone types on a normal day. Gates, the Pi plumbing, the straggler
+  sweep and the tree deletions are `bash tools/<name>.sh` and
+  `bash tools/gates/<name>.sh`, run directly. **Resist adding a recipe.** The
+  bar is not "is this useful" — every one of those scripts is useful — it is
+  "would a newcomer's first `just` need to see this?". Seven gate recipes had
+  buried `hello-compose`, which is the one command that shows the workspace
+  doing something, and the file is trimmed to `build` and `run` precisely so
+  that cannot recur. Adding a group is the thing to argue about, not adding a
+  line.
+- **The shell lives in `tools/`.** Every recipe is one line that runs a script,
+  and every recipe carries a `[group('build'|'run')]`. The shared prelude, the
+  one spelling of the Pi's
+  `ssh` invocation, the bracketed kill patterns and `in_range` are in
+  `tools/just-lib.sh`, which every script sources; `tools/` is rsynced, so the
+  same functions work at both ends. The reason is not tidiness: `just` gives a
+  recipe body no way to share code with another, so inlined bash is copy-pasted
+  and drifts, and `shellcheck` cannot parse `{{ }}`, so inlined bash is never
+  linted. **`bash tools/gates/justfile.sh` is the check** — groups exactly
+  `build run`, 0 ungrouped recipes, justfile under 80 lines, no recipe body over
+  10 lines, no `ssh`/`pkill`/prelude inlined in a body, `setup.md`'s quoted
+  recipe list equal to `just --list`, and 0 shellcheck findings over `tools/`
+  (`uv tool install shellcheck-py`).
 - **Sessions tear themselves down — no stragglers.** Ctrl-C and closing the
   window must both end everything the recipe started, **on both machines**. The
-  mechanism: viewer in the foreground, `trap … EXIT` that `pkill -f`s every node
-  pattern the recipe started (bash fires EXIT on Ctrl-C too). Killing a
-  background `bash -lc` wrapper orphans its grandchildren — always pattern-match
-  the node, never `kill %N`.
+  mechanism: viewer in the foreground, `arm_cleanup` in `tools/just-lib.sh`
+  installing a `trap cleanup_both EXIT INT TERM HUP` that `pkill -f`s every node
+  pattern, locally and over SSH. (EXIT alone does fire on Ctrl-C; naming the
+  signals is what makes the closed-window case deliberate rather than lucky.)
+  **A trap is not always installed just because you wrote one**: a command
+  started in the background by a non-interactive shell inherits SIGINT as
+  SIG_IGN, and bash refuses to trap a signal that was ignored on entry — so any
+  test that sends a fake Ctrl-C must reset the disposition first
+  (`setsid env --default-signal=INT,TERM,HUP …`, measured 2026-09-09), or it is
+  testing a session that cannot receive the signal. Killing a background `bash -lc` wrapper
+  orphans its grandchildren — always pattern-match the node, never `kill %N`.
+  **`bash tools/stragglers.sh` is the check**: it greps both machines and exits non-zero
+  with the pid and full path of anything that survived. Every `pkill -f` and
+  `pgrep -f` pattern is bracketed and path-anchored (`/lib/[p]imesh_hello/`) —
+  see the troubleshooting entry on why the plain spelling kills the shell that
+  runs it.
 - **This applies to ad-hoc runs too — that means you, Claude.** Anything you
   start by hand while verifying has no EXIT trap. Bound it up front
   (`timeout -s INT 30 …`, and on the Pi
@@ -289,9 +370,9 @@ somebody once.
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause, mostly inherited and worth reading before debugging |
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones and their status |
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: a GitHub issue of stable phases, a command for a test, executable-only, and the future file |
-| `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#1 bootstrap](https://github.com/bthek1/ros2_pi/issues/1) — the whole pipeline, P0–P8, not started; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — group the recipes, move gate bodies to `tools/`, not started |
+| [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this is going.** The whole pipeline as phases P0–P8, none started, each ending in a `tools/gates/*.sh` test, followed by the deferred register |
+| `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the justfile is a table of contents and the shell lives in `tools/` |
 | [docs/plans/future/hello-world-future.md](docs/plans/future/hello-world-future.md) | Work deferred out of the hello-world plan, each entry with its trigger |
-| [docs/plans/future/bootstrap-future.md](docs/plans/future/bootstrap-future.md) | Work deferred out of the bootstrap plan, each entry with the trigger that would make it executable |
 
 When hardware facts change (camera replugged, Pi reflashed, IP moved), update
 [docs/info/hardware.md](docs/info/hardware.md) from real command output and note
