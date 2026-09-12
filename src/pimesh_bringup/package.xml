@@ -23,6 +23,13 @@
   <exec_depend>rclcpp_components</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
 
+  <!-- The components pimesh.launch.py composes. exec_depend because this package
+       compiles nothing against them — it only names their plugin strings, which
+       the container resolves through the ament index at runtime. A typo in one of
+       those strings is therefore a launch-time failure, not a build error, which
+       is what tools/gates/ipc.sh starting the real launch file covers. -->
+  <exec_depend>pimesh_perception</exec_depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>

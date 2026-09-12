@@ -148,10 +148,43 @@ PIMESH_TF_PAT='tf2_ros/[s]tatic_transform_publisher'
 # topic is a green light over a wrong measurement, which is not.
 PIMESH_BAG_PAT='/bin/[r]os2 bag play'
 
+# image_transport's republisher, and it is here for the same reason as the bag
+# player: it is a process that takes part in this pipeline's topics and no pattern
+# above describes it.
+#
+# Found on 2026-09-12 while smoke-testing decode_node. **Three**
+# `ros2 run image_transport republish compressed raw` processes had been running
+# for three and a quarter hours — 14:26, 14:28 and 14:29 that afternoon, from
+# trying the off-the-shelf decoder by hand — with `tools/stragglers.sh` reporting
+# 0 on both machines throughout. Each one is a subscriber on
+# `/image_raw/compressed`, which is the one topic that crosses Wi-Fi and the one
+# topic this architecture allows exactly one reader on, so a leaked republisher is
+# the *specific* failure P2 exists to assert against. It would have made
+# `gates/ipc.sh`'s subscriber count wrong, and at worst it is a second RELIABLE
+# reader collapsing the link.
+#
+# What made it survive three gates is worth stating: `republish`'s subscription is
+# **lazy** — it connects only when something subscribes to its output — so
+# `ros2 topic info -v /image_raw/compressed` reported `Subscription count: 0` with
+# all three alive. A dormant reader that wakes up the moment a viewer appears is
+# exactly the kind of straggler that is invisible until it is expensive.
+#
+# **Path-anchored, and the first spelling of this was not.** Written as
+# `image_transport[ /][r]epublish` it also matched the `ros2 run image_transport
+# republish` wrapper — and matched this very comment, so the first run of
+# `tools/stragglers.sh` after adding it reported the shell that was running the
+# sweep. That is the same trap the brackets exist for, arriving the same way it
+# did for the viewer pattern: a bracket protects the pattern's own text and
+# nothing else, and a pattern loose enough to match prose will eventually be put
+# in a command line beside some. The wrapper needs no pattern of its own —
+# `ros2 run` waits on its child and exits when the child is killed.
+PIMESH_REPUBLISH_PAT='/image_transport/[r]epublish'
+
 # shellcheck disable=SC2034  # read by tools/stragglers.sh
 PIMESH_PATTERNS=(
     "$PIMESH_NODE_PAT" "$PIMESH_CONTAINER_PAT" "$PIMESH_LAUNCH_PAT"
     "$PIMESH_VIEWER_PAT" "$PIMESH_TF_PAT" "$PIMESH_BAG_PAT"
+    "$PIMESH_REPUBLISH_PAT"
 )
 
 # Container before launcher, always: killing the launcher first orphans the
@@ -173,6 +206,7 @@ kill_local() {
     sleep 1
 
     pkill -f "$PIMESH_VIEWER_PAT" 2>/dev/null || true
+    pkill -f "$PIMESH_REPUBLISH_PAT" 2>/dev/null || true
     pkill -CONT -f "$PIMESH_BAG_PAT" 2>/dev/null || true
     pkill -f "$PIMESH_BAG_PAT" 2>/dev/null || true
     pkill -f "$PIMESH_CONTAINER_PAT" 2>/dev/null || true

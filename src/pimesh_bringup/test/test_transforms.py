@@ -89,11 +89,54 @@ def test_every_transform_the_launch_file_wants_is_in_the_config(config, launch_m
         assert 'ros__parameters' in config[f'/**/{name}']
 
 
-def test_config_has_no_transforms_the_launch_file_ignores(config, launch_module):
-    """The other direction, which is the one that rots quietly: an entry nobody
-    publishes looks exactly like an entry somebody does."""
+def test_config_has_no_keys_the_launch_file_ignores(config, launch_module):
+    """The other direction, which is the one that rots quietly: a key nobody reads
+    looks exactly like a key somebody does.
+
+    A ROS 2 parameter file is not validated against anything — a key matching no
+    node loads fine and the node runs on its code defaults — so an orphan here is
+    invisible at runtime. It is how a parameter gets tuned for an hour in the wrong
+    place. Every `/**/` key therefore has to be either a transform the launch file
+    publishes or a component it composes."""
     keyed = {k[len('/**/'):] for k in config if k.startswith('/**/')}
-    assert keyed == set(launch_module.STATIC_TRANSFORMS)
+    expected = set(launch_module.STATIC_TRANSFORMS)
+    expected |= {name for name, _ in launch_module.COMPONENTS}
+    expected |= {name for name, _ in launch_module.PROBE_COMPONENTS}
+    assert keyed == expected
+
+
+def test_every_composed_component_has_a_config_key(launch_module, config):
+    """And the same check from the other side, stated separately because it fails
+    differently: a component with no key in the YAML runs entirely on its code
+    defaults, which is a node that works and is not configured."""
+    for name, _ in launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS:
+        assert f'/**/{name}' in config, f'{name} is composed but has no key in pimesh.yaml'
+
+
+def test_every_plugin_string_is_registered_in_the_ament_index(launch_module):
+    """The plugin string is resolved at *runtime*, through the ament index, so a
+    typo in it is not a build error — it is a container that comes up and then
+    fails to load a component, with the rest of the launch carrying on around it.
+
+    This is the cheapest check that catches it, and it is checking the real
+    index: the same resource file the container reads, written by
+    `rclcpp_components_register_nodes` at build time."""
+    from ament_index_python.packages import get_package_prefix
+
+    registered = set()
+    prefix = get_package_prefix('pimesh_perception')
+    resource = os.path.join(prefix, 'share', 'ament_index', 'resource_index',
+                            'rclcpp_components', 'pimesh_perception')
+    with open(resource) as handle:
+        for line in handle:
+            if line.strip():
+                # Each line is "<class>;<library path>".
+                registered.add(line.split(';')[0].strip())
+
+    for name, plugin in launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS:
+        assert plugin in registered, (
+            f'{name} names {plugin}, which pimesh_perception does not register '
+            f'(it registers {sorted(registered)})')
 
 
 # --- The numbers are valid rotations ----------------------------------------
@@ -206,8 +249,38 @@ def test_the_launch_description_actually_builds(launch_module):
     file passed `extra_arguments` to `ComposableNodeContainer`, which does not
     take it — `use_intra_process_comms` is a per-*component* option. That is the
     class of mistake that only shows up when somebody runs the thing."""
+    from launch.actions import DeclareLaunchArgument
+    from launch_ros.actions import ComposableNodeContainer, LoadComposableNodes, Node
+
     description = launch_module.generate_launch_description()
     actions = description.entities
 
-    # Three transform publishers and one container.
-    assert len(actions) == len(launch_module.STATIC_TRANSFORMS) + 1
+    # Counted by kind rather than totalled, so the failure message says which part
+    # of the launch file changed instead of just that the number moved.
+    kinds = {}
+    for action in actions:
+        kinds[type(action)] = kinds.get(type(action), 0) + 1
+
+    assert kinds.get(Node) == len(launch_module.STATIC_TRANSFORMS)
+    assert kinds.get(ComposableNodeContainer) == 1, 'there is one container, always'
+    # intra_process, log_payloads, probe — each of which exists for a gate.
+    assert kinds.get(DeclareLaunchArgument) == 3
+    # The probe, loaded into the running container rather than listed in it,
+    # because `composable_node_descriptions` cannot be made conditional.
+    assert kinds.get(LoadComposableNodes) == 1
+    assert len(actions) == sum(kinds.values())
+
+
+def test_the_probe_is_not_loaded_by_default(launch_module):
+    """`probe:=true` is a gate's switch, and the probe logs a line per frame at
+    50 Hz. A default that loaded it would make every ordinary session noisier and
+    put a second subscriber on the decoded topic — in-process and cheap, but still
+    a consumer nobody asked for."""
+    from launch.conditions import IfCondition
+    from launch_ros.actions import LoadComposableNodes
+
+    description = launch_module.generate_launch_description()
+    loads = [a for a in description.entities if isinstance(a, LoadComposableNodes)]
+    assert len(loads) == 1
+    assert isinstance(loads[0].condition, IfCondition), (
+        'the probe load is unconditional — it would run in every session')

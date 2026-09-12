@@ -76,8 +76,15 @@ fi
 # pattern in just-lib.sh matched a bag player at all. That hole is closed there;
 # this is the half that proves the recipe's own trap reaches one.
 
+# view-keypoints is the fifth, and it is the most expensive thing in this table to
+# leak: a container holding decode_node and keypoint_node, the Pi's camera, three
+# static transform publishers and RViz. It is given the fixture bag rather than the
+# live camera here — the session shape being tested is the same either way, and
+# the bag version does not depend on the Pi's Wi-Fi being up for the gate to mean
+# something. The camera path is covered by view-camera in the row above.
+
 # recipe -> the argv to run it with, and what "it is up" means for it.
-RECIPES=(lan compose view-camera replay)
+RECIPES=(lan compose view-camera replay view-keypoints)
 
 # `replay` is the only recipe here that takes an argument, and the bag it takes
 # has to be *this gate's own*. bags/ is git-ignored, so on a fresh clone there
@@ -157,6 +164,7 @@ argv_for() {                # $1 = recipe, $2 = seconds; prints one argv word pe
     case $1 in
         replay)      printf '%s\n' "$PIMESH_WS/tools/replay.sh" "$GATE_BAG" "$2" ;;
         view-camera) printf '%s\n' "$PIMESH_WS/tools/view-camera.sh" "$2" ;;
+        view-keypoints) printf '%s\n' "$PIMESH_WS/tools/view-keypoints.sh" "$2" "$GATE_BAG" ;;
         *)           printf '%s\n' "$PIMESH_WS/tools/hello-$1.sh" "$2" ;;
     esac
 }
@@ -179,6 +187,12 @@ session_up() {              # $1 = recipe
         # gate has been fooled by exactly that shape of "pass" once already.
         replay)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
                  pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
+        # The container as well as the player and the viewer: this recipe is the
+        # only one in the table that starts all three, and the container is the
+        # one that would go on decoding frames unattended.
+        view-keypoints) pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
+                        pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
+                        pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
     esac
 }
 

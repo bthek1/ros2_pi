@@ -51,3 +51,68 @@
     child_frame_id: odom
     translation: {x: 0.0, y: 0.0, z: 0.0}
     rotation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}
+
+# --- The dev box's pipeline ---------------------------------------------------
+#
+# Keyed by node name, and the names have to match the `name=` of the
+# ComposableNode in pimesh.launch.py exactly. A key matching no node applies
+# nothing, silently — which is why every gate here asserts on a parameter's
+# *effect*, never on the file having been read.
+
+/**/decode_node:
+  ros__parameters:
+    # The only topic in this project that crosses Wi-Fi, and the only subscriber
+    # this process has on it. gates/ipc.sh asserts that second half.
+    input_topic: /image_raw/compressed
+    # bgr8, for consumers inside this container. A subscriber from another
+    # process may have it, and will cost a 2.7 MB serialisation per frame for the
+    # privilege — which is why rviz/keypoints.rviz watches the compressed preview
+    # instead.
+    output_topic: /image_raw
+    # reliable | best_effort, on the subscription. See decode_node.cpp: the
+    # BEST_EFFORT-reader measurement that rviz/camera.rviz relies on was taken on
+    # a *viewer*, where a dropped frame costs nothing, and a dropped frame here is
+    # a frame the mesh never sees. The conservative default stands until somebody
+    # measures this end.
+    input_reliability: reliable
+    gap_threshold_ms: 50.0
+    stats_period_s: 5.0
+    # Off: at 59 Hz this is 59 log lines a second. gates/ipc.sh overrides it.
+    log_payloads: false
+
+/**/ipc_probe:
+  ros__parameters:
+    input_topic: /image_raw
+
+/**/keypoint_node:
+  ros__parameters:
+    # P3's numbers. 500 features is enough that churn at the cap does not dominate
+    # and cheap enough for the full frame rate; the 10-frame window is what
+    # forgives detection churn, which strict frame-to-frame matching counts as
+    # ~25% of keypoints lost; 64 of 256 Hamming bits is already generous, since
+    # unrelated ORB descriptors sit near 128 apart.
+    max_features: 500
+    match_window: 10
+    match_max_distance: 64
+    # The pose gates. Failing either means *hold the last pose* — never publish a
+    # guess, because a wrong orientation folds the mesh around it and nothing
+    # downstream can tell which frames were guesses.
+    #
+    # 0.03 rad is 1.7 degrees, ~28 px at fx=953. Note it is not equally sharp in
+    # all three axes: the ray residual of a roll about the optical axis is about a
+    # third of the same angle in pan or tilt, because rays near the axis of
+    # rotation barely move (test_rotation_fit has the measurement).
+    min_matched_pairs: 8
+    max_residual_rad: 0.03
+    reject_fraction: 0.2
+    # For a person, not for the pipeline: ~10 Hz of annotated JPEG. Encoding it
+    # costs more than detecting the features does, which is why it is capped and
+    # why its cost is reported separately in the stats line.
+    preview_rate_hz: 10.0
+    preview_quality: 80
+    # odom -> base_link, rotation only, translation identically zero. P7 is what
+    # makes the translation real.
+    publish_tf: true
+    odom_frame: odom
+    base_frame: base_link
+    stats_period_s: 5.0

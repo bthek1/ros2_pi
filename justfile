@@ -1,12 +1,14 @@
 # ros2_pi — the commands you actually type. `just` with no arguments lists them.
 #
-# Deliberately short, and it is meant to stay that way. This file is the
-# *user-facing* surface of the workspace and nothing else: build it, and run the
-# two things there are to watch. Everything that is not a day-to-day action is a
-# script in tools/ and is run as one — no recipe, no wrapper:
+# Deliberately short, and meant to stay that way: this file is the *user-facing*
+# surface of the workspace and nothing else. Everything that is not a day-to-day
+# action is a script in tools/, run as one — no recipe, no wrapper:
 #
 #   bash tools/gates/build.sh         P0: one source tree, two distros, same msgs
 #   bash tools/gates/capture.sh       P1: 720p MJPEG on the LAN, stamped honestly
+#   bash tools/gates/ipc.sh           P2: one reader on the LAN, one decode, a pointer onward
+#   bash tools/gates/keypoints.sh     P3: ORB keeps up, costs its budget, finds real corners
+#   bash tools/record-clip.sh desk1   ...record the reference clip P3 onwards replay
 #   bash tools/gates/calibration.sh   P9: real intrinsics, and that they straighten the lens
 #   bash tools/calibrate.sh           ...run the checkerboard that produces them
 #   bash tools/gates/test.sh          the unit tests pass on both machines
@@ -14,32 +16,25 @@
 #   bash tools/camera-reset.sh        clear the camera's persistent V4L2 controls
 #   bash tools/test.sh                ...just run them here (tools/test-pi.sh there)
 #
-#   bash tools/gates/hello-build.sh   scaffolding: one real package builds
-#   bash tools/gates/hello-talk.sh    P1: the talker honours its rate parameter
-#   bash tools/gates/hello-ipc.sh     P2: one process, message handed over as a pointer
-#   bash tools/gates/hello-lan.sh     P3: one source tree, two distros, over the LAN
-#   bash tools/gates/hello-clean.sh   P4: Ctrl-C leaves nothing running, either machine
+#   bash tools/gates/hello-{build,talk,ipc,lan,clean}.sh  the scaffolding's own
+#                                     five gates: a package builds, the talker
+#                                     honours its rate, a pointer is handed over,
+#                                     two distros talk, and Ctrl-C leaves nothing
 #   bash tools/gates/justfile.sh      this file's own shape
 #   bash tools/stragglers.sh          assert nothing outlived its session
 #   bash tools/sync-pi.sh             ship source to the Pi — source only
 #   bash tools/build-pi.sh            ...and build it there, under Jazzy
 #   bash tools/clean.sh               delete the colcon trees (tools/clean-pi.sh for the Pi's)
 #
-# Each gate exits non-zero and prints the number it asserted on. They are run
-# often, but they are not what a person new to the workspace needs to see first,
-# and burying `hello-compose` among seven of them was the reason this file got
-# trimmed.
+# Each gate exits non-zero and prints the number it asserted on. Burying
+# `hello-compose` among seven of them was why this file got trimmed.
 #
-# The recipe bodies stay one line each regardless of how few there are. `just`
-# gives a recipe body no way to share code with another, so inlined bash gets
-# copy-pasted, drifts between the copies, and is invisible to shellcheck, which
-# cannot parse {{ }}. tools/just-lib.sh holds the shared prelude, the one
-# spelling of the Pi's ssh invocation, and the bracketed kill patterns — both
-# things that must never be written differently twice.
-#
-# tools/ is rsynced to the Pi, so everything in it must work on both distros —
-# the dev box is Lyrical, the Pi is Jazzy, and tools/ros-env.sh discovers which
-# rather than naming one.
+# Recipe bodies stay one line each. `just` gives a body no way to share code with
+# another, so inlined bash drifts between copies and shellcheck cannot parse
+# {{ }} to catch it; tools/just-lib.sh holds the prelude, the Pi's ssh
+# invocation and the kill patterns. tools/ is rsynced to the Pi, so everything in
+# it works on both distros — tools/ros-env.sh discovers which rather than naming
+# one.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -77,3 +72,8 @@ view-camera seconds="600":
 [group('run')]
 replay bag seconds="600":
     @bash "{{ ws }}/tools/replay.sh" {{ bag }} {{ seconds }}
+
+# ORB corners and the rotation-only pose, in RViz. bag = optional, else the camera
+[group('run')]
+view-keypoints seconds="600" bag="":
+    @bash "{{ ws }}/tools/view-keypoints.sh" {{ seconds }} {{ bag }}

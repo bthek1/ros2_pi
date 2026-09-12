@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pimesh_perception</name>
+  <version>0.1.0</version>
+  <description>
+    The dev box's front end: the container's one network subscriber, which
+    decodes the Pi's JPEG exactly once, and the ORB tracker that turns the
+    decoded frames into keypoints, tracks and a rotation-only pose. Both run as
+    components in one process so that a publish is a pointer handover rather
+    than a 2.7 MB copy.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Nothing here runs on the Pi, and every entry still has to exist on Jazzy:
+       tools/gates/build.sh builds this whole workspace at both ends, because the
+       one thing a cross-distro C++ project cannot afford is a package that only
+       compiles on one machine. OpenCV is 4.10 here and 4.6 there — see
+       orb_tracker.hpp on why nothing in this package touches an API that differs
+       between them.
+
+       Deliberately absent: cv_bridge. The conversion this package needs is
+       `bgr8` to and from a cv::Mat header over memory we already own, which is
+       image_bgr8() in image_buffer.hpp — twenty lines, unit-tested without a
+       camera, and no copy. cv_bridge's fromImageMsg *copies*, and the one entry
+       point that does not (toCvShare) wants a shared_ptr, which is the opposite
+       of the unique_ptr this package is built around. -->
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>pimesh_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>libopencv-dev</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

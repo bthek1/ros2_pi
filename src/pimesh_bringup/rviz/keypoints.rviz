@@ -1,0 +1,136 @@
+# Milestone B's viewer: is ORB finding corners, and is the pose moving.
+#
+# A *viewer*, not evidence. tools/gates/ipc.sh and tools/gates/keypoints.sh are
+# what pass or fail P2 and P3.
+#
+# **Deliberately not an Image display on `/image_raw`.** That topic is the decoded
+# 2.7 MB bgr8 frame, and it exists to be handed around *inside* the container by
+# pointer. Attaching RViz to it adds an out-of-process subscriber, which forces a
+# full serialisation of every frame out of the container and throws away exactly
+# what P2 established. The annotated preview below is ~80 kB, is published at
+# ~10 Hz, and is the thing meant to be watched.
+#
+# What you should see:
+#
+#   Keypoints  a few hundred circles, clustered on texture and absent on blank
+#              wall. **Green is a corner that was already being followed; yellow
+#              is one seen for the first time.** Mostly green with a scatter of
+#              yellow is the tracker working. Mostly yellow means it is detecting
+#              corners and recognising none of them — which at speed is motion
+#              blur and at rest is a bug.
+#   TF         camera_optical_frame rotating as you pan, and **not translating**.
+#              P3 is rotation-only by design: bearing rays cannot recover
+#              translation, so the position staying at the origin is correct. That
+#              is the whole motivation for P7.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Keypoints1
+        - /TF1
+      Splitter Ratio: 0.5
+    Tree Height: 500
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Name: root
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 0.5
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset: {X: 0, Y: 0, Z: 0}
+      Plane: XY
+      Plane Cell Count: 10
+      Reference Frame: <Fixed Frame>
+      Value: true
+
+    # The annotated preview from keypoint_node.
+    #
+    # **The topic name carries the transport.** RViz's Image display infers it from
+    # the name (`rviz_default_plugins/displays/image/get_transport_from_topic.cpp`)
+    # and there is no "Transport Hint" property to set — so the `/compressed`
+    # suffix is not decoration, it is the instruction to decode JPEG here. Naming
+    # the base topic instead gives a display subscribed to something nothing
+    # publishes, which looks precisely like a dead camera. That mistake is
+    # documented at length in camera.rviz and in tools/gates/view-configs.sh.
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Name: Keypoints
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Normalize Range: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        # BEST_EFFORT against a RELIABLE publisher, which is legal — a RELIABLE
+        # writer satisfies a BEST_EFFORT reader, and only the reverse is
+        # incompatible. The reasoning is camera.rviz's: a RELIABLE reader delivers
+        # in sequence, so one lost fragment head-of-line blocks every frame behind
+        # it. This preview is local rather than over Wi-Fi, so the effect is much
+        # smaller here — it is BEST_EFFORT for consistency with the other viewer
+        # and because a dropped preview frame costs nothing by construction.
+        Reliability Policy: Best Effort
+        Value: /keypoints/image/compressed
+      Value: true
+
+    # The pose. odom -> base_link comes from keypoint_node; the other three edges
+    # are static, from pimesh_bringup.
+    #
+    # Frame Timeout is longer than camera.rviz's on purpose: when the pose gate
+    # fails, keypoint_node *holds* the last pose rather than republishing it, so a
+    # held frame ages. A short timeout would make the axes vanish during a fast
+    # pan, which looks like a crash and is the node behaving exactly as designed.
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Name: TF
+      Frame Timeout: 30
+      Marker Scale: 0.3
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    # odom, not base_link: base_link is what *moves* now. Fixing the view to a
+    # moving frame would hold the camera still and rotate the world around it,
+    # which is the opposite of what this view is for.
+    Fixed Frame: odom
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 2.5
+      Focal Point: {X: 0, Y: 0, Z: 0}
+      Name: Current View
+      Pitch: 0.4
+      Target Frame: <Fixed Frame>
+      Yaw: 2.5
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 800
+  Width: 1280
+  Keypoints:
+    collapsed: false
