@@ -65,12 +65,99 @@ fi
 # it makes every later session in this project die with "Device or resource
 # busy", including the ones that would have diagnosed it.
 
-# recipe -> the script under tools/, and what "it is up" means for it.
-RECIPES=(lan compose view-camera)
-script_for() {              # $1 = recipe
+# replay is the fourth, and it is here because of how its failure looks rather
+# than how expensive it is. What it leaves behind is a `ros2 bag play` on
+# /image_raw/compressed — a *second source* of the pipeline's input topic, and
+# an unattended one. A leaked viewer is visible and a leaked camera_node
+# announces itself the next time anything opens /dev/video0; a leaked player
+# announces nothing and quietly mixes recorded frames into whatever the next
+# measurement thinks it is measuring. On 2026-09-12 two of them ran for four
+# minutes while tools/stragglers.sh reported 0/0 and meant it, because no
+# pattern in just-lib.sh matched a bag player at all. That hole is closed there;
+# this is the half that proves the recipe's own trap reaches one.
+
+# recipe -> the argv to run it with, and what "it is up" means for it.
+RECIPES=(lan compose view-camera replay)
+
+# `replay` is the only recipe here that takes an argument, and the bag it takes
+# has to be *this gate's own*. bags/ is git-ignored, so on a fresh clone there
+# is nothing in it; picking whatever happened to be there would make a core
+# teardown gate fail for reasons that have nothing to do with teardown, and
+# would make what it asserts depend on which machine it ran on.
+#
+# So the fixture is synthesized: three seconds of a throwaway topic, recorded
+# into a temp directory and deleted on the way out. `replay` never reads the
+# messages — it hands the bag to `ros2 bag play` and puts RViz in front of it —
+# so the payload is irrelevant and a std_msgs/String is the cheapest thing that
+# makes a valid bag. What is being tested is the process tree: a player, a
+# launcher, three static transform publishers and a viewer, all of which must be
+# gone three seconds after the signal.
+GATE_BAG=
+
+# `wait` with a deadline. Bash's builtin has no timeout, so a process that
+# cannot act on the signal it was sent hangs the script rather than failing it —
+# which is how the SIGINT/SIG_IGN case below stayed invisible for a ten-minute
+# run that printed one line. Polling with kill -0 is the portable spelling.
+_reap() {                   # $1 = pid, $2 = seconds to allow
+    local pid=$1 secs=$2
+    for _ in $(seq $(( secs * 10 ))); do
+        kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; return 0; }
+        sleep 0.1
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    return 1
+}
+
+make_fixture_bag() {
+    local dir; dir=$(mktemp -d)
+    GATE_BAG="$dir/fixture"
+    # `env --default-signal=INT,TERM,HUP` on both, and it is the same trap this
+    # gate carries a paragraph about forty lines above — arriving, once again,
+    # by a different door. A background command started by a *non-interactive*
+    # shell inherits SIGINT as SIG_IGN, and this script is exactly that shell.
+    # Without the reset, `kill -INT` on the recorder lands on a process that
+    # cannot receive it, the `wait` below never returns, and the gate hangs
+    # before it has measured anything — silently, since its next output is the
+    # line after. Measured 2026-09-12: /proc/PID/status showed
+    # SigIgn 0000000001001006 (bit 0x2 = SIGINT) without this.
+    #
+    # The publisher goes first, or the recorder opens on a topic that does not
+    # exist yet and discovers nothing. Neither of these is a pimesh process, so
+    # neither is covered by the straggler patterns — they are killed by pid
+    # here, deliberately, and before the first measurement is taken.
+    env --default-signal=INT,TERM,HUP \
+        ros2 topic pub -r 20 /gate_clean_fixture std_msgs/msg/String '{data: x}' \
+        >/dev/null 2>&1 &
+    local pub=$!
+    sleep 2
+    env --default-signal=INT,TERM,HUP \
+        ros2 bag record -s mcap -o "$GATE_BAG" --topics /gate_clean_fixture \
+        </dev/null >/dev/null 2>&1 &
+    local rec=$!
+    sleep 3
+    # SIGINT, not SIGTERM: the recorder finalizes its storage on an interrupt
+    # and a bag without metadata.yaml is one tools/replay.sh refuses by design.
+    # Bounded, because a `wait` that does not return is how this was found.
+    kill -INT "$rec" 2>/dev/null || true
+    _reap "$rec" 10 || { echo "FAIL: the fixture recorder ignored SIGINT"; return 1; }
+    kill -INT "$pub" 2>/dev/null || true
+    _reap "$pub" 10 || true
+    [[ -r "$GATE_BAG/metadata.yaml" ]] || {
+        echo "FAIL: could not build a fixture bag at ${GATE_BAG}"
+        return 1
+    }
+    GATE_BAG_DIR=$dir
+}
+GATE_BAG_DIR=
+cleanup_fixture() { [[ -n $GATE_BAG_DIR ]] && rm -rf "$GATE_BAG_DIR"; }
+trap cleanup_fixture EXIT
+
+argv_for() {                # $1 = recipe, $2 = seconds; prints one argv word per line
     case $1 in
-        view-camera) echo "$PIMESH_WS/tools/view-camera.sh" ;;
-        *)           echo "$PIMESH_WS/tools/hello-$1.sh" ;;
+        replay)      printf '%s\n' "$PIMESH_WS/tools/replay.sh" "$GATE_BAG" "$2" ;;
+        view-camera) printf '%s\n' "$PIMESH_WS/tools/view-camera.sh" "$2" ;;
+        *)           printf '%s\n' "$PIMESH_WS/tools/hello-$1.sh" "$2" ;;
     esac
 }
 
@@ -85,6 +172,13 @@ session_up() {              # $1 = recipe
         # process that was never running is trivially not a straggler.
         view-camera) pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 &&
                      pi_run "pgrep -f '$PIMESH_NODE_PAT'" >/dev/null 2>&1 ;;
+        # The player *and* the viewer, for the same reason as view-camera: the
+        # player is up within a second and RViz takes several, so waiting on the
+        # player alone would signal the session before the viewer existed — and
+        # a viewer that was never running is trivially not a straggler. This
+        # gate has been fooled by exactly that shape of "pass" once already.
+        replay)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
+                 pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
     esac
 }
 
@@ -105,8 +199,12 @@ run_and_signal() {          # $1 = INT or HUP, $2 = recipe
     # happen twice: after setsid, the new leader's own $$ *is* the pgid, and it
     # writes it down before exec'ing the script.
     local pgidfile; pgidfile=$(mktemp)
+    # argv as an array rather than a single word: replay takes a bag path before
+    # its seconds, and a path from mktemp -d is exactly the kind of thing that
+    # must not be re-split by a shell on its way through two of them.
+    local -a argv; mapfile -t argv < <(argv_for "$2" 45)
     setsid env --default-signal=INT,TERM,HUP \
-        bash -c 'echo $$ >"$1"; exec bash "$2" 45' _ "$pgidfile" "$(script_for "$2")" \
+        bash -c 'echo $$ >"$1"; shift; exec bash "$@"' _ "$pgidfile" "${argv[@]}" \
         >"$log" 2>&1 &
     local pgid up=0
     for _ in $(seq 50); do
@@ -137,6 +235,13 @@ run_and_signal() {          # $1 = INT or HUP, $2 = recipe
     sleep 3
     return 0
 }
+
+# Built after the clean-slate check above, not before: the fixture starts two
+# short-lived ros2 processes of its own, and a gate that cannot tell its own
+# leak from somebody else's has to do its looking while nothing of its own is
+# running.
+make_fixture_bag || exit 1
+echo "fixture bag      : ${GATE_BAG} ($(du -sh "$GATE_BAG" | cut -f1), for replay)"
 
 counts=""
 for what in "${RECIPES[@]}"; do

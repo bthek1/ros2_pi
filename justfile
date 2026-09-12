@@ -7,6 +7,8 @@
 #
 #   bash tools/gates/build.sh         P0: one source tree, two distros, same msgs
 #   bash tools/gates/capture.sh       P1: 720p MJPEG on the LAN, stamped honestly
+#   bash tools/gates/calibration.sh   P9: real intrinsics, and that they straighten the lens
+#   bash tools/calibrate.sh           ...run the checkerboard that produces them
 #   bash tools/gates/test.sh          the unit tests pass on both machines
 #   bash tools/gates/view-configs.sh  every .rviz topic is one src/ publishes
 #   bash tools/camera-reset.sh        clear the camera's persistent V4L2 controls
@@ -70,3 +72,8 @@ hello-lan seconds="20":
 [group('run')]
 view-camera seconds="600":
     @bash "{{ ws }}/tools/view-camera.sh" {{ seconds }}
+
+# A recorded bag in RViz, looping. bag = a name under bags/, or a path to one
+[group('run')]
+replay bag seconds="600":
+    @bash "{{ ws }}/tools/replay.sh" {{ bag }} {{ seconds }}

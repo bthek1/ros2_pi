@@ -29,6 +29,15 @@ install(DIRECTORY launch config rviz
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_transforms test/test_transforms.py)
+
+  # P9's straightness instrument, checked against a synthetic distortion.
+  # tools/gates/calibration.sh prints a number in pixels and asserts on it; this
+  # is what makes that number worth asserting on. It needs no camera, no printed
+  # board and no saved frames — a chessboard is projected through a known K and D
+  # with cv2.projectPoints and the measurement has to recover them — so it was
+  # finished before the physical session and is what caught the transposed-grid
+  # and near-vertical-line failures there.
+  ament_add_pytest_test(test_straightness test/test_straightness.py)
 endif()
 
 ament_package()

@@ -25,6 +25,21 @@
   <depend>rclcpp_components</depend>
   <depend>sensor_msgs</depend>
 
+  <!-- P9's two additions, and they were chosen to be the ones that need
+       installing on *neither* machine. The obvious candidate was
+       camera_info_manager, which is what a ROS driver normally uses to load a
+       calibration; it was rejected for two reasons. It is absent on the dev box
+       under Lyrical, so it would have made this package's build depend on an
+       apt install on the machine that never runs it. And CameraInfoManager
+       advertises a `set_camera_info` service from its constructor — a service
+       this node deliberately does not offer, which would let anything on the
+       domain rewrite a running camera's intrinsics on disk. Reading the same
+       standard YAML with yaml-cpp costs ~150 lines, is unit-testable without a
+       camera, and adds no service. Both of these are already installed on both
+       machines. -->
+  <depend>ament_index_cpp</depend>
+  <depend>yaml-cpp</depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>

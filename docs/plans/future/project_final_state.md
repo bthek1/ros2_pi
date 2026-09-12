@@ -379,13 +379,52 @@ baked nominal intrinsics into the reference clip.
 
 **Test:** `bash tools/gates/calibration.sh` — asserts `/camera_info` serves
 non-zero distortion and a non-placeholder `K` with no `NOMINAL intrinsics`
-warning; undistorts the saved board frames in `calib/c922_720p/` and asserts
-board rows are straighter with the calibrated `K`/`D` than with the nominal
-placeholder **and** under 1.0 px; and asserts the recorded reprojection error in
-`calib/c922_720p/report.txt` is ≤ 0.5 px. The with/without control is required
-for the same reason `hello-ipc` needs one — a board near the optical axis is
-nearly straight before any correction. The 1.0 px figure is a budget, not
-something measured; record what the first run prints.
+warning; undistorts the held-out board frames in `calib/c922_720p/frames/` and
+asserts board rows are straighter with the calibrated `K`/`D` than with the
+nominal placeholder **and** under 1.0 px; asserts the recorded reprojection error
+in `calib/c922_720p/report.txt` is ≤ 0.5 px and recomputes it live beside the
+stored figure; and asserts the frames actually reached the frame corners. The
+with/without control is required for the same reason `hello-ipc` needs one — a
+board near the optical axis is nearly straight before any correction. The 1.0 px
+figure is a budget, not something measured; record what the first run prints.
+
+**Partly built, 2026-09-12 — everything except the physical session.** The
+loading path, the gate, the measurement instrument and its tests exist and are
+measured; what is left is a rigid checkerboard in front of the camera. Two things
+came out of building it that changed the phase rather than just implementing it,
+and both are recorded in [#9](https://github.com/bthek1/ros2_pi/issues/9):
+
+- **The coverage floor is a fourth assertion.** Sweeping board pose against the
+  uncalibrated deviation on a synthetic board: frames reaching ~49% of the way to
+  the frame corner put the *uncalibrated* control at 0.52 px — inside the 1.0 px
+  budget — so the gate as originally specified would have passed on nominal
+  intrinsics while printing a flattering ratio. At ~98% the control is 1.4–2.1 px.
+  "Cover the corners" is a precondition of the measurement, not advice, so the
+  gate asserts it and `tools/calib_grab.py` refuses to stop until it is met.
+- **Square-on views calibrate to nonsense, and straightness does not notice.** A
+  board on a wall is rigid, which is the precaution the phase body asks for, and it
+  still fails: sliding the camera parallel to the wall leaves every view square-on,
+  focal length and distortion trade off, and the solve returns `fx=4840.8` against
+  a true 905 with `k1=+1.97` against a true `+0.085`. Its **in-sample** reprojection
+  error is 0.084 px — inside the 0.5 px budget — and it passes the straightness
+  assertion at 0.333 px against a 1.116 px control. What catches it is the
+  **held-out** reprojection error, 3.83 px against 0.068 px, plus a plausibility
+  bound on `fx`. Both are now asserted, and this is the measured justification for
+  grabbing the gate's frames before the session rather than reusing the
+  calibrator's.
+- **The two controls were one measurement.** `undistortPoints` with `P=K` and
+  `D=0` cancels the two `K`s exactly and is the identity, so the nominal
+  placeholder does not correct badly — it corrects nothing, whatever its `fx`
+  says. The gate asserts that equality instead of printing one piece of evidence
+  as two.
+
+It also does **not** use `camera_info_manager`, which is what a ROS driver
+normally loads a calibration with. That package is absent on the dev box under
+Lyrical, so it would have made the Pi's package depend on an apt install on the
+machine that never runs the camera; and `CameraInfoManager` advertises a
+`set_camera_info` service from its constructor, which this node deliberately does
+not offer. Reading the same standard YAML with `yaml-cpp` — present on both
+machines already — costs ~150 lines and is unit-testable without a camera.
 
 Full body, including the precondition that could make it non-executable (a
 *rigid* board — a flexing printout converges happily and is wrong), in

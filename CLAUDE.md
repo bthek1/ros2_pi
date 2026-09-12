@@ -236,6 +236,56 @@ strong priors, re-verify before quoting a number as this project's own.
   current-vs-default, and exits non-zero if the one control that matters did not
   stick. `gates/capture.sh` runs it first; a rate measured without it is a
   measurement of whatever the last person left behind.
+- **`/camera_info` comes from a file, and there is no `calibrated` flag.**
+  `camera_node` loads
+  `package://pimesh_bringup/config/camera_info/c922_720p.yaml` — the standard
+  `camera_info` YAML, byte-for-byte what `cameracalibrator` writes — and falls
+  back to nominal intrinsics with a startup WARNING when it is absent. **The
+  absence of that file is non-fatal and a broken one is fatal**, measured on the
+  Pi 2026-09-12: a wrong resolution, a non-`plumb_bob` model or unparseable YAML
+  each exit 1 by the same route a busy device does, because substituting the
+  placeholder for a calibration somebody put there on purpose would be a green
+  light over a wrong one. The `calibrated` parameter is gone; the flag is derived
+  from whether a file loaded *and* carries non-zero distortion, so a file full of
+  zeros cannot switch the warning off. Produce the file with
+  `bash tools/calibrate.sh`, check it with `bash tools/gates/calibration.sh`.
+
+  **Not `camera_info_manager`**, which is the obvious choice and was rejected
+  twice over: it is absent on the dev box under Lyrical, so the Pi's package
+  would depend on an apt install on the machine that never runs the camera, and
+  `CameraInfoManager` advertises a `set_camera_info` service from its
+  constructor — letting anything on the domain rewrite a running camera's
+  intrinsics on disk. `yaml-cpp` and `ament_index_cpp` are on both machines
+  already.
+- **A calibration checked on a centred board is not checked.** Distortion is
+  radial, so near the optical axis there is nothing to correct: frames whose
+  corners reach only ~half way to the frame corner put the *uncalibrated*
+  straightness at 0.52 px, inside the 1.0 px budget, while frames reaching ~98%
+  put it at 1.4–2.1 px (synthetic sweep, 2026-09-12,
+  `src/pimesh_bringup/test/test_straightness.py`). So "cover the frame corners"
+  is a precondition of the measurement rather than advice about technique, and
+  `gates/calibration.sh` asserts a floor on coverage. A precondition that is not
+  asserted is a comment.
+- **A board photographed only square-on calibrates to nonsense, and every check
+  that should catch it except one says it is fine.** Focal length and radial
+  distortion trade off when the board is never tilted, so the solve is poorly
+  conditioned and returns a self-consistent wrong answer. Synthetic, 2026-09-12,
+  14 views, true `fx=905`: square-on gave **`fx=4840.8`, `k1=+1.97`** (true
+  `+0.085`) with an **in-sample reprojection error of 0.084 px** — better than the
+  0.5 px budget and about as good as the correct fit's 0.068 px. It also *passes*
+  the straightness assertion, at 0.333 px against a 1.116 px control. Two things
+  catch it: the **held-out** reprojection error (3.83 px against 0.068 px) and a
+  plausibility bound on `fx`, and `gates/calibration.sh` now does both. **This is
+  why `tools/calibrate.sh` grabs its frames before the calibration session** — an
+  in-sample number cannot see it. Being rigid does not help: a board taped flat to
+  a wall is rigid and walks straight into this, because sliding the camera parallel
+  to the wall leaves every view square-on. Tilt 20–40°, both axes.
+- **Undistorting with zero coefficients is the identity, whatever `K` says.**
+  `cv2.undistortPoints(pts, K, 0, P=K)` cancels the two `K`s exactly. So the
+  nominal placeholder does not correct the lens badly — it does not correct it at
+  all, and "straighter than the placeholder" and "straighter than the raw
+  corners" are one claim, not two. Worth knowing before designing a control
+  around swapping `K`.
 - **The GPU has no CUDA toolkit installed** (measured: `nvcc` absent, no
   `libcudart` in `/usr/lib`). The driver is there (595.84) and Python's
   `onnxruntime-gpu` works because pip wheels vendor the CUDA runtime. **A C++
@@ -477,7 +527,7 @@ somebody once.
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: a GitHub issue of stable phases, a command for a test, executable-only, and the future file |
 | [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this is going.** The whole pipeline as phases P0–P8, none started, each ending in a `tools/gates/*.sh` test, followed by the deferred register |
 | [#4](https://github.com/bthek1/ros2_pi/issues/4) **(closed 2026-09-09)** [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A is done — P0 and P1, the cross-distro workspace and capture. Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
-| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 29 of them across four suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, and the static transforms and launch conversion in `test_transforms` |
+| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 76 of them across six suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms`, the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on |
 | `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the shell lives in `tools/`; the justfile was trimmed further the same day to `build` + `run` only, so that issue's `just gate-*` spelling is history, not instruction |
 | [docs/plans/future/milestone-a-future.md](docs/plans/future/milestone-a-future.md) | Work deferred out of milestone A, each entry with its trigger: the checkerboard calibration (waiting on P5's tape-measure visit), `PipelineStats` from `camera_node` (waiting on the dashboard), the dev-box rate margin, and device reconnection |
 

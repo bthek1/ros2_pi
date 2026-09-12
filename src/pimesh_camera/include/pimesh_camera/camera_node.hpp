@@ -55,6 +55,27 @@ private:
   std::string frame_id_;
   sensor_msgs::msg::CameraInfo camera_info_;
 
+  /// Whether `camera_info_` came from a real checkerboard run.
+  ///
+  /// **Derived, never declared.** It was a `calibrated` parameter until P9, and
+  /// a parameter is the wrong shape for this: it let a human assert the claim
+  /// the startup warning exists to police, so `calibrated:=true` with no
+  /// calibration silenced the warning and changed nothing else. Now it is set by
+  /// build_camera_info() from whether a file loaded *and* carries non-zero
+  /// distortion — a thing that cannot be true without somebody having run the
+  /// board.
+  bool calibrated_ {false};
+
+  /// Whether `camera_info_`'s numbers came out of a file at all.
+  ///
+  /// Distinct from `calibrated_` because there are three states, not two: a real
+  /// calibration, the nominal fallback, and a file that loaded cleanly and
+  /// carries all-zero distortion. The last is not calibrated but it is also not
+  /// nominal, and the startup warning has to say which — printing "camera_info
+  /// carries NOMINAL intrinsics (fx=905.1 ...)" with the file's own focal length
+  /// in the parentheses is a claim about the wrong numbers.
+  bool info_from_file_ {false};
+
   /// Set once, the first time a frame arrives without a monotonic timestamp, so
   /// the warning is loud rather than 47 times a second.
   bool warned_no_monotonic_ {false};

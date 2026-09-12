@@ -143,6 +143,7 @@ Available recipes:
     [run]
     hello-compose seconds="30" # Hello world, here: both components in one container. seconds = how long to run
     hello-lan seconds="20"     # Hello world, across the LAN: talker on the Pi, listener here
+    replay bag seconds="600"   # A recorded bag in RViz, looping. bag = a name under bags/, or a path to one
     view-camera seconds="600"  # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
 ```
 
@@ -152,13 +153,14 @@ cloned this, `just build && just hello-compose` is the entire getting-started
 path.
 
 **Everything else is a script in `tools/`, run directly.** The gates especially
-— there are ten, they are run constantly, and as recipes they had buried
+— there are eleven, they are run constantly, and as recipes they had buried
 `hello-compose` under an alphabetised wall of `gate-*`:
 
 ```bash
 # The pipeline, phase by phase
 bash tools/gates/build.sh         # P0: one source tree, two distros, same messages
 bash tools/gates/capture.sh       # P1: 720p MJPEG on the LAN, stamped honestly
+bash tools/gates/calibration.sh   # P9: the C922's real intrinsics, and that they straighten it
 
 # Across all phases
 bash tools/gates/test.sh          # the unit tests pass on both machines, and there are some

@@ -8,6 +8,11 @@ models/
 *.onnx
 *.engine
 
+# the calibrator's own frame set — tens of megabytes of 720p PNG, and re-derivable
+# from it rather than needed by any gate. The held-out JPEGs in calib/*/frames/ and
+# the calibration YAML are small and ARE committed.
+calib/**/*.tar.gz
+
 # recorded data and output
 bags/
 captures/
@@ -15,6 +20,11 @@ meshes/
 maps/
 *.ply
 *.db3
+
+# python bytecode — tools/ has importable modules now (calib_straightness.py),
+# so running them or the tests that import them leaves these behind
+__pycache__/
+*.pyc
 
 # editor / OS
 .vscode/*

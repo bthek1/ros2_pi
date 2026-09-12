@@ -19,8 +19,17 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+# yaml-cpp, and the spelling matters. ROS ships a `yaml_cpp_vendor` package on
+# both distros, but it does *different things*: Lyrical's appends a bare
+# `yaml-cpp` to yaml_cpp_vendor_TARGETS, Jazzy's redirects yaml-cpp_DIR at a
+# vendored copy. The system package's own config exports
+# `yaml-cpp::yaml-cpp` identically on both (checked 2026-09-12), so this goes
+# straight at it and skips the vendor entirely.
+find_package(yaml-cpp REQUIRED)
 
 add_library(camera_components SHARED
+  src/calibration.cpp
   src/camera_node.cpp
   src/v4l2_capture.cpp
 )
@@ -36,6 +45,8 @@ target_link_libraries(camera_components PUBLIC
   rclcpp::rclcpp
   rclcpp_components::component
   ${sensor_msgs_TARGETS}
+  ament_index_cpp::ament_index_cpp
+  yaml-cpp::yaml-cpp
 )
 
 rclcpp_components_register_nodes(camera_components
@@ -86,6 +97,15 @@ if(BUILD_TESTING)
     target_include_directories(test_stamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   endif()
 
+  # The calibration loader's refusals. Every one of these is a file that parses
+  # as YAML and is wrong anyway, which is the only interesting category: a
+  # syntax error announces itself, and a 1280x720 calibration on a 1080p stream
+  # does not.
+  ament_add_gtest(test_calibration test/test_calibration.cpp)
+  if(TARGET test_calibration)
+    target_link_libraries(test_calibration camera_components)
+  endif()
+
   ament_add_gtest(test_camera_info test/test_camera_info.cpp)
   if(TARGET test_camera_info)
     target_include_directories(test_camera_info PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -103,6 +123,6 @@ endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(camera_components)
-ament_export_dependencies(rclcpp rclcpp_components sensor_msgs)
+ament_export_dependencies(rclcpp rclcpp_components sensor_msgs ament_index_cpp yaml-cpp)
 
 ament_package()

@@ -297,3 +297,58 @@ The file is keyed by **node name**, and a key that does not match applies
 nothing — silently, with no warning. Check the node's actual name (`ros2 node
 list`) against the top-level key. This trap has cost real time in the
 predecessor project more than once.
+
+## The calibration sheet's own printed command line is wrong
+
+**Symptom.** `cameracalibrator -p charuco` starts, sees the board, and never
+registers a sample — the X/Y/Size/Skew bars stay empty.
+
+**Cause.** `docs/charuco_a4_7x9_25mm.pdf` prints
+`--pattern charuco --size 6x8 --square 0.025 --charuco_marker_size 0.018 --aruco_dict 4x4_250`
+along the bottom. That `--size` is the **interior-corner** count. For `-p charuco`
+the value goes into `cv2.aruco.CharucoBoard`, whose first argument is the number of
+**squares**, so a 7x9-square board must be given `--size 7x9`. Measured against a
+real frame from `bags/cam_2026_09_12`, 2026-09-12:
+
+| `--size` | chessboard corners interpolated |
+| --- | --- |
+| `7x9` (squares) | **42** |
+| `6x8` (corners) | **0** |
+
+Inherited from `piros2/tools/calib/make_calib_target.py`, which composes that line
+when it draws the sheet. The PDF is a printed artefact, so the wrong line is on the
+wall and cannot be edited there.
+
+**Fix.** Use `bash tools/calibrate.sh`, which takes `--squares 7x9` and derives the
+interior-corner count itself, precisely so the two conventions cannot be typed
+inconsistently. If running `cameracalibrator` by hand, pass squares to `--size`.
+
+Note the same number means the *other* thing for `findChessboardCorners`, which is
+what `tools/calib_straightness.py` and the gate use: there it is 6x8. One input,
+two conventions, and they are one apart — which is why neither is typed twice.
+
+## A replayed bag shows a grey Image panel and publishes nothing
+
+**Symptom.** `ros2 bag play <bag> &` runs without an error, `ros2 topic list`
+shows `/image_raw/compressed`, and `ros2 topic info` reports a publisher — but
+RViz's Image panel stays grey, `ros2 topic hz` never prints a rate, and the
+player logs nothing at all. It looks exactly like a QoS mismatch and is not one.
+
+**Cause.** Playback enables keyboard controls by default — space to pause,
+cursor keys to step — so the player reads the controlling terminal. A process in
+the **background** that reads its controlling TTY is sent SIGTTIN by the kernel
+and *stopped*. `ps` shows state `T`; it holds its DDS publisher open, which is
+why the topic and the publisher count both look healthy, and it will never send
+a message. Being stopped is not a failure it gets to report, so there is no log
+line to find. Measured 2026-09-12: two players stopped this way sat for four
+minutes while `ros2 topic info` reported `Publisher count: 1`.
+
+**Fix.** `bash tools/replay.sh` (`just replay <bag>`) passes both
+`--disable-keyboard-controls` and `</dev/null`. By hand, either of those works;
+in the foreground, neither is needed. Confirm with `ps -o stat= -p <pid>` — a
+`T` is this, not a hang.
+
+**Related.** A bag of `/image_raw/compressed` and `/camera_info` carries no
+`tf_static`, and `rviz/camera.rviz` has `base_link` as its Fixed Frame, so a bag
+replayed without `pimesh.launch.py` produces the same grey panel for an entirely
+different reason. `just replay` starts the launch for exactly this.

@@ -9,10 +9,12 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "pimesh_camera/calibration.hpp"
 #include "pimesh_camera/camera_info.hpp"
 #include "pimesh_camera/stamp.hpp"
 #include "rcl_interfaces/msg/integer_range.hpp"
@@ -141,7 +143,11 @@ CameraNode::CameraNode(const rclcpp::NodeOptions & options)
     get_logger(), "publishing %s and %s in frame '%s'",
     image_pub_->get_topic_name(), info_pub_->get_topic_name(), frame_id_.c_str());
 
-  if (!get_parameter("calibrated").as_bool()) {
+  // Nominal *and* uncalibrated. A file that loaded but carries zero distortion is
+  // uncalibrated too, and has already said so in build_camera_info() naming its
+  // own path — it must not also be told its intrinsics are the nominal ones,
+  // because they are not and the numbers in this message would be its own.
+  if (!calibrated_ && !info_from_file_) {
     // Loud, every launch, until somebody runs the checkerboard. A CameraInfo
     // with plausible-looking nominal intrinsics is more dangerous than an empty
     // one, because everything downstream will happily unproject with it and the
@@ -150,8 +156,9 @@ CameraNode::CameraNode(const rclcpp::NodeOptions & options)
       get_logger(),
       "camera_info carries NOMINAL intrinsics, not a calibration "
       "(fx=%.1f fy=%.1f cx=%.1f cy=%.1f, zero distortion). "
-      "Depth unprojection with these is approximate. Run the checkerboard and set "
-      "camera_matrix/distortion_coefficients, then set calibrated:=true.",
+      "Depth unprojection with these is approximate. Run the checkerboard — "
+      "bash tools/calibrate.sh — and the file it writes ends this warning by "
+      "existing; there is no flag to set.",
       camera_info_.k[0], camera_info_.k[4], camera_info_.k[2], camera_info_.k[5]);
   }
 
@@ -174,27 +181,79 @@ CameraNode::~CameraNode()
 
 sensor_msgs::msg::CameraInfo CameraNode::build_camera_info()
 {
-  declare_parameter(
-    "calibrated", false,
-    describe(
-      "True once camera_matrix and distortion_coefficients come from a real "
-      "checkerboard run. False makes the node warn on every startup, which is "
-      "the intended behaviour until somebody does the calibration."));
+  const auto width = static_cast<std::uint32_t>(get_parameter("width").as_int());
+  const auto height = static_cast<std::uint32_t>(get_parameter("height").as_int());
 
   // Nominal C922 720p intrinsics: fx ~ 907 is the predecessor's figure for this
   // camera at this resolution, and the principal point is assumed at the image
-  // centre. Nine numbers, row-major, the standard K.
-  const auto k = declare_parameter(
+  // centre. Nine numbers, row-major, the standard K. They are the fallback and
+  // they are also the *control* the calibration gate measures against, which is
+  // the other reason they stay in the code rather than becoming a file.
+  const auto nominal_k = declare_parameter(
     "camera_matrix", std::vector<double>{907.0, 0.0, 640.0, 0.0, 907.0, 360.0, 0.0, 0.0, 1.0},
-    describe("Row-major 3x3 intrinsic matrix K."));
-  const auto d = declare_parameter(
+    describe(
+      "Row-major 3x3 intrinsic matrix K, used only when camera_info_url loads "
+      "nothing. A real calibration comes from the file, not from here."));
+  const auto nominal_d = declare_parameter(
     "distortion_coefficients", std::vector<double>{0.0, 0.0, 0.0, 0.0, 0.0},
-    describe("plumb_bob coefficients k1 k2 p1 p2 k3."));
+    describe("plumb_bob coefficients k1 k2 p1 p2 k3. Zeros, and a lens is not."));
 
-  return make_camera_info(
-    static_cast<std::uint32_t>(get_parameter("width").as_int()),
-    static_cast<std::uint32_t>(get_parameter("height").as_int()),
-    k, d);
+  // Where the real intrinsics come from. Defaulted rather than required, and
+  // that default is load-bearing: `ros2 run pimesh_camera camera_node` with no
+  // arguments is how this node is started by every gate and by hand, so a
+  // calibration that had to be passed in would be one that is routinely
+  // forgotten — and forgetting it means publishing nominal intrinsics while
+  // believing otherwise, which is the failure this whole phase is about.
+  const auto url = declare_parameter(
+    "camera_info_url", std::string("package://pimesh_bringup/config/camera_info/c922_720p.yaml"),
+    describe(
+      "Standard camera_info YAML to publish, as package://, file:// or a path. "
+      "Empty means publish the nominal placeholder and warn."));
+
+  const Calibration cal = load_calibration(url, width, height);
+  calibrated_ = has_distortion(cal);
+  info_from_file_ = cal.ok;
+
+  if (calibrated_) {
+    RCLCPP_INFO(
+      get_logger(), "calibration '%s' from %s", cal.camera_name.c_str(), cal.path.c_str());
+    return make_camera_info(width, height, cal.k, cal.d);
+  }
+
+  // **A file that is present and wrong is fatal; a file that is absent is not.**
+  //
+  // The asymmetry is the whole of this decision. An unset or missing URL is the
+  // normal state of this project until the checkerboard has been run, so it must
+  // warn and carry on — otherwise capture stops working until a calibration
+  // exists. But a file that is *there* and does not load has no honest fallback:
+  // somebody put it there on purpose, something about it is wrong, and quietly
+  // substituting the nominal numbers would be a green light over a broken
+  // calibration. So that one refuses to start, which is the same rule as a busy
+  // device.
+  if (!cal.ok && !url.empty() && !cal.path.empty() &&
+    cal.why.rfind("no such file", 0) != 0)
+  {
+    throw std::runtime_error(
+      "camera_info_url '" + url + "' (" + cal.path + ") is unusable: " + cal.why);
+  }
+
+  // Loaded, well-formed, and claiming the lens is perfect. Not fatal — the
+  // numbers are usable — but it is a placeholder wearing a calibration's clothes,
+  // so it warns and does not count as calibrated. Its own warning rather than the
+  // NOMINAL one: these intrinsics came out of a file and are not the nominal
+  // ones, and the NOMINAL message prints the fx it is talking about, which would
+  // be this file's.
+  if (cal.ok) {
+    RCLCPP_WARN(
+      get_logger(),
+      "%s parsed but its distortion coefficients are all zero — that is a "
+      "placeholder, not a calibration of a real lens",
+      cal.path.c_str());
+    return make_camera_info(width, height, cal.k, cal.d);
+  }
+
+  RCLCPP_INFO(get_logger(), "no calibration loaded (%s)", cal.why.c_str());
+  return make_camera_info(width, height, nominal_k, nominal_d);
 }
 
 rclcpp::Time CameraNode::stamp_for(const Frame & frame)

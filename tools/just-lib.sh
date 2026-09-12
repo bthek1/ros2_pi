@@ -123,10 +123,35 @@ PIMESH_VIEWER_PAT='^[r]viz2 -d .*pimesh_'
 # to a gate; that is cheap, and a corrupted frame tree is not.
 PIMESH_TF_PAT='tf2_ros/[s]tatic_transform_publisher'
 
+# The bag player, and it is here because the straggler sweep was blind to it.
+# On 2026-09-12 two `ros2 bag play bags/desk1 --loop` processes sat on this
+# machine for four minutes, publishing on /image_raw/compressed — the one topic
+# the whole pipeline reads — while `tools/stragglers.sh` reported 0 on both
+# machines and meant it, because every pattern above matches either a
+# `pimesh_`-qualified path or tf2_ros, and a bag player is neither. A stale
+# publisher on that topic is worse than a stale viewer: it is a *second source*
+# of the pipeline's input, so a measurement taken beside one is measuring a
+# mixture and nothing in the output says so.
+#
+# **Path-anchored, not `^`-anchored**, and the two are not interchangeable here.
+# The rviz2 pattern above can use `^` because the real process has `rviz2` at
+# argv[0]; this one cannot, because `ros2` is a Python script and the real
+# process has `/usr/bin/python3` there with `/opt/ros/<distro>/bin/ros2 bag
+# play` behind it. The `/bin/` is what separates the player from a shell whose
+# command line merely contains the words `ros2 bag play` — including, every
+# time, the script that started it.
+#
+# The breadth is deliberate, on the same reasoning as the TF pattern: this
+# matches any bag player on the machine, not only one `just replay` started.
+# Somebody replaying a bag by hand will lose it to a gate, which is cheap; a
+# gate that reports a clean machine while a bag drives the pipeline's input
+# topic is a green light over a wrong measurement, which is not.
+PIMESH_BAG_PAT='/bin/[r]os2 bag play'
+
 # shellcheck disable=SC2034  # read by tools/stragglers.sh
 PIMESH_PATTERNS=(
     "$PIMESH_NODE_PAT" "$PIMESH_CONTAINER_PAT" "$PIMESH_LAUNCH_PAT"
-    "$PIMESH_VIEWER_PAT" "$PIMESH_TF_PAT"
+    "$PIMESH_VIEWER_PAT" "$PIMESH_TF_PAT" "$PIMESH_BAG_PAT"
 )
 
 # Container before launcher, always: killing the launcher first orphans the
@@ -139,9 +164,17 @@ kill_local() {
     # kills below are the backstop for whatever that misses, not the mechanism.
     pkill -INT -f "$PIMESH_LAUNCH_PAT" 2>/dev/null || true
     pkill -INT -f "$PIMESH_VIEWER_PAT" 2>/dev/null || true
+    # SIGINT to the player too, and for a reason the others do not have: a bag
+    # player that has been stopped by SIGTTIN (see PIMESH_BAG_PAT) cannot run a
+    # handler at all, so the plain pkill below is what actually ends that one.
+    # Signalling first is still right for the ordinary case, where it closes the
+    # storage cleanly instead of being cut off mid-read.
+    pkill -INT -f "$PIMESH_BAG_PAT" 2>/dev/null || true
     sleep 1
 
     pkill -f "$PIMESH_VIEWER_PAT" 2>/dev/null || true
+    pkill -CONT -f "$PIMESH_BAG_PAT" 2>/dev/null || true
+    pkill -f "$PIMESH_BAG_PAT" 2>/dev/null || true
     pkill -f "$PIMESH_CONTAINER_PAT" 2>/dev/null || true
     pkill -f "$PIMESH_NODE_PAT" 2>/dev/null || true
     pkill -f "$PIMESH_TF_PAT" 2>/dev/null || true

@@ -64,11 +64,30 @@ it; the numbers below marked **(measured here)** are that gate's output.
   streaming /dev/video0. Find it with: fuser -v /dev/video0". `usb_cam` logs one
   ERROR and then idles forever, which looks like a working node publishing
   nothing.
-- Publishes `/camera_info` transient-local, currently from **nominal**
-  parameters with a startup WARNING rather than from a calibration. Zero
-  distortion is not good enough for a pipeline that unprojects every pixel — the
-  checkerboard run is deferred to the P5 tape-measure visit, see
-  [../plans/future/milestone-a-future.md](../plans/future/milestone-a-future.md).
+- Publishes `/camera_info` transient-local, from
+  `package://pimesh_bringup/config/camera_info/c922_720p.yaml` when that file
+  exists and from **nominal** parameters with a startup WARNING when it does not.
+  The file is the standard `camera_info` YAML, which is exactly what
+  `cameracalibrator` writes, so it is copied in verbatim rather than transcribed
+  into parameters. **As of 2026-09-12 the loading path is built and measured on
+  the Pi; the file itself does not exist yet**, because producing it needs a rigid
+  checkerboard in front of the camera — that is the remaining half of
+  [P9](https://github.com/bthek1/ros2_pi/issues/9).
+
+  Three refusals are measured on the Pi (2026-09-12), and the asymmetry between
+  them is deliberate. A file that is **absent** warns and carries on, because that
+  is the normal state before anybody has run the board. A file that is **present
+  and wrong** refuses to start, with no fallback to the nominal numbers: a
+  1280×720 calibration against a 1080p stream (`refusing to start: calibrated at
+  1920x1080 but capturing at 1280x720`), a non-`plumb_bob` model, and unparseable
+  YAML all exit 1 by the same route a busy device does. Quietly substituting the
+  placeholder for a broken calibration would be a green light over a wrong one.
+
+  There is no `calibrated` parameter. There was until P9, and it was the wrong
+  shape: it let a human assert the very claim the startup warning exists to
+  police. The flag is now derived from whether a file loaded *and* carries
+  non-zero distortion coefficients, so a placeholder full of zeros cannot switch
+  the warning off.
 
 **Latency (measured here):** **4.21 ms** median from the kernel dequeuing a
 buffer to a subscriber holding the message built from it, measured *on the Pi*
