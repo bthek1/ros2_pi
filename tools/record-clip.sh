@@ -103,11 +103,30 @@ sleep 1
 
 echo
 echo "== bags/${NAME} =="
-# The counts, from the bag's own metadata rather than from the recorder's output:
-# this is what a later replay will actually find in it.
-awk '/topic_metadata:/,0' "$BAG/metadata.yaml" |
-    awk '/name:/ {t=$2} /message_count:/ {printf "  %-28s %s messages\n", t, $2}'
-echo "  duration                     $(awk '/duration:/{getline; print $2/1e9 "s"}' "$BAG/metadata.yaml")"
+# Parsed as YAML, not grepped. The first version of this used awk over `name:` and
+# `message_count:` lines and printed three topics for a two-topic bag: metadata.yaml
+# carries a *total* message_count after the per-topic ones, and a `duration` under
+# each storage file as well as under the bag, so a line-oriented reader invents rows.
+# These numbers are the whole point of the summary — a clip whose counts are wrong in
+# the report is a clip nobody checks again.
+/usr/bin/python3 - "$BAG/metadata.yaml" <<'SUMMARY'
+import sys
+import yaml
+
+with open(sys.argv[1]) as handle:
+    info = yaml.safe_load(handle)['rosbag2_bagfile_information']
+
+for entry in info['topics_with_message_count']:
+    print(f"  {entry['topic_metadata']['name']:<28} {entry['message_count']} messages")
+seconds = info['duration']['nanoseconds'] / 1e9
+print(f"  {'duration':<28} {seconds:.2f}s")
+# The rate the clip was actually recorded at, which is the number worth seeing before
+# replaying it: a sweep recorded at 20 fps means the camera's exposure controls were
+# not what camera-reset.sh left them, and that cannot be fixed after the fact.
+for entry in info['topics_with_message_count']:
+    if entry['topic_metadata']['name'].endswith('image_raw/compressed') and seconds > 0:
+        print(f"  {'image rate':<28} {entry['message_count'] / seconds:.1f} Hz")
+SUMMARY
 echo "  size                         $(du -sh "$BAG" | cut -f1)"
 # The sha256 of the mcap, which is how a number quoted against this clip can be
 # checked to have been measured against *this* clip. bags/ is git-ignored, so the
