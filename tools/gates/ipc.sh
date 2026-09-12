@@ -105,7 +105,7 @@ start_run "$tmp/on.log" true || exit 1
 # every address assertion below by failing to have an inside at all.
 containers=$(pgrep -fc "$PIMESH_CONTAINER_PAT" || echo 0)
 [[ $containers -eq 1 ]] ||
-    note "expected 1 component_container_mt process, found ${containers}"
+    note "expected 1 component container process, found ${containers}"
 
 # The parameter applied, not merely present in a file: input_topic is the key
 # that decides what this node reads, and a mis-keyed YAML would leave it on the
@@ -125,11 +125,24 @@ subs=$(subscriber_count /image_raw/compressed)
     note "/image_raw/compressed has ${subs} subscriber(s), expected exactly 1 — \
 a second reader on the Wi-Fi topic is what this architecture is shaped to prevent"
 
-# The decoded topic's own subscriber count, for the record. Intra-process
-# subscriptions are in the graph too, so this is 1 in both runs and is printed
-# rather than asserted: it distinguishes nothing, which is exactly why the
-# address comparison below exists.
+# **At least two consumers on the decoded topic, and this assertion exists because
+# its absence made this gate report a false green.**
+#
+# On 2026-09-12 this gate passed at 429/429 with one consumer — the probe — and the
+# very next run, with keypoint_node added beside it, reported **0/574**. rclcpp
+# serves ownership-taking intra-process subscriptions by moving the buffer into the
+# last one and *copying it for every other*, so a pipeline with one consumer cannot
+# exhibit the failure and a gate measuring one consumer cannot see it. The fix was
+# the subscriber signature (a shared const pointer, which rclcpp hands to all of
+# them); the lesson is that the interesting case is the fan-out, and a gate that
+# measures the easy configuration is a gate whose green means nothing the day a
+# stage is added.
 decoded_subs=$(subscriber_count /image_raw)
+[[ -n $decoded_subs ]] || decoded_subs=0
+(( decoded_subs >= 2 )) ||
+    note "/image_raw has ${decoded_subs} subscriber(s); this gate needs at least 2 \
+to be measuring the fan-out case at all — with one consumer the copy it looks for \
+cannot happen"
 
 stats_line=$(grep -h 'stats in=' "$tmp/on.log" | tail -1 | sed 's/.*decode_node]: //')
 
@@ -172,7 +185,7 @@ echo
 echo "decode_node.input_topic   : ${input_topic}  (assert the YAML key applied)"
 echo "container processes       : ${containers}  (assert exactly 1)"
 echo "/image_raw/compressed subs: ${subs}  (assert exactly 1 — the Wi-Fi constraint)"
-echo "/image_raw subs           : ${decoded_subs}  (printed: the same either way)"
+echo "/image_raw subs           : ${decoded_subs}  (assert >= 2 — the fan-out is the case that can fail)"
 echo "first published buffer    : ${on_pub}"
 echo "first buffer probed       : ${on_probe}"
 echo "intra-process ON          : ${on_hits}/${on_total} addresses matched (assert all)"

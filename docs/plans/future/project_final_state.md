@@ -36,7 +36,7 @@ doc, commit and conversation.
 | | Issue | Phases | True when it closes |
 | --- | --- | --- | --- |
 | A | [#4](https://github.com/bthek1/ros2_pi/issues/4) | P0–P1 | ✓ **closed 2026-09-09** — one source tree builds under both distros; the Pi ships stamped MJPEG |
-| B | [#5](https://github.com/bthek1/ros2_pi/issues/5) | P2–P3 | One reader, one decode, corners on it, and `bags/desk1` exists |
+| B | [#5](https://github.com/bthek1/ros2_pi/issues/5) | P2–P3 | One reader, one decode, corners on it, and `bags/desk1` exists — **P2 done 2026-09-12** |
 | C | [#6](https://github.com/bthek1/ros2_pi/issues/6) | P4 | Depth on the GPU at ≤ 80 ms, CUDA provider named in the log |
 | D | [#7](https://github.com/bthek1/ros2_pi/issues/7) | P5–P6 | A triangle mesh you can recognise your room in |
 | E | [#8](https://github.com/bthek1/ros2_pi/issues/8) | P7–P8 | Translation is visible, and one tab shows the pipeline |
@@ -182,7 +182,61 @@ were measured under.
 
 ---
 
-## ☐ P2 — The container, and proving intra-process
+## ✓ P2 — The container, and proving intra-process
+
+**Done 2026-09-12.** `bash tools/gates/ipc.sh` printed, on its final run:
+
+```
+decode_node.input_topic   : /image_raw/compressed  (assert the YAML key applied)
+container processes       : 1  (assert exactly 1)
+/image_raw/compressed subs: 1  (assert exactly 1 — the Wi-Fi constraint)
+/image_raw subs           : 2  (assert >= 2 — the fan-out is the case that can fail)
+first published buffer    : 0x7025f409d4f0
+first buffer probed       : 0x7025f409d4f0
+intra-process ON          : 325/325 addresses matched (assert all)
+intra-process OFF         : 0/373 = 0% (assert <= 25%)
+decode throughput         : stats in=47.0Hz out=46.2Hz dropped=4 failed=0 gaps=21
+                            cost_mean=1.93ms cost_max=5.72ms
+```
+
+Earlier runs the same day: 504/504 against 0/395, and 429/429 against 0/389.
+Decode costs **1.90–1.93 ms/frame** against a 4 ms budget.
+
+**The zero-copy claim had to be earned twice, and the way it failed is the thing
+to carry forward.** The gate passed at **429/429 with one consumer** — the probe
+alone — and reported **0/574** on the very next run, with `keypoint_node` loaded
+beside it. Same code, same flags, same container. rclcpp's intra-process manager
+serves *ownership-taking* subscriptions by moving the buffer into the **last** one
+and copying it for every other (`add_owned_msg_to_buffers`: "Copy the message
+since we have additional subscriptions to serve"), so two `unique_ptr` consumers
+means one of them gets a 2.7 MB copy, at 59 Hz, with nothing anywhere saying so.
+Subscriptions taking a shared const pointer are served by
+`add_shared_msg_to_buffers`, which hands one buffer to all of them however many
+there are — so the consumers take `ConstSharedPtr`, and this project's standing
+note that a `const &` callback "quietly copies" was the wrong way round.
+
+**One consumer is the configuration that cannot fail**, which is why the gate now
+asserts the decoded topic has **at least two** subscribers while it measures. A
+gate that measures the easy case is a gate whose green means nothing the day a
+stage is added — the same lesson as P0's teardown gate signalling only one of two
+recipes.
+
+Two other things changed under this phase, both found by it:
+
+- **The container is `component_container_isolated`**, not `component_container_mt`,
+  which is deprecated on Lyrical ("will be removed in M-turtle") and gives one
+  shared thread pool where the isolated one gives each component its own executor.
+  Both IPC gates were re-run to confirm the pointer handover is unaffected. The
+  executor *behaviour* is unmeasured until there is a 76 ms callback to measure it
+  with — see [milestone-b-future.md](milestone-b-future.md).
+- **The workspace had been compiling with no optimisation flags at all.** colcon
+  sets no `CMAKE_BUILD_TYPE` and nor did any of these packages, so every C++ cost
+  this project had measured was a `-O0` number. `tools/build.sh` now passes
+  `-DCMAKE_BUILD_TYPE=RelWithDebInfo`; P3's budget is what found it.
+
+---
+
+### P2 as specified, for the record
 
 **Goal:** one network subscriber, one decode, zero copies downstream.
 
@@ -195,10 +249,12 @@ were measured under.
 - **Add `use_intra_process_comms=True` to the bringup container.** The container
   itself exists and runs from P0, with an empty `composable_node_descriptions`;
   what P2 adds is the first `ComposableNode` in that list and the
-  `extra_arguments` carrying the option. There is deliberately no
-  `intra_process` launch argument yet, because `use_intra_process_comms` is a
-  per-*component* option and a container with no components has nowhere to put
-  it.
+  `extra_arguments` carrying the option. There was deliberately no
+  `intra_process` launch argument before this phase, because
+  `use_intra_process_comms` is a per-*component* option and a container with no
+  components has nowhere to put it. It is an argument now, along with
+  `log_payloads` and `probe`, because the gate needs all three — `ros2 launch` has
+  no way to override one node's parameter from the command line.
 - A temporary probe component that logs the address of the buffer it received.
 
 **Test:** `bash tools/gates/ipc.sh` — asserts the probe's received-buffer address **equals**

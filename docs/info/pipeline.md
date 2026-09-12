@@ -118,17 +118,62 @@ mode it was under.
 
 ## Stage 2 — Decode (`decode_node`, dev box)
 
+**Built 2026-09-12** — P2, [#5](https://github.com/bthek1/ros2_pi/issues/5).
+
 The container's only network subscriber. `cv::imdecode` on the JPEG, publish
-`bgr8` intra-process. ~4 ms/frame **(target)**. Exists as its own component so
-that the decode happens exactly once no matter how many consumers appear.
+`bgr8` on `/image_raw` intra-process. Exists as its own component so that the
+decode happens exactly once no matter how many consumers appear.
+
+**Measured:** **1.90 ms/frame** mean against a 4 ms target
+(`bash tools/gates/ipc.sh`), 46–53 Hz in and out with 0–4 frames dropped per 5 s
+window, exactly **one** subscriber on `/image_raw/compressed`, and every decoded
+buffer reaching its consumers at the address it was published from — **504/504**
+with intra-process comms on, **0/395** with it off.
+
+The decode runs on its own thread behind a one-slot mailbox, which is the shape
+every expensive stage here uses: the subscription callback does nothing but move
+the pointer into the slot, and the slot keeps the newest frame and counts what it
+displaced. Dropping is the design — at 59 Hz in and 13 Hz out (which is what P4
+will be), a queue grows by 46 frames a second until the process dies.
+
+**The cost that is not in that 1.90 ms** is one pass over 2.7 MB: `imdecode`
+writes into a reused buffer and the pixels are then copied into the message,
+because publishing a `unique_ptr` means a fresh allocation per frame. It is the
+copy that makes every *downstream* copy unnecessary.
+
+**The reader's QoS is an open question, and the parameter exists so it can be
+measured rather than argued about.** `input_reliability` is `reliable` by default.
+The BEST_EFFORT-reader measurement that `rviz/camera.rviz` relies on was taken on
+a *viewer*, where a dropped frame costs nothing; here a dropped frame is a frame
+the mesh never sees. `decode_node`'s stats line counts inter-arrival gaps over
+50 ms, which is the instrument for settling it.
 
 ## Stage 3 — Keypoints (`keypoint_node`, dev box)
+
+**Built 2026-09-12** — P3, [#5](https://github.com/bthek1/ros2_pi/issues/5). The
+rotation-only regime is built; the RGB-D regime below is P7.
 
 **Job:** find repeatable corners, match them across frames, and turn the matches
 into camera motion.
 
+**Measured** (`bash tools/gates/keypoints.sh`): **6.71 ms/frame** mean against an
+8 ms budget, on the node's own clock — **4.44 ms** of detection and **2.09 ms** of
+matching — sustaining **48.6 Hz**, with a matched-keypoint fraction of **0.952**
+against the predecessor's algorithm at **0.951** over the same clip. The annotated
+preview costs a further **2.2 ms** and is capped at ~10 Hz, which is why it is
+accounted separately: it is an output for a person, and folding it into the
+pipeline's cost would make that number depend on whether anybody was watching.
+
+**Those are optimised numbers**, and before 2026-09-12 they could not have been:
+`tools/build.sh` set no `CMAKE_BUILD_TYPE`, so the workspace compiled with no
+optimisation flags at all and the same path cost **7.90 ms** — a 1% margin against
+the budget that was really 13%. Every C++ cost in this document now assumes
+`-O2 -g`.
+
 - `cv::ORB`, **500 features** — enough that ranking churn at the cap does not
-  dominate, cheap enough at 30+ fps. ~5 ms/frame **(target)**.
+  dominate, cheap enough at 30+ fps. 4.44 ms/frame **(measured)**; note the cap is
+  a target rather than a ceiling, since ORB distributes its quota per pyramid level
+  and rounds up (asking for 120 returned 121).
 - Match against a **pooled window of the last 10 frames**, not just the previous
   one: strict frame-to-frame matching loses ~25% of keypoints to detection
   flicker at the feature cap **(inherited)**. Reject matches whose Hamming
@@ -140,9 +185,17 @@ into camera motion.
   - *RGB-D* (keypoints backed by `/depth`, 3D–3D fit): 6-DoF and what the mesh
     actually needs. This is the default for meshing.
 - Gates before a pose is trusted: at least 8 matched pairs, and a mean ray
-  residual under 0.03 rad (~1.7°, ~27 px at fx≈907) after reject-worst refits
-  **(inherited)**. Failing the gate means *hold the last pose*, not publish a
-  guess.
+  residual under 0.03 rad (~1.7°, ~28 px at fx=953) after reject-worst refits.
+  Failing the gate means *hold the last pose*, not publish a guess — and the node
+  logs the regime change when it starts and stops holding. **Measured** on a
+  static clip: a 0.1% reject rate and a mean residual of 0.0000 rad.
+
+  **The residual ceiling is not equally sharp in all three axes**, which is worth
+  knowing before trusting it. A ray on the axis of rotation does not move at all,
+  and ORB's corners sit within ~35° of the optical axis, so the same 0.05 rad of
+  error shows up as 0.05 rad of residual in pan or tilt and about **0.019 rad** in
+  roll (measured in `test_rotation_fit`). A rolled hand-held sweep is exactly where
+  the gate is least sharp.
 - Keep a **keyframe store** — descriptors, bearing rays and 3D landmarks, a new
   keyframe whenever the view direction is ~18° from every stored one or the
   camera has moved 0.3 m. It is what makes relocalisation and loop closure
@@ -150,6 +203,17 @@ into camera motion.
 
 `/keypoints` carries positions, descriptors and per-feature match ids so the
 dashboard can draw tracks without recomputing anything.
+
+**Matching is one-to-one, and it is not by default.** A nearest-neighbour search
+is many-to-one: two corners in a frame can both name the same older feature as
+their best match, and both would then inherit its track id — one track in two
+places at once, which no consumer can detect and the geometry cannot express.
+Candidates are taken in order of Hamming distance and each older track is claimed
+once.
+
+**Keep away from `cv::aruco` in this stage, and from any OpenCV API that differs
+between 4.6 and 4.10.** `ORB::create`, `BFMatcher` and `knnMatch` are identical on
+both; the calibration work of P9 has the long version of why that matters.
 
 ## Stage 4 — Depth (`depth_node`, dev box, GPU)
 

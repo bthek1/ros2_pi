@@ -63,11 +63,43 @@ subscriber with no serialisation and no copy. So:
   pipeline with them.
 
 **Rule: a component that only works standalone is a bug.** Publish and subscribe
-with `unique_ptr`/`shared_ptr` message moves, never with stack copies, or intra
-process quietly falls back to serialising. Both halves are required: the
-publisher moves a `unique_ptr` into `publish()`, **and** the subscription
-callback takes a `unique_ptr`. A `const &` callback works perfectly and copies
-in silence.
+with pointer moves, never with stack copies, or intra-process quietly falls back
+to serialising. Both halves are required: the publisher moves a `unique_ptr` into
+`publish()`, **and** the subscription callback takes a pointer rather than a
+value.
+
+**Which pointer depends on how many consumers the topic has, and getting this
+wrong costs a full copy per frame in silence.** Measured 2026-09-12, with
+`decode_node` publishing 2.7 MB frames to two consumers in one container:
+
+| Consumers' callbacks | Frames arriving at the published address |
+| --- | --- |
+| two × `std::unique_ptr` | **0 of 574** |
+| two × `ConstSharedPtr` | **504 of 504** |
+
+rclcpp's intra-process manager serves *ownership-taking* subscriptions by moving
+the buffer into the last one and **copying it for every other** — the comment in
+`rclcpp/experimental/intra_process_manager.hpp` reads "Copy the message since we
+have additional subscriptions to serve". Subscriptions that take a shared const
+pointer go through `add_shared_msg_to_buffers` instead, which hands *one* buffer
+to all of them however many there are.
+
+So: **`unique_ptr` for a topic with exactly one consumer** (which is what
+`pimesh_hello` demonstrates, and what `decode_node` uses on the inter-process
+stream from the Pi, where the middleware allocates a fresh message anyway);
+**`ConstSharedPtr` for a fan-out**, which is every derived topic in this pipeline.
+A `const &` callback is also a shared subscription and does not copy — the
+long-standing note in this project that it "works perfectly and copies in
+silence" was the wrong way round, and only the fan-out measurement could show
+that.
+
+The failure mode deserves restating, because it is the reason this is written
+down rather than inferred: **one consumer is the case that cannot fail.** This
+project's gate passed at 429/429 with a single probe subscribed, and reported
+0/574 on the next run with a second consumer beside it — same code, same flags.
+`tools/gates/ipc.sh` therefore asserts that the decoded topic has **at least two
+subscribers** while it measures, because a gate that measures the easy
+configuration is a gate whose green means nothing the day a stage is added.
 
 ### It is measured, and the measurement needs a control
 
@@ -75,6 +107,20 @@ in silence.
 `intra_process:=false`, same binary, same launch file — and compares the payload
 address the publisher logged against the address the subscriber was handed.
 Measured 2026-09-08: **19/19 equal with it on, 0/16 with it off**.
+
+`bash tools/gates/ipc.sh` is the same experiment on the real pipeline, with the
+Pi's camera feeding it: the probe is loaded into the live container beside
+`keypoint_node` and `decode_node`. Measured 2026-09-12: **504/504 equal with it
+on, 0/395 with it off**, exactly one subscriber on `/image_raw/compressed`, and
+decode at **1.90 ms/frame** against a 4 ms budget.
+
+**The container is `component_container_isolated`, not `component_container_mt`**
+(changed 2026-09-12). `_mt` is deprecated on Lyrical — "will be removed in
+M-turtle" — and the isolated one is the better fit anyway: it gives each
+component its own executor, so P4's 76 ms depth callback cannot delay another
+node's callbacks at all, where one shared thread pool makes that a question of
+how many threads happen to be free. Intra-process comms is unaffected, which was
+checked rather than assumed by re-running both gates above.
 
 The control run is not ceremony. Two allocations in one process can land on the
 same address by coincidence — the publisher frees, the subscriber allocates the
@@ -92,7 +138,7 @@ Four of the seven exist; the rest is the plan.
 | `pimesh_hello` | `ament_cmake` | both | **Built 2026-09-08.** `hello_node`, `echo_node` — the scaffolding reference: components, thin mains, keyed YAML, composed launch. Carries no pipeline logic and is not in its path |
 | `pimesh_msgs` | `ament_cmake` (rosidl) | both | **Built 2026-09-09.** `Keypoints.msg`, `PipelineStats.msg`, `MeshStats.msg`, `SaveMesh.srv`, `ResetMap.srv`. All five generate identically under Lyrical and Jazzy — `bash tools/gates/build.sh` diffs `ros2 interface show` across the two machines |
 | `pimesh_camera` | `ament_cmake` | **Pi** | **Built 2026-09-09.** `camera_node` — V4L2 capture, MJPEG passthrough, capture-time stamps; plus `capture_probe`, the subscriber `gates/capture.sh` measures the stream with |
-| `pimesh_perception` | `ament_cmake` | dev box | `decode_node`, `keypoint_node`, `depth_node` |
+| `pimesh_perception` | `ament_cmake` | dev box (**builds on both**) | **Built 2026-09-12.** `decode_node` — the container's one network subscriber, JPEG → `bgr8`, **1.90 ms/frame**; `keypoint_node` — ORB 500 features, pooled matching, rotation-only pose, **6.7 ms/frame**; `ipc_probe`, the instrument `gates/ipc.sh` measures the pointer handover with. `depth_node` is P4 and does not exist |
 | `pimesh_world` | `ament_cmake` | dev box | `fusion_node` (TSDF), `mesh_node` (marching cubes, PLY export) |
 | `pimesh_dashboard` | `ament_cmake` | dev box | `dashboard_node` — HTTP + WebSocket server, vendored web UI |
 | `pimesh_bringup` | `ament_cmake` | both | **Built 2026-09-09.** launch files, `config/pimesh.yaml`, `rviz/camera.rviz`. Compiles nothing — every dependency is an `exec_depend` |
@@ -108,13 +154,13 @@ split.
 | --- | --- | --- | --- | --- |
 | `/image_raw/compressed` | `sensor_msgs/CompressedImage` | `camera_node` | RELIABLE, KEEP_LAST(1) | **Live 2026-09-09.** The only topic on the LAN. MJPEG straight from V4L2, never re-encoded. ~80 kB/frame, measured 44–59 Hz on the dev box against 59 Hz at the Pi |
 | `/camera_info` | `sensor_msgs/CameraInfo` | `camera_node` | RELIABLE, KEEP_LAST(1), transient local | **Live 2026-09-09, and carrying a real calibration since 2026-09-12** ([P9](https://github.com/bthek1/ros2_pi/issues/9), closed): fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection 0.4955 px, loaded from `package://pimesh_bringup/config/camera_info/c922_720p.yaml`. Falls back to *nominal* intrinsics with a startup WARNING if that file is absent |
-| `/rgb/image` | `sensor_msgs/Image` (bgr8) | `decode_node` | RELIABLE, KEEP_LAST(1) | Intra-process only. Never crosses the network |
-| `/keypoints` | `pimesh_msgs/Keypoints` | `keypoint_node` | RELIABLE, KEEP_LAST(1) | Positions, descriptors, match ids for the frame |
-| `/keypoints/image/compressed` | `sensor_msgs/CompressedImage` | `keypoint_node` | BEST_EFFORT, KEEP_LAST(1) | Annotated preview for the dashboard. Small, droppable |
+| `/image_raw` | `sensor_msgs/Image` (bgr8) | `decode_node` | RELIABLE, KEEP_LAST(1) | **Live 2026-09-12.** Intra-process only, and meant to stay that way: an out-of-process subscriber forces a 2.7 MB serialisation per frame, which is why `rviz/keypoints.rviz` watches the compressed preview instead. Consumers take `ConstSharedPtr`, for the reason in [Why one container](#why-one-container) |
+| `/keypoints` | `pimesh_msgs/Keypoints` | `keypoint_node` | RELIABLE, KEEP_LAST(1) | **Live 2026-09-12.** 500 features per frame, struct-of-arrays, 32-byte descriptors, `track_id` = −1 for a first sighting |
+| `/keypoints/image/compressed` | `sensor_msgs/CompressedImage` | `keypoint_node` | RELIABLE, KEEP_LAST(1) | **Live 2026-09-12.** Annotated preview, green for a followed corner and yellow for a new one, capped at ~10 Hz because encoding it (2.2 ms) costs more than detecting the features. RELIABLE *writer*; the viewer asks BEST_EFFORT, which is the compatible direction |
 | `/depth` | `sensor_msgs/Image` (32FC1) | `depth_node` | RELIABLE, KEEP_LAST(1) | Metres. Carries the *input frame's* stamp and optical frame |
 | `/depth/rgb` | `sensor_msgs/Image` (bgr8) | `depth_node` | RELIABLE, KEEP_LAST(1) | The exact frame inferred on, so fusion gets a true RGB-D pair with no sync guessing |
 | `/depth/image/compressed` | `sensor_msgs/CompressedImage` | `depth_node` | BEST_EFFORT, KEEP_LAST(1) | Colourised preview for the dashboard |
-| `/odom` | `nav_msgs/Odometry` | `keypoint_node` | RELIABLE, KEEP_LAST(10) | Plus the `odom → base_link` TF |
+| `/odom` | `nav_msgs/Odometry` | `keypoint_node` | RELIABLE, KEEP_LAST(10) | **Not published yet.** As of P3 `keypoint_node` publishes only the `odom → base_link` TF, rotation-only with translation identically zero; there is no Odometry message until there is a translation and a covariance worth putting in one (P7) |
 | `/world/mesh` | `visualization_msgs/Marker` | `mesh_node` | RELIABLE, transient local | `TRIANGLE_LIST`, vertex-coloured, capped for RViz |
 | `/world/mesh_stats` | `pimesh_msgs/MeshStats` | `mesh_node` | RELIABLE, KEEP_LAST(1) | Triangles, vertices, volume extent, last mesh duration |
 | `/pipeline/stats` | `pimesh_msgs/PipelineStats` | every node | RELIABLE, KEEP_LAST(1) | Per-stage rate, latency, drop count. The dashboard's data source |

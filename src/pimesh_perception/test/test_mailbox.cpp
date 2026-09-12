@@ -21,7 +21,7 @@ using pimesh_perception::Mailbox;
 
 TEST(Mailbox, DeliversWhatWasPut)
 {
-  Mailbox<std::string> box;
+  Mailbox<std::unique_ptr<std::string>> box;
   EXPECT_FALSE(box.push(std::make_unique<std::string>("frame")));
 
   auto got = box.pop(std::chrono::milliseconds(10));
@@ -32,7 +32,7 @@ TEST(Mailbox, DeliversWhatWasPut)
 
 TEST(Mailbox, NewestWins)
 {
-  Mailbox<std::string> box;
+  Mailbox<std::unique_ptr<std::string>> box;
   box.push(std::make_unique<std::string>("old"));
   // The second push displaces the first and says so — that return value is how
   // the producer learns it is outrunning the consumer.
@@ -46,7 +46,7 @@ TEST(Mailbox, NewestWins)
 
 TEST(Mailbox, EmptyAfterPop)
 {
-  Mailbox<int> box;
+  Mailbox<std::unique_ptr<int>> box;
   box.push(std::make_unique<int>(7));
   EXPECT_NE(box.pop(std::chrono::milliseconds(10)), nullptr);
   // Not "the same message twice": a worker that re-reads an emptied slot would
@@ -56,7 +56,7 @@ TEST(Mailbox, EmptyAfterPop)
 
 TEST(Mailbox, CountsEveryDrop)
 {
-  Mailbox<int> box;
+  Mailbox<std::unique_ptr<int>> box;
   for (int i = 0; i < 20; ++i) {box.push(std::make_unique<int>(i));}
 
   auto got = box.pop(std::chrono::milliseconds(10));
@@ -67,7 +67,7 @@ TEST(Mailbox, CountsEveryDrop)
 
 TEST(Mailbox, PopTimesOutWhenEmpty)
 {
-  Mailbox<int> box;
+  Mailbox<std::unique_ptr<int>> box;
   const auto start = std::chrono::steady_clock::now();
   EXPECT_EQ(box.pop(std::chrono::milliseconds(30)), nullptr);
   const auto waited = std::chrono::steady_clock::now() - start;
@@ -78,7 +78,7 @@ TEST(Mailbox, PopTimesOutWhenEmpty)
 
 TEST(Mailbox, StopWakesAWaiter)
 {
-  Mailbox<int> box;
+  Mailbox<std::unique_ptr<int>> box;
   bool returned = false;
 
   std::thread worker([&] {
@@ -96,13 +96,38 @@ TEST(Mailbox, StopWakesAWaiter)
   EXPECT_TRUE(box.stopped());
 }
 
+TEST(Mailbox, WorksWithASharedPointerSlotToo)
+{
+  // The slot type the pipeline actually uses. `/image_raw` has several consumers in
+  // the container, and rclcpp shares one buffer between subscriptions that take a
+  // shared const pointer while *copying* it for all but one of the subscriptions
+  // that take ownership — so the frame that arrives here is a
+  // `Image::ConstSharedPtr`, and this class has to carry one without quietly
+  // keeping a reference alive in the emptied slot.
+  Mailbox<std::shared_ptr<const std::string>> box;
+  auto first = std::make_shared<const std::string>("old");
+  box.push(first);
+  EXPECT_TRUE(box.push(std::make_shared<const std::string>("new")));
+
+  auto got = box.pop(std::chrono::milliseconds(10));
+  ASSERT_NE(got, nullptr);
+  EXPECT_EQ(*got, "new");
+  EXPECT_EQ(box.dropped(), 1u);
+
+  // Emptied, not merely moved from. A shared_ptr left in the slot would hand the
+  // same frame to the worker twice and hold its buffer alive for as long as the
+  // node ran.
+  EXPECT_EQ(box.pop(std::chrono::milliseconds(0)), nullptr);
+  EXPECT_EQ(first.use_count(), 1L) << "the mailbox is still holding the displaced frame";
+}
+
 TEST(Mailbox, SurvivesConcurrentProducerAndConsumer)
 {
   // Not a race detector — a test cannot be one — but it does exercise the lock
   // ordering and the notify-outside-the-lock path under real contention, and it
   // asserts the invariant that matters: nothing is delivered twice and nothing
   // is invented. delivered + dropped == produced, always.
-  Mailbox<int> box;
+  Mailbox<std::unique_ptr<int>> box;
   constexpr int kFrames = 5000;
   int delivered = 0;
 

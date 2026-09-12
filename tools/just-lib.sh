@@ -34,8 +34,28 @@ cd "$PIMESH_WS"
 # choice to whichever Python sorts highest. Measured 2026-09-08: without this,
 # every ament_cmake package fails at ament_package() with ModuleNotFoundError.
 # /usr/bin/python3 is the right answer on both machines — both take ROS from apt.
+#
+# **CMAKE_BUILD_TYPE, and it was missing until 2026-09-12.** colcon sets no build
+# type of its own, and an ament_cmake package that does not set one either compiles
+# with *no optimisation flags at all* — not `-O0` explicitly, simply nothing. Every
+# C++ cost this project had measured was therefore an unoptimised number, which was
+# found by P3's per-frame budget: 7.90 ms unoptimised against an 8 ms ceiling, and
+# 6.99 ms with this flag. A 1% margin that is really 13% is the kind of wrong number
+# that gets quoted and then acted on.
+#
+# RelWithDebInfo rather than Release: `-O2 -g` against `-O3 -DNDEBUG`, which measured
+# 6.99 ms against 6.87 ms — 2% apart — for the difference between a node you can put
+# a debugger on and one you cannot. In a project whose point is understanding what
+# the code does, that is not a close call.
+#
+# An array, not a string: two flags in one quoted word arrive at CMake as a single
+# argument it cannot parse. The remote scripts join it with ${...[*]} on purpose,
+# because there the words are re-split by the far shell.
 # shellcheck disable=SC2034  # read by the scripts that source this file
-PIMESH_CMAKE_ARGS="-DPython3_EXECUTABLE=/usr/bin/python3"
+PIMESH_CMAKE_ARGS=(
+    -DPython3_EXECUTABLE=/usr/bin/python3
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo
+)
 
 # --- The Pi -----------------------------------------------------------------
 

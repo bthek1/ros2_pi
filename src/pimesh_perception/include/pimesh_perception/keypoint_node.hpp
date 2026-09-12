@@ -67,10 +67,10 @@ public:
   ~KeypointNode() override;
 
 private:
-  void on_image(std::unique_ptr<sensor_msgs::msg::Image> msg);
+  void on_image(sensor_msgs::msg::Image::ConstSharedPtr msg);
   void on_camera_info(sensor_msgs::msg::CameraInfo::ConstSharedPtr msg);
   void work();
-  void process_frame(std::unique_ptr<sensor_msgs::msg::Image> msg);
+  void process_frame(sensor_msgs::msg::Image::ConstSharedPtr msg);
   void publish_keypoints(const TrackedFrame & frame, const sensor_msgs::msg::Image & source);
   void publish_preview(const TrackedFrame & frame, const sensor_msgs::msg::Image & source);
   void publish_pose(const rclcpp::Time & stamp);
@@ -90,7 +90,28 @@ private:
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
-  Mailbox<sensor_msgs::msg::Image> mailbox_;
+  /// **A shared-pointer slot, and this is the one design decision in the package
+  /// that was decided by a measurement rather than by reasoning.**
+  ///
+  /// The obvious signature for a zero-copy consumer is `std::unique_ptr`, and it is
+  /// the right one when a topic has exactly one consumer — it is what
+  /// `pimesh_hello` demonstrates and what decode_node uses above. It is the wrong
+  /// one here, because `/image_raw` has two consumers in the container and will
+  /// have four. rclcpp's intra-process manager serves *ownership-taking*
+  /// subscriptions by moving the buffer into the last one and **copying it for
+  /// every other** (`add_owned_msg_to_buffers` in
+  /// rclcpp/experimental/intra_process_manager.hpp: "Copy the message since we have
+  /// additional subscriptions to serve"). Subscriptions that take a shared const
+  /// pointer are served by `add_shared_msg_to_buffers` instead, which hands *one*
+  /// buffer to all of them, however many there are.
+  ///
+  /// Measured 2026-09-12 with tools/gates/ipc.sh: with keypoint_node and the probe
+  /// both taking `unique_ptr`, **0 of 574** frames reached the probe at the address
+  /// decode_node published — one consumer got the original and the other got a
+  /// 2.7 MB copy, at 59 Hz, silently. With both taking `ConstSharedPtr` it is every
+  /// frame. Nothing in any log, topic tool or rate measurement distinguishes the
+  /// two; only the address comparison does.
+  Mailbox<sensor_msgs::msg::Image::ConstSharedPtr> mailbox_;
   std::thread worker_;
   std::unique_ptr<OrbTracker> tracker_;
 

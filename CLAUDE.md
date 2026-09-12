@@ -56,10 +56,32 @@ payloads, **4.21 ms** median dequeue-to-subscriber measured on the Pi's own
 clock, and two launches agreeing on their stamp offset to **0.30–1.02 ms** —
 which is the assertion that `usb_cam` 0.8.1 fails by hundreds of milliseconds.
 
-**Everything downstream of capture still does not exist.** No decode, no
-keypoints, no depth, no fusion, no mesh, no dashboard — that is
+**Decode and keypoints are built as of 2026-09-12** — milestone B, P2 and P3,
+[gh issue #5](https://github.com/bthek1/ros2_pi/issues/5). `pimesh_perception`
+joins the four packages: one container, one network subscriber, `cv::imdecode` at
+**1.90 ms/frame**, and the decoded 2.7 MB buffer reaching its consumers at the
+address it was published from — **504/504** with intra-process comms on against
+**0/395** with it off (`bash tools/gates/ipc.sh`). ORB then runs at **48.6 Hz
+sustained, 6.71 ms/frame** on the node's own clock against an 8 ms budget, with a
+matched-keypoint fraction of **0.952** against the predecessor's algorithm at
+**0.951** over the same clip (`bash tools/gates/keypoints.sh`), and publishes a
+rotation-only `odom -> base_link`.
+
+**That phase cost two things worth reading before touching the container.** The
+zero-copy claim had to be earned twice: the gate passed at **429/429 with one
+consumer** and reported **0/574** on the very next run with a second consumer
+beside it, same code, same flags — because rclcpp serves ownership-taking
+intra-process subscriptions by moving the buffer into the *last* one and
+**copying it for every other**. A fan-out wants `ConstSharedPtr` callbacks, which
+rclcpp serves by handing one buffer to all of them. And the workspace had been
+compiling with **no optimisation flags at all**, so every C++ cost this project
+had ever measured was a `-O0` number: P3's budget was what found it, at 7.90 ms
+against an 8 ms ceiling where `-O2` gives 6.71 ms.
+
+**Everything downstream of keypoints still does not exist.** No depth, no fusion,
+no mesh, no dashboard — that is
 [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md)
-and milestone issues [#5](https://github.com/bthek1/ros2_pi/issues/5)–[#8](https://github.com/bthek1/ros2_pi/issues/8),
+and milestone issues [#6](https://github.com/bthek1/ros2_pi/issues/6)–[#8](https://github.com/bthek1/ros2_pi/issues/8),
 and everything the rest of `docs/` says about those stages is **design intent**,
 not a description of running code. When you build something, change the doc that
 describes it from future tense to a measured statement, and say what you
@@ -144,6 +166,20 @@ The reverse case is worse because it is silent: a Lyrical-only API compiles here
 and is only discovered at the far end of an `rsync`. `bash tools/build-pi.sh` is cheap —
 run it before believing a CMake change.
 
+**And the C++17 rule is not enforced on this box at all, measured 2026-09-12.**
+Every `CMakeLists.txt` here sets `CMAKE_CXX_STANDARD 17`, and Lyrical's
+`ament_cmake_ros_core` exports an INTERFACE target requiring `cxx_std_20`
+(`ament_ros_defaults.cmake`), which *raises* it: the dev box compiles everything
+as `-std=c++20` while the Pi compiles the same sources as `-std=c++17`. So a C++20
+feature is caught by the Pi's build and by nothing else. A worked example of the
+same class, from the same afternoon: `tf2/LinearMath/Matrix3x3.h` exists on Jazzy
+and has been **deleted** on Lyrical in favour of `.hpp`, so that one fails here
+and builds there. Where two spellings exist, take the one that exists at both ends.
+
+The header spellings that differ are worth knowing before reaching for them: all
+of `tf2/LinearMath/*` and `tf2_ros/*` are `.hpp` on both distros, with the `.h`
+forms deprecated on Jazzy and partly gone on Lyrical.
+
 The Pi is reachable non-interactively, so **verify hardware claims by running
 commands over SSH** rather than assuming:
 
@@ -197,12 +233,31 @@ strong priors, re-verify before quoting a number as this project's own.
   **This one is no longer inherited: it is measured here.** `bash tools/gates/hello-ipc.sh`
   runs the same container twice, with intra-process on and off, and compares the
   payload address the publisher logged against the one the subscriber received —
-  19/19 equal with it on, 0/16 with it off (2026-09-08). It takes both halves to
-  qualify: the publisher must move a `unique_ptr` into `publish()`, and the
-  subscription callback must take a `unique_ptr`. A `const &` callback works
-  perfectly and quietly copies. **Address equality alone is not evidence** —
+  19/19 equal with it on, 0/16 with it off (2026-09-08). `bash tools/gates/ipc.sh`
+  is the same experiment on the real pipeline with the Pi's camera feeding it:
+  504/504 against 0/395 (2026-09-12). **Address equality alone is not evidence** —
   two allocations in one process can coincide, and one did, at 1/22 — so any
   future zero-copy claim needs the with/without control, not a single run.
+
+  **Which pointer the subscriber takes depends on how many consumers the topic
+  has, and this is the trap, measured here on 2026-09-12.** rclcpp serves
+  *ownership-taking* subscriptions by moving the buffer into the **last** one and
+  copying it for every other (`add_owned_msg_to_buffers`: "Copy the message since
+  we have additional subscriptions to serve"); subscriptions taking a shared const
+  pointer go through `add_shared_msg_to_buffers`, which hands **one** buffer to
+  all of them, however many. So with `decode_node` publishing to two consumers
+  that both took `std::unique_ptr`, **0 of 574** frames arrived at the published
+  address, and with both taking `ConstSharedPtr` it was **504/504**. Use
+  `unique_ptr` where a topic has exactly one consumer — `pimesh_hello`, and
+  `decode_node`'s own inter-process subscription where the middleware allocates a
+  fresh message anyway — and `ConstSharedPtr` for every fan-out. A `const &`
+  callback is a *shared* subscription and does not copy; the note this file used
+  to carry, that it "works perfectly and quietly copies", was the wrong way round.
+
+  **And one consumer is the case that cannot fail**, which is why `gates/ipc.sh`
+  asserts the decoded topic has at least two subscribers while it measures. The
+  gate passed at 429/429 with one probe attached and failed at 0/574 on the next
+  run with `keypoint_node` beside it. Ask what the gate does **not** touch.
 - **BEST_EFFORT delivers zero large frames** *(inherited, and it is about
   size)*. Megabyte-class messages fragment past the socket buffer and never
   reassemble. Every image and depth **publisher** here is `RELIABLE` +
@@ -443,8 +498,8 @@ strong priors, re-verify before quoting a number as this project's own.
 ## Conventions
 
 - **This repo is the colcon workspace.** Packages go in `src/`, named
-  `pimesh_<thing>` — `pimesh_hello`, `pimesh_msgs`, `pimesh_bringup` and
-  `pimesh_camera` exist; planned: `pimesh_perception`, `pimesh_world`,
+  `pimesh_<thing>` — `pimesh_hello`, `pimesh_msgs`, `pimesh_bringup`,
+  `pimesh_camera` and `pimesh_perception` exist; planned: `pimesh_world`,
   `pimesh_dashboard`. (Not `ros2_pi_*`: a `ros2_` prefix reads as core tooling.)
   Shared shell helpers live in `tools/` and are rsynced to the Pi, so they must
   work on both distros — `tools/ros-env.sh` discovers the distro rather than
@@ -492,9 +547,15 @@ strong priors, re-verify before quoting a number as this project's own.
   run. `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a
   temp file; the busy-device case is `tools/gates/capture.sh`'s job.
 - **Build with `just build`**, not bare `colcon`. The recipe is
-  `colcon build --symlink-install --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3`,
-  and without that argument every `ament_cmake` package fails at configure time
-  on this box (see the Python bullet above). `bash tools/build-pi.sh` does the same over
+  `colcon build --symlink-install --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo`, and without the first argument every
+  `ament_cmake` package fails at configure time on this box (see the Python bullet
+  above). **The second was missing until 2026-09-12, and every C++ number this
+  project had measured was therefore unoptimised** — colcon sets no build type and
+  an `ament_cmake` package that does not set one compiles with no optimisation
+  flags at all. P3's 8 ms per-frame budget is what found it: 7.90 ms without,
+  6.71 ms with. `RelWithDebInfo` rather than `Release` because `-O2 -g` measured
+  within 2% of `-O3` and leaves a node you can put a debugger on. `bash tools/build-pi.sh` does the same over
   SSH after `bash tools/sync-pi.sh` ships source — source only, never a built tree.
   Keep the commands and the docs in agreement — `docs/info/setup.md` quotes
   `just --list` verbatim and a script asserts it has not drifted.
@@ -552,7 +613,14 @@ strong priors, re-verify before quoting a number as this project's own.
   Killing a background `bash -lc` wrapper
   orphans its grandchildren — always pattern-match the node, never `kill %N`.
   **`bash tools/stragglers.sh` is the check**: it greps both machines and exits non-zero
-  with the pid and full path of anything that survived. Every `pkill -f` and
+  with the pid and full path of anything that survived. **Its pattern list is only
+  as good as the last thing somebody remembered to add** — on 2026-09-12 three
+  `ros2 run image_transport republish` processes were found three and a quarter
+  hours old, subscribing to the one topic that crosses Wi-Fi, with the sweep
+  reporting 0 on both machines throughout. `republish`'s subscription is *lazy*, so
+  `ros2 topic info -v` showed 0 subscribers while all three were alive. Patterns
+  are path-anchored for a reason that bit again here: the first spelling of that
+  pattern matched prose, so the sweep reported the shell running it. Every `pkill -f` and
   `pgrep -f` pattern is bracketed and path-anchored (`/lib/[p]imesh_hello/`) —
   see the troubleshooting entry on why the plain spelling kills the shell that
   runs it.
@@ -640,8 +708,10 @@ somebody once.
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: a GitHub issue of stable phases, a command for a test, executable-only, and the future file |
 | [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this is going.** The whole pipeline as phases P0–P8, none started, each ending in a `tools/gates/*.sh` test, followed by the deferred register |
 | [#9](https://github.com/bthek1/ros2_pi/issues/9) **(closed 2026-09-12)** — camera calibration | **P9, done.** The C922's real intrinsics at 720p: fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection 0.4955 px. `camera_node` loads them from `pimesh_bringup/config/camera_info/c922_720p.yaml` and the NOMINAL warning is gone. Read the closed issue before touching calibration — three of its assumptions turned out to be false, including that this camera has barrel distortion |
-| [#4](https://github.com/bthek1/ros2_pi/issues/4) **(closed 2026-09-09)** [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A is done — P0 and P1, the cross-distro workspace and capture. Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
-| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 82 of them across six suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms`, the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on |
+| [#4](https://github.com/bthek1/ros2_pi/issues/4) **(closed 2026-09-09)** [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A is done — P0 and P1, the cross-distro workspace and capture — and B's two phases are built and measured (P2, P3). Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
+| `bash tools/gates/ipc.sh` / `bash tools/gates/keypoints.sh` | **P2 and P3's gates.** `ipc.sh` runs the real container twice against the Pi's live camera and compares published buffer addresses with intra-process comms on and off — and asserts the decoded topic has at least two subscribers, because one consumer is the configuration that cannot fail. `keypoints.sh` replays `bags/desk1` and measures three things three ways: the rate from a C++ subscriber's steady clock, the per-frame cost from the node's own log line, and the matched-keypoint fraction against `tools/orb_reference.py` — the predecessor's algorithm reimplemented in Python over the same clip, which is the only part of the gate with an outside opinion about whether the corners mean anything |
+| `bash tools/record-clip.sh desk1 60` | **The reference clip.** A 60 s hand-held sweep, recorded once, that every phase from P3 on replays so the numbers compare like for like. `bags/` is git-ignored, so a fresh clone has none and `gates/keypoints.sh` says so rather than pretending. The script resets the camera's V4L2 controls first and records `/camera_info` alongside the frames, because a clip recorded at 20 fps under a stale manual exposure cannot be un-recorded |
+| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 134 of them across ten suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms`, the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on — plus milestone B's four: `test_mailbox` (newest-wins and its drop accounting), `test_image_buffer` (the bgr8 layout arithmetic, and that a `cv::Mat` over a message shares its memory), `test_rotation_fit` (Kabsch against known rotations, the reflection guard, the reject-worst refits, and the optical-to-body change of basis) and `test_orb_tracker` (synthetic frames with a known displacement: that the window forgives detection churn, that unrelated scenes do not match, and that a track id is never claimed twice in one frame) |
 | `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the shell lives in `tools/`; the justfile was trimmed further the same day to `build` + `run` only, so that issue's `just gate-*` spelling is history, not instruction |
 | [docs/plans/future/milestone-a-future.md](docs/plans/future/milestone-a-future.md) | Work deferred out of milestone A, each entry with its trigger: the checkerboard calibration (waiting on P5's tape-measure visit), `PipelineStats` from `camera_node` (waiting on the dashboard), the dev-box rate margin, and device reconnection |
 

@@ -146,9 +146,14 @@ KeypointNode::KeypointNode(const rclcpp::NodeOptions & options)
   preview_pub_ =
     create_publisher<sensor_msgs::msg::CompressedImage>("/keypoints/image/compressed", image_qos);
 
+  // A *shared const* pointer, not a unique_ptr. See the long comment on mailbox_
+  // in the header: with more than one consumer on a topic, rclcpp copies the buffer
+  // for every ownership-taking subscription but the last, and shares one buffer
+  // between any number of const-shared ones. Measured at 0/574 frames shared the
+  // wrong way round and every frame the right way.
   image_sub_ = create_subscription<sensor_msgs::msg::Image>(
     "/image_raw", image_qos,
-    [this](std::unique_ptr<sensor_msgs::msg::Image> msg) {this->on_image(std::move(msg));});
+    [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {this->on_image(std::move(msg));});
   info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
     "/camera_info", info_qos,
     [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr msg) {this->on_camera_info(msg);});
@@ -187,7 +192,7 @@ KeypointNode::~KeypointNode()
   if (worker_.joinable()) {worker_.join();}
 }
 
-void KeypointNode::on_image(std::unique_ptr<sensor_msgs::msg::Image> msg)
+void KeypointNode::on_image(sensor_msgs::msg::Image::ConstSharedPtr msg)
 {
   // Bounded, and the bound is a pointer move. Everything expensive is on the
   // worker.
@@ -221,7 +226,7 @@ void KeypointNode::work()
   }
 }
 
-void KeypointNode::process_frame(std::unique_ptr<sensor_msgs::msg::Image> msg)
+void KeypointNode::process_frame(sensor_msgs::msg::Image::ConstSharedPtr msg)
 {
   // A header over the message's pixels. No copy: this is the buffer decode_node
   // allocated, handed over by pointer.

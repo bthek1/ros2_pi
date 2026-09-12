@@ -14,24 +14,35 @@ where it pays.
 
 ## Status
 
-**The scaffolding runs; the pipeline is not started.** As of 2026-09-08 the
-repository holds one package, `src/pimesh_hello/`, which publishes `"hello
-world"` and exists to prove the structure everything else will be built on —
-components composed in one container with the message handed over as a pointer,
-parameters from a keyed YAML, the same source built under both distros, and a
-session that leaves nothing running on either machine. `just build && just
-hello-compose` is the whole getting-started path — the justfile is only ever the
-handful of commands you type on a normal day. The five `tools/gates/hello-*.sh`
-scripts are the tests, run directly, and
-[gh issue #2](https://github.com/bthek1/ros2_pi/issues/2) records what each one
-printed.
+**The first three stages run. Depth onwards does not.** As of **2026-09-12** the
+repository holds five packages and the camera reaches the tracker:
 
-No camera, depth, fusion, mesh or dashboard code exists yet — that is
+- **Capture** (`pimesh_camera`, on the Pi) — 1280×720 MJPEG stamped with the
+  kernel's capture time, **44–59 Hz received on the dev box**, serving real
+  intrinsics on `/camera_info` (fx=953.4, fy=957.6, held-out reprojection
+  0.4955 px).
+- **Decode** (`pimesh_perception`, here) — the container's *one* subscriber on the
+  only topic that crosses Wi-Fi, `cv::imdecode` at **1.90 ms/frame**, handing the
+  2.7 MB frame to its consumers as a pointer: **504/504** buffer addresses matched
+  with intra-process comms on against **0/395** with it off.
+- **Keypoints** (`pimesh_perception`, here) — ORB at 500 features with pooled
+  matching over a 10-frame window, **48.6 Hz sustained at 6.71 ms/frame**, and a
+  rotation-only `odom → base_link` that holds its last pose rather than guessing
+  when its gates fail.
+
+`just build` then `just view-keypoints` shows it running; `just --list` is the
+whole of what you type on a normal day. The tests are the `tools/gates/*.sh`
+scripts, run directly, and each milestone issue records what they printed —
+[#4](https://github.com/bthek1/ros2_pi/issues/4) for capture,
+[#5](https://github.com/bthek1/ros2_pi/issues/5) for these two stages,
+[#9](https://github.com/bthek1/ros2_pi/issues/9) for the calibration.
+
+**No depth, fusion, mesh or dashboard code exists yet** — that is
 [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md),
-and [docs/info/roadmap.md](docs/info/roadmap.md) tracks it. The numbers quoted
-throughout `docs/` are measured, but on the Python predecessor at
-[`~/Documents/piros2`](../piros2), which implements the same pipeline on the
-same hardware.
+and [docs/info/roadmap.md](docs/info/roadmap.md) tracks it. Numbers quoted in
+`docs/` for those stages are measured on the Python predecessor at
+[`~/Documents/piros2`](../piros2), which implements the same pipeline on the same
+hardware; numbers for the three stages above are this project's own.
 
 ## Why a rewrite
 

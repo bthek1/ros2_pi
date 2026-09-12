@@ -56,7 +56,11 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_;
   rclcpp::TimerBase::SharedPtr stats_timer_;
 
-  Mailbox<sensor_msgs::msg::CompressedImage> mailbox_;
+  /// A `unique_ptr` slot, which is right here for a reason that does not apply to
+  /// the stage after this one: this subscription is on the *inter-process* topic
+  /// from the Pi, where the middleware constructs a fresh message for us in any
+  /// case, so owning it costs nothing and lets the decoder work in place.
+  Mailbox<std::unique_ptr<sensor_msgs::msg::CompressedImage>> mailbox_;
   std::thread worker_;
 
   bool log_payloads_ {false};

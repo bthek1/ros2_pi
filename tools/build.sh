@@ -4,4 +4,4 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --ros
 
-colcon build --symlink-install --cmake-args "$PIMESH_CMAKE_ARGS" "$@"
+colcon build --symlink-install --cmake-args "${PIMESH_CMAKE_ARGS[@]}" "$@"

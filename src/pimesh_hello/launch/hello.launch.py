@@ -44,10 +44,27 @@ def generate_launch_description() -> LaunchDescription:
             name='hello_container',
             namespace='',
             package='rclcpp_components',
-            # _mt: a multi-threaded executor. Single-threaded would serialise
-            # the timer and the subscription onto one thread, which works fine
-            # here and would not once a callback costs milliseconds.
-            executable='component_container_mt',
+            # `component_container_isolated`, not `component_container_mt`, as of
+            # 2026-09-12 — and the change is about two things at once.
+            #
+            # The occasion was a deprecation: on Lyrical, `_mt` logs "This
+            # executable is deprecated and will be removed in M-turtle" at every
+            # startup. The reason to prefer the isolated one anyway is the executor
+            # model. `_mt` runs every component on **one shared multi-threaded
+            # executor**; isolated gives **each component its own executor**, so a
+            # callback that costs 76 ms — which is what depth will cost in P4 —
+            # cannot delay another node's callbacks at all. One shared pool makes
+            # that a question of how many threads happen to be free.
+            #
+            # Intra-process comms is unaffected: it is a property of the publisher,
+            # the subscriber and their sharing a process, not of which executor
+            # spins them. That is asserted rather than assumed — tools/gates/ipc.sh
+            # was re-run after this change and still reports every address matching
+            # with it on and none with it off.
+            #
+            # Available on both distros (checked 2026-09-12), which is the usual
+            # precondition for anything in this workspace.
+            executable='component_container_isolated',
             composable_node_descriptions=[
                 ComposableNode(
                     package='pimesh_hello',

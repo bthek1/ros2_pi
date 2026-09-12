@@ -55,7 +55,7 @@ for n in /hello_node /echo_node; do
 done
 containers=$(pgrep -fc "$PIMESH_CONTAINER_PAT" || echo 0)
 if [[ $containers -ne 1 ]]; then
-    echo "FAIL: expected 1 component_container_mt process, found ${containers}"; exit 1
+    echo "FAIL: expected 1 component container process, found ${containers}"; exit 1
 fi
 pid=$(pgrep -f "$PIMESH_CONTAINER_PAT" | head -1)
 

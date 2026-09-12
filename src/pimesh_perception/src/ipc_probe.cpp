@@ -44,21 +44,30 @@ public:
     rclcpp::QoS qos(rclcpp::KeepLast(1));
     qos.reliable();
 
-    // A unique_ptr callback, and the gate's result hangs on it. This signature is
-    // the subscriber half of the zero-copy contract: rclcpp will only *move* a
-    // message into a callback that is willing to own it, and a
-    // `const Image::ConstSharedPtr &` here would work perfectly, copy every
-    // frame, and report addresses that never match — which reads exactly like a
-    // broken publisher.
+    // **A shared const pointer, and the gate's whole result hangs on this choice.**
+    //
+    // The intuitive signature is `std::unique_ptr`, on the reasoning that rclcpp can
+    // only hand a buffer over to a callback willing to own it. That is true of a
+    // topic with one consumer and false as soon as there are two: rclcpp serves
+    // ownership-taking subscriptions by moving into the *last* one and copying for
+    // each of the others, so with this probe and keypoint_node both asking to own
+    // the frame, one of them received a 2.7 MB copy. Measured 2026-09-12: **0 of
+    // 574** frames matched the published address that way, against every frame when
+    // both take a shared const pointer — which rclcpp serves by handing the same
+    // buffer to all of them (`add_shared_msg_to_buffers`).
+    //
+    // So this probe deliberately measures the configuration the pipeline actually
+    // uses. A probe that took ownership would report a failure caused by its own
+    // presence, which is the worst kind of instrument.
     sub_ = create_subscription<sensor_msgs::msg::Image>(
       topic, qos,
-      [this](std::unique_ptr<sensor_msgs::msg::Image> msg) {this->on_frame(std::move(msg));});
+      [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {this->on_frame(std::move(msg));});
 
     RCLCPP_INFO(get_logger(), "probing %s for pointer handover", topic.c_str());
   }
 
 private:
-  void on_frame(std::unique_ptr<sensor_msgs::msg::Image> msg)
+  void on_frame(sensor_msgs::msg::Image::ConstSharedPtr msg)
   {
     ++count_;
 
