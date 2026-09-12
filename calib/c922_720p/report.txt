@@ -1,0 +1,45 @@
+# c922_720p — intrinsics fitted by tools/calib_solve.py
+# 2026-09-12T14:42:36
+# square 0.02475 m, marker 0.01782 m, board 7x9 squares, dict 4x4_250
+# 24 marker-confirmed frames from /home/proxmox-ml5/Documents/ros2_pi/calib/c922_720p/frames
+#
+# Not cameracalibrator: that tool builds left/right stereo subscribers even
+# for a mono calibration and crashes on Lyrical in RcutilsLogger.warn before
+# reading a frame. See tools/calib_solve.py.
+
+## in sample — the frames this was fitted to
+  reproj_rms_px=0.4867
+
+## held out — two-fold split, the figure worth believing
+  reproj_rms_px=0.4955
+
+## straightness on the same frames
+  calibrated_px=1.2760
+  control_px=1.2743
+  coverage=0.896 quadrants=4
+
+## frames used
+  frame-00.jpg
+  frame-01.jpg
+  frame-02.jpg
+  frame-03.jpg
+  frame-04.jpg
+  frame-05.jpg
+  frame-06.jpg
+  frame-07.jpg
+  frame-08.jpg
+  frame-09.jpg
+  frame-10.jpg
+  frame-11.jpg
+  frame-12.jpg
+  frame-13.jpg
+  frame-14.jpg
+  frame-15.jpg
+  frame-16.jpg
+  frame-17.jpg
+  frame-18.jpg
+  frame-19.jpg
+  frame-20.jpg
+  frame-21.jpg
+  frame-22.jpg
+  frame-23.jpg

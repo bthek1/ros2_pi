@@ -69,10 +69,18 @@ it; the numbers below marked **(measured here)** are that gate's output.
   exists and from **nominal** parameters with a startup WARNING when it does not.
   The file is the standard `camera_info` YAML, which is exactly what
   `cameracalibrator` writes, so it is copied in verbatim rather than transcribed
-  into parameters. **As of 2026-09-12 the loading path is built and measured on
-  the Pi; the file itself does not exist yet**, because producing it needs a rigid
-  checkerboard in front of the camera — that is the remaining half of
-  [P9](https://github.com/bthek1/ros2_pi/issues/9).
+  into parameters. **Calibrated 2026-09-12** ([P9](https://github.com/bthek1/ros2_pi/issues/9),
+  closed): fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection **0.4955 px**
+  over 24 marker-confirmed frames, and the startup WARNING is gone. Produced with
+  `bash tools/calibrate.sh record | select | solve` and checked by
+  `bash tools/gates/calibration.sh`.
+
+  Two results from that phase are worth carrying: **this camera has essentially no
+  lens distortion at 720p** (so `D` is near zero and correctly so — see
+  [hardware.md](hardware.md#this-camera-has-essentially-no-distortion-at-720p)), and
+  **`fx` is pinned only to ±2.2%**, which is a ±2.2% slack in every distance this
+  pipeline reports. P5's tape measure is the first thing that can check that
+  independently.
 
   Three refusals are measured on the Pi (2026-09-12), and the asymmetry between
   them is deliberate. A file that is **absent** warns and carries on, because that

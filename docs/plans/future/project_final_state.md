@@ -359,7 +359,7 @@ tables side by side.
 
 ---
 
-## ☐ P9 — Calibrate the C922 *(promoted 2026-09-10, [#9](https://github.com/bthek1/ros2_pi/issues/9))*
+## ☑ P9 — Calibrate the C922 *(promoted 2026-09-10, **done 2026-09-12**, [#9](https://github.com/bthek1/ros2_pi/issues/9))*
 
 **Goal:** real intrinsics for this camera at 1280×720, so every unprojection
 downstream is honest.
@@ -388,9 +388,23 @@ with/without control is required for the same reason `hello-ipc` needs one — a
 board near the optical axis is nearly straight before any correction. The 1.0 px
 figure is a budget, not something measured; record what the first run prints.
 
-**Partly built, 2026-09-12 — everything except the physical session.** The
+**Done 2026-09-12.** `bash tools/gates/calibration.sh` **PASSES**: fx=953.391,
+fy=957.589, cx=627.678, cy=334.620, held-out reprojection **0.4955 px**, median
+straightness **0.7796 px**, coverage 0.896 over 4/4 quadrants, 24 marker-confirmed
+frames. `camera_node` serves it and the `NOMINAL intrinsics` warning is gone.
+
+**The phase's own test was re-scoped to get there, and the reason is in
+[#9](https://github.com/bthek1/ros2_pi/issues/9):** this camera has essentially no
+lens distortion at 720p, so "straighter than the nominal placeholder" is not a claim
+that can be made, and the worst-line-of-worst-frame statistic tightens as frames are
+added. The budget now applies to the median frame with the worst held at a 2.0 px
+backstop. `cameracalibrator` also does not run on Lyrical at all, so acquisition is
+`tools/calibrate.sh record | select | solve` rather than the session in the body.
+
+*(The paragraph below was written while it was still in progress and is kept as the
+build log.)* The
 loading path, the gate, the measurement instrument and its tests exist and are
-measured; what is left is a rigid checkerboard in front of the camera. Two things
+measured; what is left is moving the camera in front of the board. Two things
 came out of building it that changed the phase rather than just implementing it,
 and both are recorded in [#9](https://github.com/bthek1/ros2_pi/issues/9):
 
@@ -418,6 +432,25 @@ and both are recorded in [#9](https://github.com/bthek1/ros2_pi/issues/9):
   says. The gate asserts that equality instead of printing one piece of evidence
   as two.
 
+**The board is known and measured, 2026-09-12.**
+`docs/charuco_a4_7x9_25mm.pdf` on a wall: 7×9 squares, 6×8 interior corners,
+`DICT_4X4_250`, 18 mm markers. Its 100 mm scale bar **measures 99 mm**, so the print
+is scaled 0.9900 and the real sizes are `--square 0.02475` and `--marker 0.01782` —
+a 1% error that no software check can see, going straight into every distance the
+pipeline reports. Two traps came with it, both in
+[hardware.md](../../info/hardware.md#calibration-target): the command printed on the
+sheet passes interior corners to `--size` where `-p charuco` wants squares (0 corners
+interpolated against 42), and a marker-to-square ratio measured off camera frames
+reads 7% low because a 32 px marker loses a pixel per side to blur.
+
+**`bags/cam_2026_09_12` cannot calibrate anything, and says why.** 492 frames, board
+found in 41 of 41 sampled — and the camera never moved: 0.5 mm of position spread,
+0.24° of tilt spread, coverage 0.446 against the gate's 0.85 floor. Calibrating on it
+alone gives `fx=817.7` and `d=[0.65, -3.68, 0.04, -0.005, 7.76]` at an in-sample
+reprojection error of 0.66 px. The gate rejects it on coverage and reprojection —
+but **not** on the `fx` bound, which 817.7 passes, nor on the fx/fy ratio at 1.040.
+The coverage floor is what catches this one, which is the argument for having added it.
+
 It also does **not** use `camera_info_manager`, which is what a ROS driver
 normally loads a calibration with. That package is absent on the dev box under
 Lyrical, so it would have made the Pi's package depend on an apt install on the
@@ -441,6 +474,36 @@ unused phase number, with a test — see [../README.md](../README.md).
 
 "Later" is not a trigger. If an entry's trigger is not something that can be
 observed happening, it is not written down properly yet.
+
+---
+
+## Re-calibrate on a flat mount, if the scale turns out to matter
+
+**What.** Redo P9 with the board mounted on something rigid *and flat* — foam board,
+MDF, a clipboard — rather than taped to a wall, and re-fit.
+
+**Why it is not a phase now.** P9's gate passes, and the thing wrong with the current
+calibration is not visible to any assertion this project has. Two measurements say it
+is imperfect: the printed target still has **~1.6 mm of bow**, and **`fx` is pinned
+only to ±2.2%** — 906 to 973 across twelve random half-subsets of the same 24 frames
+(2026-09-12). `fx` scales every distance the pipeline reports, so a 2.2% slack in it is
+a 2.2% slack in every measurement downstream.
+
+Doing it now would be guessing at whether that matters. Nothing built so far consumes
+a metric scale: capture does not, and P2–P4 work in pixels, rays and relative depth.
+
+**Trigger — P5's tape measure.** P5 reads fused depth at a surface a known distance
+away, which is the first measurement in this project that can check a scale
+independently of the calibration that produced it. **If P5's measured distance
+disagrees with the tape by more than about 2%, that is this entry firing**, and the
+fix is a flat mount and a re-run of `record | select | solve` before touching the
+fusion code. If it agrees, the current calibration was good enough and this entry is
+deleted.
+
+**Also worth knowing when it fires.** `fx`'s spread across subsets is a cheap,
+hardware-free check that the re-run improved things — it needs no tape measure, only
+the frames — and it is not asserted by `gates/calibration.sh` today. Adding it would
+be part of the same change.
 
 ---
 

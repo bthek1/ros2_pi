@@ -107,7 +107,7 @@ split.
 | Topic | Type | Publisher | QoS | Notes |
 | --- | --- | --- | --- | --- |
 | `/image_raw/compressed` | `sensor_msgs/CompressedImage` | `camera_node` | RELIABLE, KEEP_LAST(1) | **Live 2026-09-09.** The only topic on the LAN. MJPEG straight from V4L2, never re-encoded. ~80 kB/frame, measured 44–59 Hz on the dev box against 59 Hz at the Pi |
-| `/camera_info` | `sensor_msgs/CameraInfo` | `camera_node` | RELIABLE, KEEP_LAST(1), transient local | **Live 2026-09-09.** Loads `package://pimesh_bringup/config/camera_info/c922_720p.yaml` when present and falls back to *nominal* intrinsics with a startup WARNING when not; the loading path is measured on the Pi as of 2026-09-12 and the calibration file does not exist yet, which needs a checkerboard — [P9](https://github.com/bthek1/ros2_pi/issues/9) |
+| `/camera_info` | `sensor_msgs/CameraInfo` | `camera_node` | RELIABLE, KEEP_LAST(1), transient local | **Live 2026-09-09, and carrying a real calibration since 2026-09-12** ([P9](https://github.com/bthek1/ros2_pi/issues/9), closed): fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection 0.4955 px, loaded from `package://pimesh_bringup/config/camera_info/c922_720p.yaml`. Falls back to *nominal* intrinsics with a startup WARNING if that file is absent |
 | `/rgb/image` | `sensor_msgs/Image` (bgr8) | `decode_node` | RELIABLE, KEEP_LAST(1) | Intra-process only. Never crosses the network |
 | `/keypoints` | `pimesh_msgs/Keypoints` | `keypoint_node` | RELIABLE, KEEP_LAST(1) | Positions, descriptors, match ids for the frame |
 | `/keypoints/image/compressed` | `sensor_msgs/CompressedImage` | `keypoint_node` | BEST_EFFORT, KEEP_LAST(1) | Annotated preview for the dashboard. Small, droppable |

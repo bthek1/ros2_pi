@@ -497,3 +497,180 @@ def test_the_focal_length_bound_separates_the_two():
 
     assert 450 <= k_ok[0, 0] <= 1814, k_ok[0, 0]
     assert not (450 <= k_bad[0, 0] <= 1814), k_bad[0, 0]
+
+
+# --- Marker confirmation: the silent misregistration guard --------------------
+#
+# **These use their own board constants, and the reason is a trap worth naming.**
+# The synthetic tests above use a 9x6 *interior-corner* chessboard, an abstract grid
+# with no physical counterpart. The real target is docs/charuco_a4_7x9_25mm.pdf:
+# 7x9 SQUARES, therefore 6x8 interior corners. Reusing COLS/ROWS here silently asks
+# for the wrong lattice and detect_corners simply returns None — which is exactly how
+# these tests failed first time round.
+CH_SQUARES_X, CH_SQUARES_Y = 7, 9
+CH_COLS, CH_ROWS = CH_SQUARES_X - 1, CH_SQUARES_Y - 1
+CH_SQUARE_M, CH_MARKER_M = 0.02475, 0.01782
+
+
+def _render_board(squares_x=CH_SQUARES_X, squares_y=CH_SQUARES_Y, square_m=CH_SQUARE_M,
+                  marker_m=CH_MARKER_M, dict_name='4x4_250', px_per_m=2600):
+    """Render the ChArUco board to an image, across OpenCV versions.
+
+    `generateImage` is the current name and `draw` the 4.6 one, so both are tried —
+    the same portability rule as charuco_board() itself.
+    """
+    dictionary = straightness.aruco_dictionary(dict_name)
+    board = straightness.charuco_board(squares_x, squares_y, square_m, marker_m, dictionary)
+    size = (int(squares_x * square_m * px_per_m), int(squares_y * square_m * px_per_m))
+    # generateImage is 4.8+, draw is the older name. Checked by attribute rather than
+    # version here because, unlike the constructors in calib_straightness, only one of
+    # these two names exists on each OpenCV — so the absent one fails loudly.
+    if hasattr(board, 'generateImage'):
+        img = board.generateImage(size)
+    else:
+        img = board.draw(size)
+    # px_per_m=2600 gives a ~65 px square pitch, close to what the real frames show.
+    # It is not a free parameter: findChessboardCorners fails on this board above
+    # about 1000 px across (measured — OK at 773x971, FAIL at 1119x1416, and FAIL on
+    # the 2481x3508 300-dpi render of the same sheet), which is a resolution effect in
+    # the detector rather than anything about the board. The markers decode at every
+    # size tried, so only the chessboard half constrains this.
+    #
+    # A quiet white border, or the outermost corners sit on the image edge and
+    # findChessboardCorners will not see them.
+    pad = 40
+    return cv2.copyMakeBorder(img, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=255), \
+        dictionary, board
+
+
+def test_the_version_shims_build_a_board_on_this_opencv():
+    """`charuco_board` and `aruco_dictionary` must work on 4.6 and 4.10 alike.
+
+    This is the cv2.aruco equivalent of the `get_package_share_path` lesson: the API
+    differs across the two machines, so the code picks the spelling that exists on
+    both and a test proves it did. Without this the gate's instrument would work here
+    and fail on the Pi, which is the ABI split in a new costume.
+    """
+    dictionary = straightness.aruco_dictionary('4x4_250')
+    board = straightness.charuco_board(CH_SQUARES_X, CH_SQUARES_Y, CH_SQUARE_M,
+                                              CH_MARKER_M, dictionary)
+    assert board is not None
+    with pytest.raises(ValueError):
+        straightness.aruco_dictionary('not_a_dictionary')
+
+
+def test_confirm_grid_accepts_a_correctly_registered_grid():
+    image, dictionary, board = _render_board()
+    grid = straightness.detect_corners(image, (CH_COLS, CH_ROWS))
+    assert grid is not None, 'the rendered board must be detectable, or the rest is vacuous'
+
+    ok, why, oriented, median = straightness.confirm_grid(image, grid, dictionary, board)
+    assert ok, why
+    assert oriented is not None
+    assert oriented.shape == grid.shape
+    assert median < 2.0
+
+
+def test_confirm_grid_rejects_a_grid_shifted_by_one_square():
+    """**The frame-13 failure, pinned.**
+
+    `findChessboardCorners` locked onto a lattice one square out on a real frame and
+    reported success — a genuine, internally consistent 6x8 grid of corners, just not
+    the right one, disagreeing with the markers by 45.8 px at a 49 px square pitch.
+    Nothing about the detection announced it, and with that one frame in a set of 35
+    the calibration straightened nothing: 4.16 px against a 4.17 px control.
+
+    Simulated here by shifting the grid by exactly one square pitch, which is what
+    the real failure amounted to.
+    """
+    image, dictionary, board = _render_board()
+    grid = straightness.detect_corners(image, (CH_COLS, CH_ROWS))
+    assert grid is not None
+
+    pitch = np.linalg.norm(grid[0, 1] - grid[0, 0])
+    shifted = grid + np.array([pitch, 0.0])
+
+    ok, why, _, median = straightness.confirm_grid(image, shifted, dictionary, board)
+    assert not ok
+    assert 'MISREGISTERED' in why, why
+    # It must report roughly the shift it found, so the message is actionable.
+    assert abs(median - pitch) < 0.25 * pitch, (median, pitch)
+
+
+def test_confirm_grid_rejects_an_image_with_no_markers():
+    """A blurred or too-oblique frame decodes no markers, and must be refused.
+
+    The same check therefore rejects three failure modes at once — misregistration,
+    motion blur, and obliquity past the point where markers resolve. On the real
+    35-frame set it rejected 15: one misregistered and fourteen unconfirmable, taking
+    the reprojection error from 0.7684 px to 0.4548 px.
+    """
+    image, dictionary, board = _render_board()
+    grid = straightness.detect_corners(image, (CH_COLS, CH_ROWS))
+    assert grid is not None
+
+    blank = np.full_like(image, 127)
+    ok, why, oriented, _ = straightness.confirm_grid(blank, grid, dictionary, board)
+    assert not ok
+    # Nothing usable comes back on a refusal, so a caller that ignores `ok` gets a
+    # TypeError rather than a silently unconfirmed grid.
+    assert oriented is None
+    assert 'marker' in why.lower(), why
+
+
+def test_confirm_grid_accepts_either_orientation_and_canonicalises():
+    """**The 180 degree ambiguity, which cost a whole grab session.**
+
+    `findChessboardCorners` cannot tell a symmetric grid from the same grid read end
+    to end. Both orderings describe the same physical corners; which one comes back
+    depends on how the board happens to sit in the image. The first version of
+    `confirm_grid` compared only the as-detected ordering, so when the board was
+    remounted the other way up every frame was reported "MISREGISTERED — off by
+    249 px" and the grabber saved nothing at all.
+
+    A flip is not a misregistration. It must be accepted *and* relabelled back, so
+    that the ordering cannot differ between frames within one set — which would
+    corrupt the object-point correspondence exactly as badly as a one-square shift.
+    """
+    image, dictionary, board = _render_board()
+    grid = straightness.detect_corners(image, (CH_COLS, CH_ROWS))
+    assert grid is not None
+
+    ok_a, _, canon_a, _ = straightness.confirm_grid(image, grid, dictionary, board)
+    flipped = grid[::-1, ::-1, :].copy()
+    ok_b, why_b, canon_b, _ = straightness.confirm_grid(image, flipped, dictionary, board)
+
+    assert ok_a
+    assert ok_b, f'a 180 degree flip must be accepted, not rejected: {why_b}'
+    # ...and both must come back in the same ordering, or the set is inconsistent.
+    assert np.allclose(canon_a, canon_b, atol=1e-6)
+
+
+def test_a_transposed_size_is_detected_but_refused():
+    """A transposed `--size` is caught by the markers, not by the detector.
+
+    I assumed a quarter turn was impossible because the grid is 6x8 rather than
+    square — that asking for 8x6 simply would not match. **It does match:**
+    findChessboardCorners happily returns the board transposed, shape (6, 8) instead
+    of (8, 6), with no complaint. So `--size 8x6` on this board produces a real grid
+    that is wrong, and only marker confirmation rejects it — measured at 231.9 px
+    against a 49-65 px square pitch.
+
+    That is also why confirm_grid does *not* try the transpose among its candidates
+    the way it tries the 180 degree flip. A flip is the detector's unavoidable
+    ambiguity about the same corners and must be absorbed; a transpose means the
+    caller asked for the wrong board and must be reported, not quietly fixed.
+    tools/calibrate.sh derives --size from --squares so it cannot drift, and this
+    test is what says why that derivation matters.
+    """
+    image, dictionary, board = _render_board()
+
+    transposed = straightness.detect_corners(image, (CH_ROWS, CH_COLS))
+    assert transposed is not None, 'the detector does accept a transposed pattern size'
+    assert transposed.shape == (CH_COLS, CH_ROWS, 2)
+
+    ok, why, oriented, median = straightness.confirm_grid(image, transposed, dictionary, board)
+    assert not ok, 'a transposed grid must not be confirmed'
+    assert 'MISREGISTERED' in why, why
+    assert oriented is None
+    assert median > 50

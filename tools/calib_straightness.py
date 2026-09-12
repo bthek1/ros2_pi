@@ -108,12 +108,201 @@ def detect_corners(image, pattern_size):
     # Sub-pixel refinement, and it is not optional here. The whole measurement is
     # a sub-pixel one — the budget is 1.0 px and integer corners carry ±0.5 px of
     # quantisation on their own, which would be most of the answer.
+    #
+    # **7x7, not OpenCV's usual 11x11, and the reason is this board.** On
+    # docs/charuco_a4_7x9_25mm.pdf the ArUco marker is 18 mm inside a 24.75 mm
+    # square, so its black border sits 3.375 mm from each chessboard corner — about
+    # 6.7 px at the ~49 px square pitch these frames show — which is *inside* an
+    # 11x11 window, and the marker edge then drags the saddle-point fit. Measured
+    # over the 75 frames of calib/c922_720p/frames/ (2026-09-12), reprojection error
+    # against a full calibration:
+    #
+    #     11x11  1.0400 px      5x5  0.8969 px
+    #      9x9   1.0079 px      4x4  1.0290 px
+    #      7x7   0.8707 px      3x3  1.1705 px
+    #
+    # 7x7 is the optimum: wide enough to fit a saddle, narrow enough to exclude the
+    # marker. Below it there are too few pixels left. A plain chessboard with no
+    # markers would prefer the larger window, so this is a board-specific constant
+    # and is worth revisiting if the target ever changes.
     cv2.cornerSubPix(
-        grey, corners, (11, 11), (-1, -1),
-        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
+        grey, corners, (7, 7), (-1, -1),
+        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.001))
 
     cols, rows = pattern_size
     return corners.reshape(rows, cols, 2).astype(float)
+
+
+# --- Confirming a grid against the board's own markers -----------------------
+#
+# **Why this exists, measured 2026-09-12.** `findChessboardCorners` can lock onto a
+# grid **shifted by one square** on a ChArUco board and report success: the result is
+# a real, internally consistent 6x8 lattice of corners, just not the right one. One
+# frame in 35 of `calib/c922_720p/frames/` did exactly that — `frame-13.jpg`,
+# disagreeing with the markers by 45.8 px median against a 49 px square pitch, while
+# looking sharp and nearly square-on. Nothing about the detection announced it.
+#
+# A misregistered frame is poison: its corners are matched to object points one
+# square out, so it pulls the whole solve. With it in, the 35-frame set gave a
+# reprojection error of 0.7684 px and a straightness of 4.16 px against a 4.17 px
+# control — i.e. a calibration that straightened nothing. Rejecting it and the frames
+# the markers could not confirm gave **0.4548 px** and 1.09 px against 1.18 px.
+#
+# The markers are the only thing that can catch it, because they are *identified* —
+# every ChArUco corner carries the id that says which board corner it is, and a
+# chessboard corner carries nothing but its position in whatever lattice was found.
+#
+# It rejects three failure modes with one test, which is why it is a single check:
+#  - misregistration (the grid disagrees with the ids)
+#  - motion blur (the markers cannot be decoded at all)
+#  - extreme obliquity (likewise — beyond ~50 deg the markers stop resolving, and
+#    those frames were independently the least accurate: mean reprojection 0.933 px
+#    over 50 deg against 0.429 px in the 20-35 deg band)
+
+# camera_calibration's spellings, so one name works for the calibrator and for here.
+ARUCO_DICTS = {
+    'aruco_orig': 'DICT_ARUCO_ORIGINAL',
+    '4x4_50': 'DICT_4X4_50', '4x4_100': 'DICT_4X4_100',
+    '4x4_250': 'DICT_4X4_250', '4x4_1000': 'DICT_4X4_1000',
+    '5x5_50': 'DICT_5X5_50', '5x5_100': 'DICT_5X5_100',
+    '5x5_250': 'DICT_5X5_250', '5x5_1000': 'DICT_5X5_1000',
+    '6x6_50': 'DICT_6X6_50', '6x6_100': 'DICT_6X6_100',
+    '6x6_250': 'DICT_6X6_250', '6x6_1000': 'DICT_6X6_1000',
+    '7x7_50': 'DICT_7X7_50', '7x7_100': 'DICT_7X7_100',
+    '7x7_250': 'DICT_7X7_250', '7x7_1000': 'DICT_7X7_1000',
+}
+
+
+def aruco_dictionary(name):
+    """A predefined dictionary, by camera_calibration's name for it.
+
+    `getPredefinedDictionary` is the spelling that exists on **both** machines —
+    checked 2026-09-12, the Pi's OpenCV 4.6 and this box's 4.10 — where
+    `Dictionary_get` is 4.6-only and `ArucoDetector` is 4.7+. Same rule as
+    get_package_share_path in the C++: pick the name that is current on both.
+    """
+    if name not in ARUCO_DICTS:
+        raise ValueError(f'unknown aruco dictionary {name!r}; one of {sorted(ARUCO_DICTS)}')
+    return cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, ARUCO_DICTS[name]))
+
+
+def _cv_version():
+    """(major, minor) of the running OpenCV, for the two version branches below."""
+    parts = cv2.__version__.split('.')
+    return int(parts[0]), int(parts[1])
+
+
+def charuco_board(squares_x, squares_y, square_m, marker_m, dictionary):
+    """A CharucoBoard, taking **squares** — not interior corners.
+
+    The count is squares because that is what OpenCV wants, and it is worth saying
+    twice because the command printed on our own sheet passes the corner count and
+    silently interpolates nothing.
+
+    **Branched on the version explicitly, and try/except is NOT good enough here.**
+    The constructor was renamed in 4.8. On the Pi's 4.6,
+    `cv2.aruco.CharucoBoard((7, 9), sq, mk, d)` does not raise — it **constructs a
+    default, uninitialised board**, which then *segfaults* the interpreter the first
+    time anything draws with it (measured 2026-09-12: the test suite died with
+    `Fatal Python error: Segmentation fault` on the Pi and passed here). A
+    try/except around the modern spelling therefore silently "succeeds" on the old
+    OpenCV and hands back garbage, so the version has to be asked.
+
+    This is the same shape as the cross-distro CMake trap: an API that exists at both
+    ends and means different things is worse than one that is missing at one end,
+    because the missing one fails loudly.
+    """
+    if _cv_version() >= (4, 8):
+        return cv2.aruco.CharucoBoard((squares_x, squares_y), square_m, marker_m, dictionary)
+    return cv2.aruco.CharucoBoard_create(squares_x, squares_y, square_m, marker_m, dictionary)
+
+
+def _detector_params():
+    """Default ArUco detector parameters, on either OpenCV.
+
+    Version-branched for the same reason as charuco_board, and here the failure would
+    have been *quieter*: `DetectorParameters()` also constructs on 4.6, giving an
+    object whose thresholding fields are zeroed, so marker detection would simply
+    find nothing rather than crash — and "found no markers" is a result this code
+    treats as a legitimate reason to reject a frame. Every frame would have been
+    rejected on the Pi, with a plausible message and no error.
+    """
+    if _cv_version() >= (4, 7):
+        return cv2.aruco.DetectorParameters()
+    return cv2.aruco.DetectorParameters_create()
+
+
+def confirm_grid(grey, grid, dictionary, board, tol_px=2.0, min_corners=8):
+    """Check a findChessboardCorners grid against the board's identified corners,
+    and return it in the orientation the markers agree with.
+
+    \return (ok, reason, oriented_grid, median_deviation_px). `reason` is empty when
+    ok; `oriented_grid` is None on failure.
+
+    **The 180 degree ambiguity is handled here rather than rejected, and getting that
+    wrong cost a whole grab session.** findChessboardCorners cannot tell a symmetric
+    grid from the same grid read end to end — both describe the same corners and
+    which one comes back depends on how the board happens to sit in the image. The
+    first version of this function compared only the as-detected ordering, so the
+    moment the board was remounted the other way up *every* frame came back
+    "MISREGISTERED — off by 249 px" and the grabber saved nothing at all. A flip is
+    not a misregistration: it is the same corners relabelled, and the fix is to
+    recognise it and relabel back.
+
+    Canonicalising rather than merely accepting matters for a second reason. If the
+    ordering were allowed to differ *between* frames in one set, the object-point
+    correspondence would flip mid-set, which corrupts a calibration exactly as badly
+    as a one-square shift. Returning the marker-agreed orientation makes every frame
+    consistent by construction.
+
+    A 90 degree ambiguity cannot arise: the grid is 6x8, so a quarter turn would be
+    an 8x6 grid and would not match the requested pattern size at all.
+
+    `interpolateCornersCharuco` is used rather than `CharucoDetector` because it is
+    the one entry point present on both 4.6 and 4.10.
+    """
+    rows, cols, _ = grid.shape
+    corners, ids, _ = cv2.aruco.detectMarkers(grey, dictionary, parameters=_detector_params())
+    if ids is None or len(ids) == 0:
+        return False, 'no markers decoded (blurred, or too oblique to resolve)', None, float('nan')
+
+    count, ch_corners, ch_ids = cv2.aruco.interpolateCornersCharuco(corners, ids, grey, board)
+    if not count or count < min_corners:
+        return (False, f'markers confirmed only {count or 0} corners, need {min_corners}',
+                None, float('nan'))
+
+    marker_corners = ch_corners.reshape(-1, 2)
+    marker_ids = ch_ids.ravel()
+
+    def deviations_for(candidate):
+        out = []
+        for corner, corner_id in zip(marker_corners, marker_ids):
+            col, row = int(corner_id) % cols, int(corner_id) // cols
+            if row < rows:
+                out.append(float(np.linalg.norm(candidate[row, col] - corner)))
+        return out
+
+    # As detected, and read end to end. Reversing both axes is the 180 degree
+    # relabelling: the same physical corners, opposite ordering.
+    best = None
+    for candidate in (grid, grid[::-1, ::-1, :].copy()):
+        devs = deviations_for(candidate)
+        if not devs:
+            continue
+        median = float(np.median(devs))
+        if best is None or median < best[0]:
+            best = (median, max(devs), len(devs), candidate)
+
+    if best is None:
+        return False, 'no confirmable corners overlapped the grid', None, float('nan')
+
+    median, worst, confirmed, oriented = best
+    if worst > tol_px:
+        return (False, f'MISREGISTERED — grid disagrees with the markers by {median:.1f} px '
+                       f'(worst {worst:.1f}) in both orientations; findChessboardCorners '
+                       f'locked onto the wrong lattice',
+                None, median)
+    return True, '', oriented, median
 
 
 def undistort_grid(grid, k, d):
@@ -199,12 +388,22 @@ def coverage(grids, k, width, height):
 
 
 def measure(grids, k, d):
-    """Worst and mean deviation over every detected grid, in pixels."""
+    """Deviation from straight over every detected grid, as a distribution.
+
+    The **whole** distribution, not one number, because which one is asserted on turns
+    out to matter and the choice should be visible. On the 24-frame set of 2026-09-12:
+    max 1.276 px, p90 1.170, median 0.780, min 0.364, with 5 of 24 frames over 1.0.
+    The max is not one freak frame — it is the top of a continuous tail — so anything
+    reported as "the" straightness is a choice about which end of that tail to quote.
+    """
     per_frame = [worst_deviation(undistort_grid(g, k, d)) for g in grids]
     if not per_frame:
-        return {'worst': float('nan'), 'mean': float('nan'), 'frames': 0}
+        return {'worst': float('nan'), 'p90': float('nan'), 'median': float('nan'),
+                'mean': float('nan'), 'frames': 0}
     return {
         'worst': max(per_frame),
+        'p90': float(np.percentile(per_frame, 90)),
+        'median': float(np.median(per_frame)),
         'mean': float(np.mean(per_frame)),
         'frames': len(per_frame),
         'per_frame': per_frame,
@@ -262,6 +461,11 @@ def main(argv=None):
                         help='interior corners as COLSxROWS, as passed to cameracalibrator')
     parser.add_argument('--square', type=float, default=None,
                         help='measured square size in metres; enables the reprojection error')
+    parser.add_argument('--squares', default=None,
+                        help='board SQUARES as XxY (e.g. 7x9); enables marker confirmation')
+    parser.add_argument('--marker', type=float, default=None,
+                        help='ArUco marker size in metres; required with --squares')
+    parser.add_argument('--dict', default='4x4_250', help='ArUco dictionary name')
     args = parser.parse_args(argv)
 
     cols, rows = (int(v) for v in args.size.lower().split('x'))
@@ -273,6 +477,21 @@ def main(argv=None):
     if not paths:
         print(f'straightness error=no frames in {args.frames}')
         return 1
+
+    # Marker confirmation, when the board spec is given. Without it a frame whose
+    # grid is one square out is indistinguishable from a good one — see confirm_grid.
+    dictionary = board = None
+    if args.squares:
+        if args.marker is None:
+            print('straightness error=--squares needs --marker')
+            return 1
+        sx, sy = (int(v) for v in args.squares.lower().split('x'))
+        if (sx - 1, sy - 1) != (cols, rows):
+            print(f'straightness error=--squares {sx}x{sy} implies {sx-1}x{sy-1} interior '
+                  f'corners but --size says {cols}x{rows}')
+            return 1
+        dictionary = aruco_dictionary(args.dict)
+        board = charuco_board(sx, sy, args.square or 0.025, args.marker, dictionary)
 
     grids, missed = [], []
     for path in paths:
@@ -291,6 +510,14 @@ def main(argv=None):
         if grid is None:
             missed.append(f'{os.path.basename(path)}:no-board')
             continue
+        if board is not None:
+            grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            ok, why, oriented, _ = confirm_grid(grey, grid, dictionary, board)
+            if not ok:
+                missed.append(f'{os.path.basename(path)}:{why.split(" —")[0].split(",")[0]}')
+                continue
+            # The marker-agreed ordering, so every frame in the set is consistent.
+            grid = oriented
         grids.append(grid)
 
     cover = coverage(grids, cal['K'], cal['width'] or 1280, cal['height'] or 720)
@@ -299,9 +526,12 @@ def main(argv=None):
     # No undistortion call at all — the corners exactly as detected. Equal to
     # `nominal` by construction (see the module docstring); reported so the gate
     # can assert that equality rather than take it on trust.
+    raw = [worst_deviation(g) for g in grids]
     uncorrected = {
-        'worst': max(worst_deviation(g) for g in grids) if grids else float('nan'),
-        'mean': float(np.mean([worst_deviation(g) for g in grids])) if grids else float('nan'),
+        'worst': max(raw) if raw else float('nan'),
+        'p90': float(np.percentile(raw, 90)) if raw else float('nan'),
+        'median': float(np.median(raw)) if raw else float('nan'),
+        'mean': float(np.mean(raw)) if raw else float('nan'),
         'frames': len(grids),
     }
 
@@ -309,12 +539,15 @@ def main(argv=None):
     print(f'straightness size={cols}x{rows}')
     print(f'straightness images={len(paths)}')
     print(f'straightness frames={calibrated["frames"]}')
+    print(f'straightness confirmed={"yes" if board is not None else "NO — no --squares given"}')
     print(f'straightness missed={",".join(missed) if missed else "none"}')
     print(f'straightness max_radius_frac={cover["max_radius_frac"]:.3f}')
     print(f'straightness quadrants={cover["quadrants"]}')
     for key, value in (('calibrated', calibrated), ('nominal', nominal),
                       ('uncorrected', uncorrected)):
         print(f'straightness {key}_worst_px={value["worst"]:.4f}')
+        print(f'straightness {key}_p90_px={value["p90"]:.4f}')
+        print(f'straightness {key}_median_px={value["median"]:.4f}')
         print(f'straightness {key}_mean_px={value["mean"]:.4f}')
     if calibrated['frames']:
         print('straightness ratio_vs_nominal='

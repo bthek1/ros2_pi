@@ -352,3 +352,31 @@ in the foreground, neither is needed. Confirm with `ps -o stat= -p <pid>` — a
 `tf_static`, and `rviz/camera.rviz` has `base_link` as its Fixed Frame, so a bag
 replayed without `pimesh.launch.py` produces the same grey panel for an entirely
 different reason. `just replay` starts the launch for exactly this.
+
+## `cameracalibrator` sees nothing, and `republish` is why
+
+**Symptom.** `bash tools/calibrate.sh session` comes up, the calibrator window opens,
+and it never registers a single sample — as if the board were not there at all.
+
+**Cause.** `image_transport republish` takes its transports as **parameters** on
+Lyrical, not as positional arguments. The form P9's body gives,
+
+```bash
+ros2 run image_transport republish compressed raw --ros-args -r in/compressed:=...
+```
+
+starts a node that logs `The 'in_transport' parameter is set to: raw`, subscribes to a
+*raw* topic nothing publishes, and emits nothing. There is no error: the positional
+words are simply ignored. Measured 2026-09-12.
+
+**Fix**, and what `tools/calibrate.sh` now uses:
+
+```bash
+ros2 run image_transport republish \
+    --ros-args -p in_transport:=compressed -p out_transport:=raw \
+    -r in/compressed:=/image_raw/compressed -r out:=/image_raw_uncompressed
+```
+
+`session` now asserts one message arrives on the raw topic before starting the
+calibrator, so this fails in three seconds with a message instead of looking like a
+board-detection problem.

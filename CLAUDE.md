@@ -266,6 +266,102 @@ strong priors, re-verify before quoting a number as this project's own.
   is a precondition of the measurement rather than advice about technique, and
   `gates/calibration.sh` asserts a floor on coverage. A precondition that is not
   asserted is a comment.
+- **The calibration board is a ChArUco sheet on the wall, and its print came out
+  1% small.** `docs/charuco_a4_7x9_25mm.pdf`: 7×9 squares, 6×8 interior corners,
+  `DICT_4X4_250`, 18 mm markers. Its 100 mm scale bar **measures 99 mm**
+  (2026-09-12), so the real numbers are `--square 0.02475` and `--marker 0.01782`,
+  not the 0.025/0.018 in the filename. A 1% scale error is a 1% error in every
+  distance the pipeline ever reports and **nothing in software can detect it** —
+  this is the one number that must come off a ruler. Full table in
+  [docs/info/hardware.md](docs/info/hardware.md#calibration-target).
+- **Calibration frames come from a bag, chosen offline.**
+  `bash tools/calibrate.sh record` then `select` — the live `grab` is the quick-look
+  path. Recording separates moving the camera from judging the frames, so selection
+  sees every candidate at once rather than deciding greedily as they arrive, and the
+  bag can be re-selected without another session at the wall. `select` marker-confirms
+  every frame, drops the blurred half-median, rejects past 45° oblique, then picks for
+  coverage first and pose diversity second. **It cannot rescue a bowed board** — see
+  the next bullet; frame choice does not undo a bulge in the paper.
+- **Rigid is not flat, and a print taped to a wall is not a calibration target.**
+  A wall satisfies "rigid" completely and still leaves the paper bowed, because
+  paper taped at its edges bulges between them. Measured 2026-09-12 over 75 real
+  frames by solving a per-corner out-of-plane offset with the intrinsics: **3.02 mm
+  peak-to-peak of bow**, and forcing the flat model onto it drove reprojection from
+  0.77 px to **1.04 px** while flipping **`k1` from +0.0098 to −0.0569** — inventing
+  pincushion on a camera that has barrel, and shifting `cx` by 32 px to
+  accommodate. **The sign of `k1` is the cheapest tell that a board is not flat.**
+  The surface is real, not a fit artefact: solved from disjoint halves of the frame
+  set it correlates at +0.994, differing by 0.08 mm rms. Mount the sheet on foam
+  board, MDF or a clipboard and put *that* on the wall.
+- **The ArUco markers corrupt `cornerSubPix` at its default window.** On our sheet
+  the marker border sits 3.375 mm from each chessboard corner — ~6.7 px at a 49 px
+  square pitch — inside the default 11×11 refinement window. Measured: 11×11 gives
+  1.040 px, **7×7 gives 0.871 px**, 3×3 gives 1.171 px. Worth ~17%, secondary to the
+  bow, and it does not change `k1`'s sign.
+- **Two board conventions, one apart, and our own printed sheet gets it wrong.**
+  `cameracalibrator -p charuco --size N` wants **squares** (it goes into
+  `cv2.aruco.CharucoBoard`); `cv2.findChessboardCorners` wants **interior
+  corners**. The line printed along the bottom of our A4 sheet says `--size 6x8`,
+  the corner count, and measured against a real frame that interpolates **0**
+  corners where `--size 7x9` interpolates **42**. The PDF is on the wall and cannot
+  be edited, so do not copy the command off it — `bash tools/calibrate.sh` takes
+  `--squares 7x9` and derives the corner count itself for exactly this reason.
+- **`findChessboardCorners` can lock onto a lattice one square out, and only the
+  markers can tell.** Measured 2026-09-12: 1 frame in 35 of a real grab set produced
+  a genuine, internally consistent 6×8 corner grid that disagreed with the ChArUco
+  ids by **45.8 px** against a 49 px square pitch, while looking sharp and nearly
+  square-on. One such frame was enough to make the calibration straighten *nothing*
+  (4.16 px against a 4.17 px control) at a reprojection error of 0.768 px. Rejecting
+  it and the frames the markers could not confirm gave **0.4548 px** and held-out
+  0.46/0.47. So every frame is confirmed against the markers before use
+  (`confirm_grid` in `tools/calib_straightness.py`), in the grabber *and* in the gate.
+  A chessboard corner carries only its position in whatever lattice was found; a
+  ChArUco corner carries the id saying which corner it is. That identity is the whole
+  value.
+  One check rejects three failure modes: misregistration, motion blur, and obliquity
+  past ~50° where markers stop resolving — and those oblique frames were independently
+  the least accurate (mean reprojection 0.933 px beyond 50° against **0.429 px in the
+  20–35° band**, which is the band to actually shoot in).
+- **`cv2.aruco` constructors that exist on both machines and mean different things —
+  branch on the version, never try/except.** On the Pi's OpenCV 4.6,
+  `cv2.aruco.CharucoBoard((7, 9), sq, mk, d)` (the 4.8+ spelling) **does not raise**:
+  it constructs a default, uninitialised board that **segfaults the interpreter** the
+  first time anything draws with it. `DetectorParameters()` is worse — it also
+  constructs, with zeroed thresholding fields, so marker detection finds nothing and
+  the code reports "no markers decoded", a legitimate-looking result. Both are
+  version-branched in `tools/calib_straightness.py` (`>= 4.8` and `>= 4.7`
+  respectively). **An API that exists at both ends and means different things is worse
+  than one that is missing at one end, because the missing one fails loudly** — the
+  same lesson as `ament_target_dependencies` in reverse.
+- **Read that board with `findChessboardCorners`, not `cv2.aruco`.** `cv2.aruco`'s
+  API differs across the two machines — the Pi's OpenCV 4.6 has no
+  `CharucoDetector`, this box's 4.10 does — and an instrument that differs per
+  machine is the ABI split in a new costume. `interpolateCornersCharuco` is the one
+  entry point on both, if partial views ever become necessary. That a chessboard
+  detector works on a ChArUco board is verified, not assumed: all 42 aruco-
+  interpolated corners agree with the 6×8 grid at the same (row, col) index, median
+  0.73 px (2026-09-12).
+- **Never measure the board off a picture of the board.** The marker-to-square
+  ratio is 0.7199 in the PDF and 0.654–0.674 in camera frames — 7% low, unchanged
+  by sub-pixel refinement, because a 32 px marker loses a pixel per side of its
+  black border to blur and JPEG. Measure the sheet, or render the PDF.
+- **The C922 at 720p has essentially no lens distortion, which invalidates a premise
+  of P9.** The phase was written on "a plumb_bob model with all-zero coefficients
+  asserts that a consumer webcam has no barrel distortion; it has". Measured
+  2026-09-12, at 1280×720 it very nearly does not — most likely corrected in firmware
+  for this mode. Three independent lines:
+  (1) over 243 marker-confirmed frames, correlation between how far the board reached
+  from the image centre and how bent its rows were was **−0.160**, where a radial
+  distortion would make it strongly positive;
+  (2) real straight edges 430–473 px long at 0.62–0.73 reach depart from straight by
+  only **0.93–1.42 px**, where `k1 = +0.08` would bow them several times more;
+  (3) every fit off a real set lands **|k1| < 0.02** with the sign flipping as frames
+  are added — a parameter with nothing to estimate.
+  **Consequences:** never assert `k1 > 0` (it fails a *correct* calibration here), and
+  the straightness test cannot be "strictly better than the placeholder" — the
+  placeholder is already almost right. `gates/calibration.sh` asserts "not worse" plus
+  the absolute budget, and prints the ratio. **Re-measure before assuming this holds at
+  another resolution**; a cropped or uncorrected mode may behave completely differently.
 - **A board photographed only square-on calibrates to nonsense, and every check
   that should catch it except one says it is fine.** Focal length and radial
   distortion trade off when the board is never tilted, so the solve is poorly
@@ -526,6 +622,7 @@ somebody once.
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones and their status |
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: a GitHub issue of stable phases, a command for a test, executable-only, and the future file |
 | [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this is going.** The whole pipeline as phases P0–P8, none started, each ending in a `tools/gates/*.sh` test, followed by the deferred register |
+| [#9](https://github.com/bthek1/ros2_pi/issues/9) **(closed 2026-09-12)** — camera calibration | **P9, done.** The C922's real intrinsics at 720p: fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection 0.4955 px. `camera_node` loads them from `pimesh_bringup/config/camera_info/c922_720p.yaml` and the NOMINAL warning is gone. Read the closed issue before touching calibration — three of its assumptions turned out to be false, including that this camera has barrel distortion |
 | [#4](https://github.com/bthek1/ros2_pi/issues/4) **(closed 2026-09-09)** [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A is done — P0 and P1, the cross-distro workspace and capture. Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
 | `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 76 of them across six suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms`, the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on |
 | `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the shell lives in `tools/`; the justfile was trimmed further the same day to `build` + `run` only, so that issue's `just gate-*` spelling is history, not instruction |

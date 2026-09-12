@@ -4,9 +4,17 @@
 #
 # Three modes, run in this order, and the middle one is the physical session:
 #
-#   bash tools/calibrate.sh grab    --square 0.0245   held-out frames for the gate
-#   bash tools/calibrate.sh session --square 0.0245   the checkerboard itself
-#   bash tools/calibrate.sh install --square 0.0245   the result into the workspace
+#   bash tools/calibrate.sh record  --square 0.02475 --marker 0.01782   a bag of the board
+#   bash tools/calibrate.sh select  --bag bags/<dir> ...                 ...frames from it
+#   bash tools/calibrate.sh grab    --square 0.02475 --marker 0.01782   (or live instead)
+#   bash tools/calibrate.sh session --bag bags/<dir> ...                 ...and calibrate it
+#   bash tools/calibrate.sh session --square 0.02475 --marker 0.01782   (or live instead)
+#   bash tools/calibrate.sh solve   --square 0.02475 --squares 7x9      fit + write both
+#
+# Those are the *measured* sizes of docs/charuco_a4_7x9_25mm.pdf as printed: the
+# sheet's 100 mm bar measures 99 mm (2026-09-12), so its nominal 25 mm squares and
+# 18 mm markers are really 24.75 and 17.82. The filename is the design, not the
+# print.
 #
 # **The board must be rigid, and the square must be measured with a ruler.** A
 # printout that flexes converges happily and is wrong, and printer scaling lies
@@ -30,6 +38,7 @@ CALIB_DIR="$PIMESH_WS/calib/$CAMERA"
 FRAMES_DIR="$CALIB_DIR/frames"
 CONFIG_YAML="$PIMESH_WS/src/pimesh_bringup/config/camera_info/$CAMERA.yaml"
 RAW_TOPIC=/image_raw_uncompressed
+BAG=
 TARBALL=/tmp/calibrationdata.tar.gz
 
 mode=${1:-session}
@@ -52,7 +61,14 @@ square=
 marker=
 pattern=charuco
 dict=4x4_250
+# How many frames each acquisition mode wants, and they are NOT the same number.
+# `grab` decides live and every saved frame costs a pose held in front of the camera,
+# so 8 is a sane floor to aim at. `select` is choosing from hundreds of already
+# recorded candidates at no marginal cost, and a calibration wants more than that:
+# 8 frames left k1 at +0.0053 where the same bag re-selected at 24 gives a properly
+# constrained fit. Sharing one default silently gave select the grabber's 8.
 frames=8
+select_count=24
 seconds=900
 # cameracalibrator's motion rejection, which defaults to -1.0 — i.e. **off**, so a
 # blurred frame from a board or camera in motion is accepted like any other, and
@@ -73,6 +89,8 @@ while (( $# )); do
         --seconds) seconds=$2; shift 2 ;;
         --speed)   speed=$2; shift 2 ;;
         --tarball) TARBALL=$2; shift 2 ;;
+        --bag)     BAG=$2; shift 2 ;;
+        --count)   frames=$2; select_count=$2; shift 2 ;;
         *) echo "calibrate: unknown argument $1" >&2; exit 2 ;;
     esac
 done
@@ -81,17 +99,22 @@ if [[ -z $square ]]; then
     cat >&2 <<'USAGE'
 calibrate: --square is required, in metres, and measured with a ruler.
 
-    bash tools/calibrate.sh grab    --square 0.025 --squares 7x9 --marker 0.018
-    bash tools/calibrate.sh session --square 0.025 --squares 7x9 --marker 0.018
-    bash tools/calibrate.sh install --square 0.025 --squares 7x9 --marker 0.018
+    bash tools/calibrate.sh grab    --square 0.02475 --squares 7x9 --marker 0.01782
+    bash tools/calibrate.sh session --square 0.02475 --squares 7x9 --marker 0.01782
+    bash tools/calibrate.sh install --square 0.02475 --squares 7x9 --marker 0.01782
+
+Those are the MEASURED numbers for docs/charuco_a4_7x9_25mm.pdf as printed: its
+100 mm bar measures 99 mm, so the nominal 25/18 mm are really 24.75/17.82 mm. See
+docs/info/hardware.md#calibration-target.
 
 --squares is the number of SQUARES (7x9 for docs/charuco_a4_7x9_25mm.pdf), not the
 interior-corner count the sheet's own printed command line shows. --marker is the
-ArUco marker size in metres, needed for -p charuco (18 mm on that sheet).
+ArUco marker size in metres, needed for -p charuco.
 
-Our A4 sheet carries a 100 mm bar: check it with a ruler first. If it is not
-exactly 100 mm the print was scaled, and then measure across several squares and
-divide rather than trusting either the filename or the bar.
+Our A4 sheet carries a 100 mm bar. Checked 2026-09-12 it measures 99 mm, so this
+print is scaled 0.9900 and the filename's 25 mm is really 24.75 mm. Re-check if the
+sheet is ever reprinted: nothing in software can detect a scale error, and it goes
+straight into every distance the pipeline reports.
 USAGE
     exit 2
 fi
@@ -106,7 +129,7 @@ corners="$(( sq_x - 1 ))x$(( sq_y - 1 ))"
 
 if [[ $pattern == charuco && -z $marker ]]; then
     echo "calibrate: -p charuco needs --marker, the ArUco marker size in metres" >&2
-    echo "           (0.018 for docs/charuco_a4_7x9_25mm.pdf)" >&2
+    echo "           (0.01782 for docs/charuco_a4_7x9_25mm.pdf as printed)" >&2
     exit 2
 fi
 if [[ -n $marker ]]; then
@@ -114,10 +137,11 @@ if [[ -n $marker ]]; then
         { echo "calibrate: --marker $marker must be >0 and smaller than --square $square" >&2; exit 2; }
 fi
 
-# 24.5 mm is a typical A4 OpenCV chessboard square. Anything outside a few
-# millimetres to a few centimetres is a unit mix-up, and a metres/millimetres
-# slip is the one error here that produces a perfectly self-consistent
-# calibration at the wrong scale.
+# ~24.75 mm is our A4 sheet's measured square. Anything outside a few millimetres
+# to a few centimetres is a unit mix-up, and a metres/millimetres slip is the one
+# error here that produces a perfectly self-consistent calibration at the wrong
+# scale. This bound cannot catch a 1% print-scaling error — only a ruler can, which
+# is why --square is required rather than defaulted.
 awk -v s="$square" 'BEGIN {exit !(s > 0.005 && s < 0.15)}' || {
     echo "calibrate: --square $square is not a plausible size in METRES" >&2; exit 2
 }
@@ -144,6 +168,81 @@ start_camera() {        # $1 = seconds
 
 case $mode in
 
+record)
+    # A bag of the board from many angles, to choose frames from afterwards. The
+    # better half of the two acquisition paths: selection becomes global instead of
+    # greedy, the recording is re-selectable without going back to the wall, and the
+    # job at the wall is just "move the camera slowly" rather than negotiating with a
+    # tool that is refusing frames.
+    echo "== calibrate record =="
+    bash "$PIMESH_WS/tools/camera-reset.sh" >"$work/reset" 2>&1 ||
+        { echo "calibrate: camera-reset did not reach its baseline" >&2
+          sed 's/^/  /' "$work/reset" >&2; exit 1; }
+    start_camera $(( seconds + 30 )) || exit 1
+
+    bag_dir=${BAG:-bags/calib_$(date +%Y_%m_%d-%H_%M_%S)}
+    cat <<EOF
+
+Recording to $bag_dir for ${seconds}s. Move the camera slowly and cover:
+
+  * DISTANCE   roughly 30 to 55 cm. Closer is better — the board must be big
+               enough in the frame that its corners can reach the frame corners.
+  * POSITION   take the board to all four corners of the picture, and the edges.
+  * TILT       20 to 35 degrees, in BOTH axes, several different ways. Not 70:
+               past 50 the board foreshortens 2:1 and corner accuracy halves.
+               Not 0 either: square-on views alone are a degenerate solve.
+
+Pause a beat at each pose — motion blur is not recoverable afterwards. Ctrl-C to
+stop early.
+
+EOF
+    # `--topics`, not positional topic names. Lyrical's `ros2 bag record` dropped the
+    # positional form — it fails with the *top-level* ros2 usage and "unrecognized
+    # arguments", which reads like the subcommand was not found at all. `--topics`
+    # exists on Jazzy too (checked 2026-09-12, both machines), so it is the spelling
+    # that is right at both ends.
+    run_for "$seconds" ros2 bag record -o "$bag_dir" \
+        --topics /image_raw/compressed /camera_info || true
+    cleanup_both
+
+    # **Assert the recording happened.** `|| true` above is there so Ctrl-C is a
+    # normal way to stop, and it also swallows a recorder that never started — which
+    # it did, printing a bag path and a cheerful "next" line over an empty directory.
+    # A recipe that reports success for work it did not do is the same fault as a
+    # green gate over broken behaviour.
+    if [[ ! -f $bag_dir/metadata.yaml ]]; then
+        echo "FAIL: no $bag_dir/metadata.yaml — nothing was recorded" >&2
+        rmdir "$bag_dir" 2>/dev/null || true
+        exit 1
+    fi
+    n_msgs=$(awk '/^  message_count:/ {print $2; exit}' "$bag_dir/metadata.yaml")
+    echo
+    echo "bag              : $bag_dir  (${n_msgs:-0} messages)"
+    if (( ${n_msgs:-0} < 100 )); then
+        echo "FAIL: only ${n_msgs:-0} messages — the camera stream did not reach the recorder" >&2
+        exit 1
+    fi
+    echo "next             : bash tools/calibrate.sh select --bag $bag_dir \\"
+    echo "                       --square $square --squares $squares --marker $marker"
+    ;;
+
+select)
+    # Frames out of the bag, chosen for coverage first and pose diversity second,
+    # every one marker-confirmed on the way through.
+    echo "== calibrate select =="
+    [[ -n $BAG ]] || { echo "calibrate: select needs --bag <dir>" >&2; exit 2; }
+    [[ -d $BAG ]] || { echo "calibrate: no such bag $BAG" >&2; exit 2; }
+
+    if [[ -d $FRAMES_DIR ]] && [[ -n $(find "$FRAMES_DIR" -name '*.jpg' -print -quit) ]]; then
+        rm -rf "$FRAMES_DIR.prev"; mv "$FRAMES_DIR" "$FRAMES_DIR.prev"
+        echo "kept the previous frames in ${FRAMES_DIR#"$PIMESH_WS"/}.prev"
+    fi
+
+    /usr/bin/python3 "$PIMESH_WS/tools/calib_select.py" \
+        --bag "$BAG" --out "$FRAMES_DIR" --squares "$squares" \
+        --square "$square" --marker "$marker" --dict "$dict" --count "$select_count"
+    ;;
+
 grab)
     # Held-out frames for the gate. No republish needed: the grabber decodes the
     # camera's JPEG itself and writes those same bytes back out, so nothing
@@ -153,7 +252,18 @@ grab)
         { echo "calibrate: camera-reset did not reach its baseline" >&2
           sed 's/^/  /' "$work/reset" >&2; exit 1; }
 
-    rm -rf "$FRAMES_DIR"; mkdir -p "$FRAMES_DIR"
+    # **Keep the previous set rather than deleting it.** A grab that starts by
+    # `rm -rf`ing the frames and then saves nothing — which is what a session with a
+    # remounted board and a stale --squares does — destroys a usable set and leaves
+    # nothing. Measured the hard way on 2026-09-12: 35 frames gone. One generation of
+    # backup is enough to make a failed run recoverable and costs a rename.
+    if [[ -d $FRAMES_DIR ]] && [[ -n $(find "$FRAMES_DIR" -name '*.jpg' -print -quit) ]]; then
+        rm -rf "$FRAMES_DIR.prev"
+        mv "$FRAMES_DIR" "$FRAMES_DIR.prev"
+        echo "kept the previous $(find "$FRAMES_DIR.prev" -name '*.jpg' | wc -l) frames in"
+        echo "  ${FRAMES_DIR#"$PIMESH_WS"/}.prev"
+    fi
+    mkdir -p "$FRAMES_DIR"
     start_camera "$seconds" || exit 1
 
     cat <<'EOF'
@@ -180,7 +290,8 @@ Ctrl-C when it says it is done.
 
 EOF
     run_for "$seconds" /usr/bin/python3 "$PIMESH_WS/tools/calib_grab.py" \
-        --out "$FRAMES_DIR" --size "$corners" --count "$frames" || true
+        --out "$FRAMES_DIR" --size "$corners" --count "$frames" \
+        --square "$square" --marker "$marker" --dict "$dict" || true
 
     kill_pi
     echo
@@ -196,21 +307,60 @@ session)
         exit 2
     fi
 
-    bash "$PIMESH_WS/tools/camera-reset.sh" >"$work/reset" 2>&1 ||
-        { echo "calibrate: camera-reset did not reach its baseline" >&2
-          sed 's/^/  /' "$work/reset" >&2; exit 1; }
-
-    start_camera "$seconds" || exit 1
+    # Two sources for the calibrator: the live camera, or a bag already recorded.
+    #
+    # **The bag is the better one when you have it**, and not only for convenience.
+    # The live path means standing at the wall moving a camera while watching a GUI on
+    # another machine, and it produces a fit from frames nobody can look at again. Fed
+    # from a bag, the same session is repeatable — a different board model, a fixed
+    # principal point, more radial terms — without another visit, and the frames the
+    # calibrator chose stay in the tarball beside the ones `select` chose.
+    if [[ -n $BAG ]]; then
+        [[ -d $BAG ]] || { echo "calibrate: no such bag $BAG" >&2; exit 2; }
+        # --disable-keyboard-controls and </dev/null, both deliberately, and the
+        # reason is in tools/replay.sh: playback reads the controlling terminal for
+        # its space-to-pause keys, a *backgrounded* process that reads its TTY is sent
+        # SIGTTIN and stopped by the kernel, and a stopped player publishes nothing
+        # while reporting no error at all. The flag stops it wanting the terminal; the
+        # redirect means it cannot have it if a future default changes.
+        run_for $(( seconds + 30 )) ros2 bag play "$BAG" --loop \
+            --disable-keyboard-controls </dev/null >"$work/play.log" 2>&1 &
+        echo "playing $BAG on a loop as the calibrator's input"
+        sleep 3
+    else
+        bash "$PIMESH_WS/tools/camera-reset.sh" >"$work/reset" 2>&1 ||
+            { echo "calibrate: camera-reset did not reach its baseline" >&2
+              sed 's/^/  /' "$work/reset" >&2; exit 1; }
+        start_camera "$seconds" || exit 1
+    fi
 
     # cameracalibrator subscribes to sensor_msgs/Image on `image`, and this project
     # only ever puts compressed frames on the wire. republish is the adapter, and
     # it runs *here* rather than on the Pi — decoding on the sensor head would put
     # a decode in the one place with no GPU and then send 2.7 MB frames over
     # Wi-Fi, which is the thing the whole architecture exists to avoid.
-    ros2 run image_transport republish compressed raw \
-        --ros-args -r in/compressed:=/image_raw/compressed -r out:="$RAW_TOPIC" \
+    # **Transports as parameters, not as positional arguments.** The form P9's body
+    # gives — `republish compressed raw` — is silently wrong on Lyrical: the node
+    # starts, logs `The 'in_transport' parameter is set to: raw`, subscribes to a raw
+    # topic nothing publishes, and emits nothing. No error anywhere. The calibrator
+    # then sits looking at a dead topic and reads as if it cannot find the board.
+    # Measured 2026-09-12; the parameter spelling is checked working here.
+    ros2 run image_transport republish \
+        --ros-args -p in_transport:=compressed -p out_transport:=raw \
+        -r in/compressed:=/image_raw/compressed -r out:="$RAW_TOPIC" \
         >"$work/republish.log" 2>&1 &
     sleep 3
+
+    # Assert the calibrator will actually have something to look at, rather than
+    # letting it come up against a dead topic and look like it is failing to detect
+    # the board. One decode is enough to prove the whole chain: source -> compressed
+    # topic -> republish -> raw topic.
+    if ! timeout 15 ros2 topic echo --once "$RAW_TOPIC" --field height >/dev/null 2>&1; then
+        echo "FAIL: nothing on $RAW_TOPIC — the source or the republish is not running" >&2
+        tail -5 "$work/republish.log" 2>/dev/null | sed 's/^/    /' >&2
+        [[ -n $BAG ]] && tail -5 "$work/play.log" 2>/dev/null | sed 's/^/    /' >&2
+        exit 1
+    fi
 
     cat <<EOF
 
@@ -265,6 +415,28 @@ EOF
     fi
     ;;
 
+solve)
+    # Fit the intrinsics from the selected frames and write both artefacts. This is
+    # what `session` + `install` were for; it replaces them because cameracalibrator
+    # does not run on Lyrical at all — it builds left/right stereo subscribers even in
+    # mono mode and dies in RcutilsLogger.warn before reading a frame. The frames were
+    # already chosen and marker-confirmed by `select`, which is the part of that tool
+    # worth having.
+    echo "== calibrate solve =="
+    [[ -d $FRAMES_DIR ]] && [[ -n $(find "$FRAMES_DIR" -name '*.jpg' -print -quit) ]] ||
+        { echo "calibrate: no frames in $FRAMES_DIR — run record then select first" >&2; exit 2; }
+
+    mkdir -p "$(dirname "$CONFIG_YAML")" "$CALIB_DIR"
+    /usr/bin/python3 "$PIMESH_WS/tools/calib_solve.py" \
+        --frames "$FRAMES_DIR" --out "$CONFIG_YAML" --report "$CALIB_DIR/report.txt" \
+        --name "$CAMERA" --squares "$squares" --square "$square" \
+        --marker "$marker" --dict "$dict" || exit 1
+    echo
+    echo "next             : bash tools/build.sh --packages-select pimesh_bringup"
+    echo "                   bash tools/sync-pi.sh && bash tools/build-pi.sh"
+    echo "                   bash tools/gates/calibration.sh"
+    ;;
+
 install)
     # The result into the workspace, plus a report.txt whose number is recomputed
     # rather than transcribed.
@@ -316,13 +488,15 @@ install)
             echo "## in sample — the calibrator's own frames"
             /usr/bin/python3 "$PIMESH_WS/tools/calib_straightness.py" \
                 --frames "$in_sample_dir" --calibration "$CONFIG_YAML" \
-                --size "$corners" --square "$square" 2>&1 | sed 's/^straightness /  /'
+                --size "$corners" --square "$square" \
+                --squares "$squares" --marker "$marker" --dict "$dict" 2>&1 | sed 's/^straightness /  /'
             echo
         fi
         echo "## held out — tools/calibrate.sh grab's frames, which the fit never saw"
         /usr/bin/python3 "$PIMESH_WS/tools/calib_straightness.py" \
             --frames "$FRAMES_DIR" --calibration "$CONFIG_YAML" \
-            --size "$corners" --square "$square" 2>&1 | sed 's/^straightness /  /'
+            --size "$corners" --square "$square" \
+            --squares "$squares" --marker "$marker" --dict "$dict" 2>&1 | sed 's/^straightness /  /'
     } >"$report"
 
     echo "report           : $report"
@@ -335,7 +509,7 @@ install)
     ;;
 
 *)
-    echo "calibrate: unknown mode '$mode' — grab, session or install" >&2
+    echo "calibrate: unknown mode '$mode' — record, select, solve, grab, session or install" >&2
     exit 2
     ;;
 esac
