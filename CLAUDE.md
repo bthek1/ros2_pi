@@ -65,6 +65,23 @@ not a description of running code. When you build something, change the doc that
 describes it from future tense to a measured statement, and say what you
 measured it with.
 
+**The camera is calibrated as of 2026-09-12** — P9,
+[gh issue #9](https://github.com/bthek1/ros2_pi/issues/9), closed. `camera_node`
+serves real intrinsics on `/camera_info` (fx=953.4, fy=957.6, cx=627.7, cy=334.6,
+held-out reprojection 0.4955 px over 24 marker-confirmed frames) loaded from
+`pimesh_bringup/config/camera_info/c922_720p.yaml`, and the `NOMINAL intrinsics`
+warning is gone. `bash tools/gates/calibration.sh` is the check.
+
+**That phase is the sharpest example so far of the rule above about design intent.**
+Three things it asserted turned out to be false when measured, and the closed issue is
+worth reading before touching anything to do with calibration: this camera has
+essentially **no lens distortion** at 720p (so the phase's "straight edges come out
+straighter" test could not pass as written and was re-scoped), `cameracalibrator`
+**does not run on Lyrical at all**, and the command printed on our own board sheet is
+wrong. Two limitations survive it, both deferred with triggers rather than forgotten:
+the printed target still has ~1.6 mm of bow, and **`fx` is pinned only to ±2.2%**,
+which is a ±2.2% slack in every distance this pipeline will report.
+
 **Two things P0–P1 cost, and both are the same lesson as the teardown one
 above.** A `static_transform_publisher` given `parameters=[...]` dies before it
 reads them — it parses `argv` first — so the launch came up with no TF tree and
@@ -147,7 +164,7 @@ message types and rates: [docs/info/pipeline.md](docs/info/pipeline.md).
 
 | Stage | Node | Where | Budget |
 | --- | --- | --- | --- |
-| Capture | `camera_node` | Pi | 1280×720 MJPEG, up to 60 fps, stamped at `VIDIOC_DQBUF` |
+| Capture | `camera_node` | Pi | 1280×720 MJPEG, up to 60 fps, stamped at `VIDIOC_DQBUF`, calibrated intrinsics on `/camera_info` |
 | Keypoints | `keypoint_node` | dev box | ORB, 500 features, ~5 ms/frame target |
 | Depth | `depth_node` | dev box, **GPU** | Depth Anything V2 Small, 518², **72–79 ms/frame measured on this GPU** |
 | Fusion | `fusion_node` | dev box | TSDF, 1.5 cm voxels, integrate at depth rate |
@@ -624,7 +641,7 @@ somebody once.
 | [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this is going.** The whole pipeline as phases P0–P8, none started, each ending in a `tools/gates/*.sh` test, followed by the deferred register |
 | [#9](https://github.com/bthek1/ros2_pi/issues/9) **(closed 2026-09-12)** — camera calibration | **P9, done.** The C922's real intrinsics at 720p: fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection 0.4955 px. `camera_node` loads them from `pimesh_bringup/config/camera_info/c922_720p.yaml` and the NOMINAL warning is gone. Read the closed issue before touching calibration — three of its assumptions turned out to be false, including that this camera has barrel distortion |
 | [#4](https://github.com/bthek1/ros2_pi/issues/4) **(closed 2026-09-09)** [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A is done — P0 and P1, the cross-distro workspace and capture. Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
-| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 76 of them across six suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms`, the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on |
+| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 82 of them across six suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms`, the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on |
 | `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the shell lives in `tools/`; the justfile was trimmed further the same day to `build` + `run` only, so that issue's `just gate-*` spelling is history, not instruction |
 | [docs/plans/future/milestone-a-future.md](docs/plans/future/milestone-a-future.md) | Work deferred out of milestone A, each entry with its trigger: the checkerboard calibration (waiting on P5's tape-measure visit), `PipelineStats` from `camera_node` (waiting on the dashboard), the dev-box rate margin, and device reconnection |
 

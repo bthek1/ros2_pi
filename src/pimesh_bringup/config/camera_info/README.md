@@ -20,5 +20,13 @@ must match the stream — a 720p calibration on a 1080p capture is wrong by a
 constant factor in fx, fy, cx and cy at once, so `camera_node` refuses to start
 on that mismatch rather than publishing it.
 
-Nothing is committed here yet: until the checkerboard has been run, the absence
-of the file is the honest state, and `camera_node` says so on every startup.
+`c922_720p.yaml` is the C922 at 1280×720, fitted 2026-09-12 (P9,
+[#9](https://github.com/bthek1/ros2_pi/issues/9)): fx=953.4, fy=957.6, cx=627.7,
+cy=334.6, held-out reprojection 0.4955 px over 24 marker-confirmed frames. Its `D` is
+near zero and **that is correct** — this camera measured as having essentially no lens
+distortion in this mode, which is not what the phase expected; see
+[hardware.md](../../../../docs/info/hardware.md#this-camera-has-essentially-no-distortion-at-720p).
+
+One file per camera *and resolution*: these intrinsics do not carry to another mode,
+and `camera_node` refuses to start rather than publish a calibration whose
+`image_width`/`image_height` disagree with what it is capturing.

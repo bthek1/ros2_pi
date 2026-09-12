@@ -175,6 +175,9 @@ bash tools/gates/hello-lan.sh     # one source tree, two distros, over the LAN
 bash tools/gates/hello-clean.sh   # Ctrl-C leaves nothing running, either machine,
                                   #   for every recipe in the justfile's `run` group
 
+bash tools/calibrate.sh record    # a bag of the board from many angles
+bash tools/calibrate.sh select    #   ...best frames out of it, marker-confirmed
+bash tools/calibrate.sh solve     #   ...fit, and write the YAML + report.txt
 bash tools/camera-reset.sh        # clear the camera's persistent V4L2 controls
 bash tools/stragglers.sh          # assert nothing outlived its session
 bash tools/sync-pi.sh             # ship source to the Pi — source only
@@ -182,9 +185,37 @@ bash tools/build-pi.sh            # ...and build it there, under Jazzy
 bash tools/clean.sh               # delete the colcon trees (clean-pi.sh for the Pi's)
 ```
 
+## Calibrating the camera
+
+Done once, on 2026-09-12, and the result is committed — `camera_node` loads
+`pimesh_bringup/config/camera_info/c922_720p.yaml` by default and there is nothing to
+run on a fresh checkout. Redo it only if the camera or the printed board changes:
+
+```bash
+bash tools/calibrate.sh record --square 0.02475 --squares 7x9 --marker 0.01782 --seconds 120
+bash tools/calibrate.sh select --bag bags/calib_<timestamp> --square 0.02475 --squares 7x9 --marker 0.01782
+bash tools/calibrate.sh solve  --square 0.02475 --squares 7x9 --marker 0.01782
+bash tools/build.sh --packages-select pimesh_bringup && bash tools/sync-pi.sh && bash tools/build-pi.sh
+bash tools/gates/calibration.sh
+```
+
+The numbers are the **measured** size of `docs/charuco_a4_7x9_25mm.pdf` as printed —
+its 100 mm bar measures 99 mm, so the nominal 25/18 mm are really 24.75/17.82. Check
+that bar with a ruler if the sheet is ever reprinted: nothing in software can detect a
+scale error, and it goes straight into every distance the pipeline reports.
+
+`--squares` is the count of **squares**, not interior corners. The command printed
+along the bottom of the sheet itself passes the corner count and interpolates nothing;
+see [troubleshooting.md](troubleshooting.md). And `session`/`install` exist but are
+superseded — `cameracalibrator` does not run on Lyrical at all.
+
+Two results from that phase that a newcomer should not have to rediscover: this camera
+has **essentially no lens distortion at 720p**, and its `fx` is pinned only to
+**±2.2%**. Both are in [hardware.md](hardware.md#calibration-target).
+
 **A gate and a unit test are different things.** The gates above are the phase
 tests — slow, mostly needing the Pi and the camera, and what actually closes a
-claim. `bash tools/test.sh` runs `colcon test`: 29 hermetic tests over four
+claim. `bash tools/test.sh` runs `colcon test`: 82 hermetic tests over six
 suites that need no hardware and run identically under both distros. Note that
 `colcon test` exits 0 when a test *fails*, and again when a package has no tests
 at all, so `colcon test-result --all` is what decides — which is why

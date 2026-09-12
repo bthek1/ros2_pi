@@ -20,6 +20,7 @@ evidence.
 | M0.5 | Scaffolding proven: `pimesh_hello`, composed container, both distros, clean teardown | **done 2026-09-08** — [issue #2](https://github.com/bthek1/ros2_pi/issues/2), five `tools/gates/hello-*.sh` scripts. Teardown corrected **2026-09-09**: it held for `hello-lan` but not `hello-compose`, and the gate had only ever signalled the former |
 | M1 | Workspace skeleton: `pimesh_msgs`, `pimesh_bringup`, justfile, both machines build | **done 2026-09-09** — [issue #4](https://github.com/bthek1/ros2_pi/issues/4) P0, `bash tools/gates/build.sh`: clean builds 10.2 s here (Lyrical) / 32.0 s on the Pi (Jazzy), all 5 interfaces byte-identical across the two |
 | M2 | `pimesh_camera` on the Pi — V4L2 MJPEG, honest capture stamps, fails loudly | **done 2026-09-09** — [issue #4](https://github.com/bthek1/ros2_pi/issues/4) P1, `bash tools/gates/capture.sh`: 44–59 Hz on the dev box, stamp offset 4.21 ms single-clock, two launches agreeing to 0.30–1.02 ms, busy device refused in 0.24 s |
+| M2.5 | Camera calibration — real C922 intrinsics, served on `/camera_info` | **done 2026-09-12** — [issue #9](https://github.com/bthek1/ros2_pi/issues/9) P9, `bash tools/gates/calibration.sh`: fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection 0.4955 px, median straightness 0.7796 px, coverage 0.896 over 4/4 quadrants, 24 marker-confirmed frames. Numbered `P9` and sequenced before P3 — the number is an identity, the order is a schedule |
 | M3 | Dev-box container — `decode_node` with intra-process comms proven zero-copy | not started |
 | M4 | `keypoint_node` — ORB, matching, annotated preview | not started |
 | M5 | `depth_node` — ONNX Runtime C++ on the GPU, metric depth published | not started |
@@ -54,9 +55,14 @@ Work that is real but not executable yet is **not** a phase. It sits in the
 deferred half of
 [../plans/future/project_final_state.md](../plans/future/project_final_state.md#part-2--deferred),
 each entry with the trigger that would make it executable — CUDA TSDF kernels,
-the TensorRT provider, relocalisation, a CUDA OpenCV build, and the
-loop-closure work that becomes M10. When a trigger fires, the entry moves into
-the phase list as the next phase number. Nothing waits in both places.
+the TensorRT provider, relocalisation, a CUDA OpenCV build, the loop-closure work
+that becomes M10, and **re-calibrating on a flat mount** if the scale turns out to
+matter. That last one is the freshest and has the most concrete trigger: P9's `fx` is
+pinned only to **±2.2%**, which is a ±2.2% slack in every distance this pipeline
+reports, and **M6's tape measure is the first thing that can check a scale
+independently of the calibration that produced it**. Disagreement beyond about 2% is
+the trigger. When a trigger fires, the entry moves into the phase list as the next
+phase number. Nothing waits in both places.
 
 ## Never in scope
 
