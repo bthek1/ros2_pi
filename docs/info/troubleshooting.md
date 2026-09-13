@@ -353,6 +353,59 @@ in the foreground, neither is needed. Confirm with `ps -o stat= -p <pid>` — a
 replayed without `pimesh.launch.py` produces the same grey panel for an entirely
 different reason. `just replay` starts the launch for exactly this.
 
+## A looping replay flickers, and floods the terminal with `TF_OLD_DATA`
+
+**Symptom.** `bash tools/replay.sh desk1` comes up fine, and after about a minute
+the RViz Image panel starts stuttering, the 3D view stutters **while displaying
+nothing at all**, and the terminal fills with
+
+```
+[WARN] []: TF_OLD_DATA ignoring data from the past for frame base_link at time ...
+```
+
+at roughly the frame rate. Nothing has been touched; the first pass looked
+perfect.
+
+**Cause.** About a minute is the length of the clip, and the wrap is the event.
+`ros2 bag play --loop` restarts at the beginning, so every `header.stamp` jumps
+~60 s into the past; `keypoint_node` stamps `odom -> base_link` with the frame's
+own stamp, as it must; and `tf2::BufferCore` refuses any transform older than
+the newest it already holds. Measured 2026-09-13 with `tf2_echo odom base_link`
+beside a looping player: the edge advanced for the first pass and then **froze at
+the bag's final stamp for the whole rest of the run**. It cannot recover, because
+the newest stamp the loop will ever produce is the one already in the buffer.
+
+The flicker is the *logging*, not the rendering. `RCUTILS_LOG_WARN("TF_OLD_DATA
+...")` is emitted inside `setTransform`'s `std::unique_lock<std::mutex>
+lock(frame_mutex_)` (geometry2, `buffer_core.cpp`), and rclcpp serialises log
+output on a process-global mutex behind a synchronous write to the terminal. So
+~59 times a second RViz's TF buffer is held shut across a terminal write while
+its render loop waits on the same mutex for `lookupTransform`. Both panels are
+drawn by that one Qt loop, which is why an **empty** 3D view stutters too — that
+is the tell that the problem is not in the graphics.
+
+**Fix.** Do not publish a dynamic transform over a looping bag.
+`bash tools/replay.sh` starts `pimesh.launch.py pipeline:=false`, which brings up
+the static frame tree and no components at all; `bash tools/view-keypoints.sh
+<seconds> <bag>` needs the pose, so it plays the clip **once** and ends when the
+clip does. With a purely static chain `_getLatestCommonTime` returns
+`TimePointZero`, which `FrameInfo::setLastUpdate` special-cases into a refresh on
+every tick, so the frames stay lit rather than ageing out under camera.rviz's
+15 s Frame Timeout.
+
+**The obvious fix is measured wrong.** `ros2 bag play --clock` with
+`use_sim_time:=true` makes the wrap a clean backwards time jump, which is what
+`tf2_ros::Buffer::onTimeJump` exists for — and it handles it by calling
+`clear()` on the **whole** buffer, `tf_static` included. Nothing republishes a
+latched topic afterwards. Measured the same day over four wraps: the tree went
+away at the first `Detected jump back in time. Clearing TF buffer.` and never
+came back. RViz does the same thing to its own displays one layer up
+(`Detected jump back in time. Resetting RViz.`).
+
+**Related.** Out-of-order *and* duplicated stamps in that flood — the same time
+printed two or three times — mean more than one player or container is running.
+`bash tools/stragglers.sh`.
+
 ## `cameracalibrator` sees nothing, and `republish` is why
 
 **Symptom.** `bash tools/calibrate.sh session` comes up, the calibrator window opens,

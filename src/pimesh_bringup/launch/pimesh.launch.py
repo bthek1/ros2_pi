@@ -41,6 +41,17 @@ than a fourth entry in the list below, because `composable_node_descriptions` is
 built when this file is evaluated and cannot be made conditional on an argument.
 `LoadComposableNodes` can: it calls the running container's load service, which
 is the same path `ros2 component load` takes.
+
+**`pipeline:=false` brings up the frame tree and nothing else**, which is the
+shape this file had before P2 put components in it, and it exists again because
+a *looping bag* and a node publishing TF from that bag's stamps cannot both be
+right. `ros2 bag play --loop` restarts at the beginning, so every header stamp
+jumps ~60 s into the past; `keypoint_node` stamps `odom -> base_link` with the
+frame's own stamp, as it must; and `tf2::BufferCore` refuses data older than the
+newest it holds. Measured 2026-09-13: after the first wrap the edge froze at the
+bag's final stamp and never moved again for the rest of the run, while every
+listener logged TF_OLD_DATA at the frame rate. `tools/replay.sh` is the viewer
+that wants this — see its header for why the warning is not merely noisy.
 """
 
 import os
@@ -184,6 +195,13 @@ def generate_launch_description() -> LaunchDescription:
                         'frame. 59 log lines a second; for gates, not for use.',
         ),
         DeclareLaunchArgument(
+            'pipeline',
+            default_value='true',
+            description='Compose the dev-box stages into the container. false '
+                        'brings up the static frame tree alone, which is what a '
+                        'looping bag replay wants: see the note at the top.',
+        ),
+        DeclareLaunchArgument(
             'probe',
             default_value='false',
             description="Also load pimesh_perception's IpcProbe, the instrument "
@@ -193,6 +211,12 @@ def generate_launch_description() -> LaunchDescription:
         ComposableNodeContainer(
             name='pimesh_container',
             namespace='',
+            # Everything downstream of capture, or nothing. There is no
+            # half-measure here on purpose: the components share one process
+            # precisely so that a frame is handed on as a pointer, and a
+            # `pipeline:=false` run is asking for the frame tree on its own
+            # rather than for a smaller pipeline.
+            condition=IfCondition(LaunchConfiguration('pipeline')),
             package='rclcpp_components',
             # `component_container_isolated`, not `component_container_mt`, as of
             # 2026-09-12 — and the change is about two things at once.

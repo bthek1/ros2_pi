@@ -28,7 +28,50 @@
 #     rviz/camera.rviz has base_link as its Fixed Frame. Replayed on its own the
 #     image therefore has no frame to hang off and RViz shows the same grey
 #     panel for a completely different reason. pimesh.launch.py supplies the
-#     three static transforms; it is started here for that and nothing else.
+#     three static transforms; it is started here for that and nothing else,
+#     which is what `pipeline:=false` says — see note 3.
+#
+#  3. **A looping bag and a node publishing TF from it cannot both be right, and
+#     that is what made this window flicker.** The comment above said the launch
+#     was started "for the static transforms and nothing else"; it had been true
+#     when it was written and stopped being true when P2 and P3 put decode_node
+#     and keypoint_node into that launch. `keypoint_node` stamps
+#     `odom -> base_link` with the frame's own stamp, as it must, and `--loop`
+#     sends the frame stamps ~60 s into the past every time the bag restarts.
+#     `tf2::BufferCore::setTransform` then rejects every one of them, because
+#     each is older than the newest transform it already holds.
+#
+#     Two things follow, and both were visible. Measured here 2026-09-13, one
+#     clean run, `tf2_echo odom base_link` beside a looping `ros2 bag play`: the
+#     edge advanced normally for the first pass and then **froze at the bag's
+#     final stamp for the whole rest of the run** — a pose that can never catch
+#     up, because the loop's newest stamp is the one already in the buffer. And
+#     the *rejection* is logged, at the frame rate, by every listener in the
+#     domain including RViz.
+#
+#     That flood is the flicker. `RCUTILS_LOG_WARN("TF_OLD_DATA ...")` is emitted
+#     inside `setTransform`'s `std::unique_lock<std::mutex> lock(frame_mutex_)`
+#     (geometry2, buffer_core.cpp), and rclcpp serialises log output on a
+#     process-global mutex behind a synchronous write to the terminal. So ~59
+#     times a second RViz's TF buffer was held shut across a terminal write while
+#     its render loop waited on the same mutex for `lookupTransform`. Both panels
+#     are drawn by that one Qt loop, which is why the 3D view stuttered *while
+#     displaying nothing at all* — it was not a rendering bug, and the empty view
+#     is the tell.
+#
+#     `--clock` and `use_sim_time` are the obvious fix and are measured wrong
+#     here: the backwards jump fires `tf2_ros::Buffer::onTimeJump`, which
+#     `clear()`s the whole buffer, `tf_static` included, and nothing republishes
+#     a latched topic afterwards. Measured the same day, four wraps: the tree
+#     went away at the first "Detected jump back in time. Clearing TF buffer."
+#     and never came back. So this recipe takes the other road and publishes no
+#     dynamic TF at all. With a purely static chain `_getLatestCommonTime`
+#     returns `TimePointZero`, which `FrameInfo::setLastUpdate` special-cases
+#     into a refresh on every tick — so the frames stay lit indefinitely instead
+#     of fading out under camera.rviz's 15 s Frame Timeout.
+#
+#     The pipeline on a bag is `bash tools/view-keypoints.sh <seconds> <bag>`,
+#     and that one does not loop, for the same reason.
 #
 # Teardown is local-only — `arm_cleanup kill_local` rather than the default
 # cleanup_both — because no part of this touches the Pi, and an SSH round trip
@@ -96,6 +139,13 @@ What you should see:
            topics carries no tf_static and never has.
   Fixed Frame is base_link.
 
+  map and odom are in the tree with no edge to base_link, and RViz says so.
+  That is correct here and not a fault: the edge odom -> base_link is
+  keypoint_node's, and nothing downstream of capture runs in this recipe —
+  a looping bag replays old stamps, and a pose published from them floods
+  every TF listener in the domain. The pipeline on this clip is
+  \`bash tools/view-keypoints.sh ${SECONDS_LIMIT} $(basename "$BAG")\`.
+
 The intrinsics you are looking at are whatever was true when the bag was
 recorded, and a bag recorded before a calibration existed carries the nominal
 placeholder. \`ros2 topic echo --once /camera_info\` during playback is the only
@@ -103,10 +153,11 @@ honest way to know which.
 
 CHECKLIST
 
-# The frames. Static transforms are latched, so this only has to be up before
-# RViz asks — but it stays up, because a transient-local publisher that exits
-# takes its data with it.
-ros2 launch pimesh_bringup pimesh.launch.py >/dev/null 2>&1 &
+# The frames, and only the frames — `pipeline:=false`, for the reason in note 3.
+# Static transforms are latched, so this only has to be up before RViz asks — but
+# it stays up, because a transient-local publisher that exits takes its data with
+# it.
+ros2 launch pimesh_bringup pimesh.launch.py pipeline:=false >/dev/null 2>&1 &
 
 # The bag. See note 1 at the top for why both the flag and the redirect are
 # here; dropping either one is how this recipe goes quietly blank.

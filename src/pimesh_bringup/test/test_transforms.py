@@ -263,8 +263,10 @@ def test_the_launch_description_actually_builds(launch_module):
 
     assert kinds.get(Node) == len(launch_module.STATIC_TRANSFORMS)
     assert kinds.get(ComposableNodeContainer) == 1, 'there is one container, always'
-    # intra_process, log_payloads, probe — each of which exists for a gate.
-    assert kinds.get(DeclareLaunchArgument) == 3
+    # intra_process, log_payloads, probe, pipeline — each of which exists because
+    # something outside this file has to be able to flip it: the first three for
+    # gates, the last for tools/replay.sh.
+    assert kinds.get(DeclareLaunchArgument) == 4
     # The probe, loaded into the running container rather than listed in it,
     # because `composable_node_descriptions` cannot be made conditional.
     assert kinds.get(LoadComposableNodes) == 1
@@ -284,3 +286,37 @@ def test_the_probe_is_not_loaded_by_default(launch_module):
     assert len(loads) == 1
     assert isinstance(loads[0].condition, IfCondition), (
         'the probe load is unconditional — it would run in every session')
+
+
+def test_the_container_can_be_left_out_but_is_there_by_default(launch_module):
+    """`pipeline:=false` has to actually remove the container, and the default
+    has to keep it.
+
+    This is the assertion tools/replay.sh stands on. A looping bag replays header
+    stamps ~60 s into the past at every wrap, keypoint_node stamps
+    `odom -> base_link` with the frame's own stamp, and tf2 rejects every
+    transform older than the newest it holds — so a replay that composes the
+    pipeline freezes that edge after one pass and logs TF_OLD_DATA at the frame
+    rate from inside the buffer's own mutex, which stalls every listener's
+    lookups including RViz's render loop. Measured 2026-09-13.
+
+    A condition that silently evaluated true would put that back without a word,
+    which is why this evaluates it rather than only checking one is attached.
+    """
+    from launch import LaunchContext
+    from launch_ros.actions import ComposableNodeContainer
+
+    description = launch_module.generate_launch_description()
+    containers = [
+        a for a in description.entities if isinstance(a, ComposableNodeContainer)
+    ]
+    assert len(containers) == 1
+    condition = containers[0].condition
+    assert condition is not None, (
+        'the container is unconditional — `pipeline:=false` would compose it anyway'
+    )
+
+    for value, expected in (('true', True), ('false', False), ('1', True), ('0', False)):
+        context = LaunchContext()
+        context.launch_configurations['pipeline'] = value
+        assert condition.evaluate(context) is expected, f'pipeline:={value}'

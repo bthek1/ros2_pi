@@ -15,6 +15,19 @@
 #
 # Takes a bag name to replay instead of the camera: `bash tools/view-keypoints.sh
 # 600 desk1`. With no bag it uses the Pi's live camera.
+#
+# **A bag plays once here, not on a loop, and that is the one thing about this
+# recipe worth reading.** This view exists to show the pose moving, and a pose
+# and a looping bag are mutually exclusive. `keypoint_node` stamps
+# `odom -> base_link` with the frame's own stamp, as it must; `--loop` sends
+# those stamps ~60 s into the past at every wrap; and `tf2::BufferCore` rejects
+# any transform older than the newest it holds. Measured 2026-09-13 with
+# `tf2_echo` beside a looping player: the edge froze at the bag's last stamp for
+# the whole rest of the run, and every listener — RViz included — logged
+# TF_OLD_DATA at the frame rate from inside the buffer's own mutex, which stalls
+# the render loop and makes both panels stutter. tools/replay.sh's header has
+# the long version, including why `--clock` and `use_sim_time` are measured to
+# be the wrong fix. So: one pass, and the session ends when the clip does.
 
 source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
 
@@ -40,7 +53,7 @@ if [[ -n $BAG ]]; then arm_cleanup kill_local; else arm_cleanup; fi
 cat <<CHECKLIST
 == view-keypoints ==
 
-  source     ${BAG:-the live camera on the Pi}
+  source     ${BAG:-the live camera on the Pi}${BAG:+ — one pass, no loop}
 
 What you should see, and what each part of it tells you:
 
@@ -64,15 +77,16 @@ CHECKLIST
 if [[ -n $BAG ]]; then
     # See tools/replay.sh for why both the flag and the redirect are needed: a
     # backgrounded player that can read its terminal is stopped by SIGTTIN and
-    # publishes nothing, silently.
+    # publishes nothing, silently. **No `--loop`** — see the header.
     run_for "$SECONDS_LIMIT" \
-        ros2 bag play "$BAG" --loop --disable-keyboard-controls \
+        ros2 bag play "$BAG" --disable-keyboard-controls \
         </dev/null >/dev/null 2>&1 &
 else
     # pi_run_for puts `timeout` inside the login shell, so the limit reaches the
     # node rather than the shell wrapping it.
     pi_run_for "$SECONDS_LIMIT" "ros2 run pimesh_camera camera_node" &
 fi
+SOURCE_PID=$!
 
 # The container: decode_node and keypoint_node in one process, intra-process comms
 # on, plus the static frame tree keypoint_node takes its optical-to-body basis from.
@@ -84,4 +98,10 @@ sleep 3
 export QT_QPA_PLATFORM=xcb
 
 run_for "$SECONDS_LIMIT" rviz2 -d "$RVIZ_CONFIG" &
-wait $! || true
+RVIZ_PID=$!
+
+# Whichever ends first ends the session, and the EXIT trap takes the other down.
+# Waiting on rviz2 alone would leave a bag that has played its one pass showing a
+# frozen last frame for the rest of ${SECONDS_LIMIT}, which reads as a hang; the
+# clip running out is a legitimate end to this recipe and should look like one.
+wait -n "$SOURCE_PID" "$RVIZ_PID" || true
