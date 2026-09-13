@@ -56,27 +56,50 @@ payloads, **4.21 ms** median dequeue-to-subscriber measured on the Pi's own
 clock, and two launches agreeing on their stamp offset to **0.30–1.02 ms** —
 which is the assertion that `usb_cam` 0.8.1 fails by hundreds of milliseconds.
 
-**Decode and keypoints are built as of 2026-09-12** — milestone B, P2 and P3,
-[gh issue #5](https://github.com/bthek1/ros2_pi/issues/5). `pimesh_perception`
-joins the four packages: one container, one network subscriber, `cv::imdecode` at
-**1.90 ms/frame**, and the decoded 2.7 MB buffer reaching its consumers at the
-address it was published from — **504/504** with intra-process comms on against
-**0/395** with it off (`bash tools/gates/ipc.sh`). ORB then runs at **48.6 Hz
-sustained, 6.71 ms/frame** on the node's own clock against an 8 ms budget, with a
-matched-keypoint fraction of **0.952** against the predecessor's algorithm at
-**0.951** over the same clip (`bash tools/gates/keypoints.sh`), and publishes a
-rotation-only `odom -> base_link`.
+**Decode and keypoints are built, and milestone B is closed as of 2026-09-13** —
+P2 and P3, [gh issue #5](https://github.com/bthek1/ros2_pi/issues/5).
+`pimesh_perception` joins the four packages: one container, one network subscriber,
+`cv::imdecode` at **1.87–1.93 ms/frame** keeping up with the Pi's full 59.4 Hz, and
+the decoded 2.7 MB buffer reaching its consumers at the address it was published
+from — **529/529** with intra-process comms on against **0/387** with it off
+(`bash tools/gates/ipc.sh`). ORB then runs at **57.9 Hz sustained, 5.99 ms/frame**
+on the node's own clock against an 8 ms budget, with a matched-keypoint fraction of
+**0.9063** against the predecessor's algorithm at **0.9065** over the same 3489
+frames (`bash tools/gates/keypoints.sh`), and publishes a rotation-only
+`odom -> base_link` that holds its last pose rather than guessing when its gates
+fail (8.2% of frames on the reference clip).
 
-**That phase cost two things worth reading before touching the container.** The
-zero-copy claim had to be earned twice: the gate passed at **429/429 with one
-consumer** and reported **0/574** on the very next run with a second consumer
-beside it, same code, same flags — because rclcpp serves ownership-taking
-intra-process subscriptions by moving the buffer into the *last* one and
-**copying it for every other**. A fan-out wants `ConstSharedPtr` callbacks, which
-rclcpp serves by handing one buffer to all of them. And the workspace had been
-compiling with **no optimisation flags at all**, so every C++ cost this project
-had ever measured was a `-O0` number: P3's budget was what found it, at 7.90 ms
-against an 8 ms ceiling where `-O2` gives 6.71 ms.
+**`bags/desk1` is the reference clip** — 59.7 s, 3489 frames at 58.5 Hz, 220 MB,
+sha256 `1333c5bd…`. `bags/` is git-ignored, so that hash is its only identity, and
+every phase from here measures against the same seconds of room. Record one with
+`bash tools/record-clip.sh <name> <seconds>`; it resets the camera's V4L2 controls
+first, because a clip recorded at 20 fps under a stale manual exposure cannot be
+un-recorded.
+
+**Three of that milestone's measurements were wrong before they were right, and
+every one of them was the gate rather than the code.** They are the most useful
+thing it produced, because each was a *false green or a false red that no number
+looked wrong in*:
+
+1. **The zero-copy claim passed while measuring the case that cannot fail.**
+   429/429 with one consumer, then **0/574** on the very next run with a second
+   consumer beside it — same code, same flags. rclcpp moves the buffer into the
+   *last* ownership-taking subscription and **copies it for every other**; a fan-out
+   wants `ConstSharedPtr`, which rclcpp hands to all of them at once.
+   `gates/ipc.sh` now asserts at least two subscribers.
+2. **A 20 s window of a 60 s clip was compared against that clip's average**, and
+   reported an 11-point regression in a tracker that was working. A hand-held sweep
+   is not uniform, so *which seconds you measure* moved the answer further than a
+   real regression would. The gate now plays the clip once, start to finish, and
+   asserts that ≥85% of its frames reached the probe.
+3. **A frame with no features was a matched fraction of zero to one side and
+   skipped by the other** — 0/0 is undefined, not zero, and counting it as zero
+   also conflates "no corners in this part of the room" with "corners found and
+   none recognised". Worth ~5 points, which was the whole tolerance.
+
+And the workspace had been compiling with **no optimisation flags at all**, so
+every C++ cost this project had ever measured was a `-O0` number. P3's budget was
+what found it, at 7.90 ms against an 8 ms ceiling where `-O2` gives 5.99 ms.
 
 **Everything downstream of keypoints still does not exist.** No depth, no fusion,
 no mesh, no dashboard — that is
