@@ -146,6 +146,11 @@ awk -v s="$square" 'BEGIN {exit !(s > 0.005 && s < 0.15)}' || {
     echo "calibrate: --square $square is not a plausible size in METRES" >&2; exit 2
 }
 
+# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# the cleanup handler kills this workspace's processes, so a refusal after the
+# trap is armed would tear down the session it is refusing to disturb.
+assert_no_session "bash tools/calibrate.sh"
+
 arm_cleanup
 
 work=$(mktemp -d)

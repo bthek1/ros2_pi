@@ -314,6 +314,57 @@ strong priors, re-verify before quoting a number as this project's own.
   So a stamp-age gate on the dev box is *still* forbidden — it would be
   measuring NTP. Compare stamps to stamps (deltas are kernel capture intervals
   and are trustworthy), and measure latency where one clock covers both ends.
+- **A looping bag and a node publishing TF from it cannot both be right**,
+  measured here 2026-09-13. `ros2 bag play --loop` restarts the clip, so every
+  `header.stamp` jumps back by the bag's length; `keypoint_node` stamps
+  `odom -> base_link` with the frame's own stamp, as it must; and
+  `tf2::BufferCore` refuses any transform older than the newest it already
+  holds. So after the first wrap the edge **froze at the bag's final stamp for
+  the rest of the run** — it can never catch up, because the newest stamp the
+  loop will ever produce is the one already in the buffer — and every rejection
+  was logged, at the frame rate, by every listener in the domain.
+
+  **That flood is why RViz flickered, and the mechanism is worth knowing.**
+  `RCUTILS_LOG_WARN("TF_OLD_DATA ...")` is emitted *inside* `setTransform`'s
+  `std::unique_lock<std::mutex> lock(frame_mutex_)` (geometry2,
+  `buffer_core.cpp`), and rclcpp serialises log output on a process-global mutex
+  behind a synchronous write to the terminal. So ~59 times a second the TF buffer
+  was held shut across a terminal write while RViz's render loop waited on the
+  same mutex for `lookupTransform`. Both panels are drawn by one Qt loop, so the
+  **empty** 3D view stuttered too — which is the tell that a stall like this is
+  not a graphics problem. **A log line under a lock is a rate limit on everything
+  that lock protects.**
+
+  **`--clock` with `use_sim_time` is the obvious fix and is measured wrong.** The
+  backwards jump fires `tf2_ros::Buffer::onTimeJump`, which calls `clear()` on
+  the **whole** buffer — `tf_static` included — and nothing republishes a latched
+  topic afterwards. Over four wraps the tree went away at the first "Detected
+  jump back in time. Clearing TF buffer." and never came back. RViz does the same
+  one layer up ("Detected jump back in time. Resetting RViz."). A bag that
+  carried `/tf_static` would re-seed it on each loop; ours do not.
+  So: `tools/replay.sh` loops and starts `pimesh.launch.py pipeline:=false` —
+  the static frame tree, no components — and `tools/view-keypoints.sh` needs the
+  pose, so it plays a bag **once**. `gates/keypoints.sh` had already reached the
+  same conclusion independently.
+- **One session at a time, and this is the same rule as "one Wi-Fi reader" seen
+  from the publisher's side.** Two sessions on one ROS domain are not two
+  independent sessions. Measured 2026-09-13: `just view-camera` and
+  `just replay desk1` up together put the Pi's live camera *and* a three-minute-old
+  bag on `/image_raw/compressed`, so one `keypoint_node` decoded the interleaved
+  mixture and published a pose whose stamps jumped minutes back and forth —
+  flooding both RViz windows through the mutex above. **Neither session had
+  anything wrong with it**, and each was silent run alone (0 warnings over 195 s
+  of replay, 75 s of view-camera). The tell is in the warning text: the same
+  timestamp printed two or three times, and timestamps going *backwards* within
+  one second of log.
+
+  `assert_no_session` in `tools/just-lib.sh` is the guard, and **every script
+  that starts a session calls it, gates included** — for a gate it is the sharper
+  case, because a measurement taken beside another session is a measurement of a
+  mixture with nothing in the output saying so. It is called **before
+  `arm_cleanup`**, always: the cleanup handler kills this workspace's processes,
+  so a refusal after the trap is armed would tear down the session it is refusing
+  to disturb.
 - **V4L2 controls persist inside the camera** *(inherited)* across processes and
   reboots. A manual exposure left by a benchmark makes every later session
   black; the C922 powers on with `exposure_dynamic_framerate=1`, which costs
@@ -534,7 +585,12 @@ strong priors, re-verify before quoting a number as this project's own.
   `RCLCPP_COMPONENTS_REGISTER_NODE`, each with a thin `*_main.cpp` so it can also
   run standalone. The bringup launch composes the dev-box ones into a single
   container with `use_intra_process_comms=True`. A node that only works
-  standalone is a bug. **`src/pimesh_hello/` is the worked example** and
+  standalone is a bug. **`pipeline:=false` leaves the container out entirely**,
+  bringing up the three static transforms alone — it is the shape the launch had
+  before P2, and it exists again because `tools/replay.sh` must not publish a
+  pose over a looping bag (see the constraint above). Everything or nothing, not
+  a smaller pipeline: the components share one process precisely so a frame is
+  handed on as a pointer. **`src/pimesh_hello/` is the worked example** and
   `src/pimesh_camera/` is the same shape doing real work — copy either rather
   than rediscovering it: the class declared in
   `include/pimesh_hello/`, defined in `src/`, the register macro at the foot of
@@ -647,6 +703,12 @@ strong priors, re-verify before quoting a number as this project's own.
   `pgrep -f` pattern is bracketed and path-anchored (`/lib/[p]imesh_hello/`) —
   see the troubleshooting entry on why the plain spelling kills the shell that
   runs it.
+
+  **`assert_no_session` is the same question asked before the fact**, out of the
+  same pattern list and the same `pimesh_local_processes`, so "what of ours is
+  running" has exactly one spelling. The sweep says what outlived a session; the
+  guard refuses to start beside one. Every script that starts a session calls it,
+  gates included, before `arm_cleanup`.
 - **This applies to ad-hoc runs too — that means you, Claude.** Anything you
   start by hand while verifying has no EXIT trap. Bound it up front —
   **`timeout --foreground -s INT 30 …`**, and on the Pi
@@ -656,6 +718,14 @@ strong priors, re-verify before quoting a number as this project's own.
   cannot reach, so a run you meant to bound becomes one you cannot interrupt.
   **A leaked camera process holds `/dev/video0` exclusively** and every later
   session dies with `Device or resource busy`.
+
+  **And check the machine is yours before you measure on it, not only after.**
+  A number taken while somebody else's viewer is up is a number about a mixture
+  of two sources — that is how an afternoon went on 2026-09-13, with a flood
+  reproduced under `just replay` that `replay.sh` could not possibly have caused.
+  `bash tools/stragglers.sh` before the first measurement, and read the user's
+  terminal for a session they have open; the scripts now refuse on their own, but
+  an ad-hoc `ros2 launch` you type yourself does not.
 - **Claims are closed by scripts, not by eyes.** A gate names its evidence: a
   number on a topic, a log line with a threshold, a rendered image file. Reserve
   "needs a human" for the physical world — a tape-measure scale check, exposure
@@ -734,7 +804,10 @@ somebody once.
 | [#4](https://github.com/bthek1/ros2_pi/issues/4) **(closed 2026-09-09)** [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A is done — P0 and P1, the cross-distro workspace and capture — and B's two phases are built and measured (P2, P3). Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
 | `bash tools/gates/ipc.sh` / `bash tools/gates/keypoints.sh` | **P2 and P3's gates.** `ipc.sh` runs the real container twice against the Pi's live camera and compares published buffer addresses with intra-process comms on and off — and asserts the decoded topic has at least two subscribers, because one consumer is the configuration that cannot fail. `keypoints.sh` replays `bags/desk1` and measures three things three ways: the rate from a C++ subscriber's steady clock, the per-frame cost from the node's own log line, and the matched-keypoint fraction against `tools/orb_reference.py` — the predecessor's algorithm reimplemented in Python over the same clip, which is the only part of the gate with an outside opinion about whether the corners mean anything |
 | `bash tools/record-clip.sh desk1 60` | **The reference clip.** A 60 s hand-held sweep, recorded once, that every phase from P3 on replays so the numbers compare like for like. `bags/` is git-ignored, so a fresh clone has none and `gates/keypoints.sh` says so rather than pretending. The script resets the camera's V4L2 controls first and records `/camera_info` alongside the frames, because a clip recorded at 20 fps under a stale manual exposure cannot be un-recorded |
-| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 134 of them across ten suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms`, the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on — plus milestone B's four: `test_mailbox` (newest-wins and its drop accounting), `test_image_buffer` (the bgr8 layout arithmetic, and that a `cv::Mat` over a message shares its memory), `test_rotation_fit` (Kabsch against known rotations, the reflection guard, the reject-worst refits, and the optical-to-body change of basis) and `test_orb_tracker` (synthetic frames with a known displacement: that the window forgives detection churn, that unrelated scenes do not match, and that a track id is never claimed twice in one frame) |
+| `bash tools/replay.sh` / `view-camera.sh` / `view-keypoints.sh` | **The three viewers, and none of them is evidence.** `replay` loops a bag with `pipeline:=false` — the static frame tree and no components, because a pose published over a looping bag freezes and floods every TF listener; `view-camera` is the Pi's live camera; `view-keypoints` is the pipeline, on the camera or on a bag **played once** for the same reason. All three call `assert_no_session` before `arm_cleanup`, as does every gate: two sessions on one domain put two publishers on `/image_raw/compressed` and make both of them look broken |
+| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 135 of them across ten suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+evaluates the launch file's `pipeline` condition both ways, so `pipeline:=false`
+cannot quietly stop removing the container —  the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on — plus milestone B's four: `test_mailbox` (newest-wins and its drop accounting), `test_image_buffer` (the bgr8 layout arithmetic, and that a `cv::Mat` over a message shares its memory), `test_rotation_fit` (Kabsch against known rotations, the reflection guard, the reject-worst refits, and the optical-to-body change of basis) and `test_orb_tracker` (synthetic frames with a known displacement: that the window forgives detection churn, that unrelated scenes do not match, and that a track id is never claimed twice in one frame) |
 | `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the shell lives in `tools/`; the justfile was trimmed further the same day to `build` + `run` only, so that issue's `just gate-*` spelling is history, not instruction |
 | [docs/plans/future/milestone-a-future.md](docs/plans/future/milestone-a-future.md) | Work deferred out of milestone A, each entry with its trigger: the checkerboard calibration (waiting on P5's tape-measure visit), `PipelineStats` from `camera_node` (waiting on the dashboard), the dev-box rate margin, and device reconnection |
 

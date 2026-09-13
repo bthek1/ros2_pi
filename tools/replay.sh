@@ -121,6 +121,10 @@ done
 RVIZ_CONFIG="$(ros2 pkg prefix pimesh_bringup)/share/pimesh_bringup/rviz/camera.rviz"
 [[ -r $RVIZ_CONFIG ]] || { echo "no RViz config at $RVIZ_CONFIG — build first"; exit 1; }
 
+# Before arm_cleanup, deliberately: the EXIT handler is kill_local, so refusing
+# after the trap is armed would tear down the session being refused.
+assert_no_session "just replay"
+
 arm_cleanup kill_local
 
 cat <<CHECKLIST

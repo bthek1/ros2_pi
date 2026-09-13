@@ -92,13 +92,26 @@ RECIPES=(lan compose view-camera replay view-keypoints)
 # teardown gate fail for reasons that have nothing to do with teardown, and
 # would make what it asserts depend on which machine it ran on.
 #
-# So the fixture is synthesized: three seconds of a throwaway topic, recorded
-# into a temp directory and deleted on the way out. `replay` never reads the
-# messages — it hands the bag to `ros2 bag play` and puts RViz in front of it —
-# so the payload is irrelevant and a std_msgs/String is the cheapest thing that
-# makes a valid bag. What is being tested is the process tree: a player, a
-# launcher, three static transform publishers and a viewer, all of which must be
-# gone three seconds after the signal.
+# So the fixture is synthesized: a throwaway topic recorded into a temp directory
+# and deleted on the way out. `replay` never reads the messages — it hands the bag
+# to `ros2 bag play` and puts RViz in front of it — so the payload is irrelevant
+# and a std_msgs/String is the cheapest thing that makes a valid bag. What is being
+# tested is the process tree: a player, a launcher, three static transform
+# publishers and a viewer, all of which must be gone three seconds after the
+# signal.
+#
+# **Its length is load-bearing, and three seconds was too short — 2026-09-13.**
+# `view-keypoints` plays a bag **once** rather than on a loop (a looping bag
+# replays header stamps minutes into the past, and keypoint_node's pose is then
+# rejected by every TF listener in the domain — tools/replay.sh's header has the
+# measurement). `session_up` for that recipe requires the player, the container
+# *and* the viewer to be running at the same moment, and rviz2 takes several
+# seconds to exist — so a three-second clip was finished before there was
+# anything to see, and the gate failed with "view-keypoints never came up"
+# against a recipe that was behaving correctly. The fixture has to outlive RViz's
+# startup, which is what this is: long enough to overlap by a comfortable margin,
+# short enough that building it is not the slowest thing here.
+GATE_BAG_SECONDS=20
 GATE_BAG=
 
 # `wait` with a deadline. Bash's builtin has no timeout, so a process that
@@ -142,7 +155,7 @@ make_fixture_bag() {
         ros2 bag record -s mcap -o "$GATE_BAG" --topics /gate_clean_fixture \
         </dev/null >/dev/null 2>&1 &
     local rec=$!
-    sleep 3
+    sleep "$GATE_BAG_SECONDS"
     # SIGINT, not SIGTERM: the recorder finalizes its storage on an interrupt
     # and a bag without metadata.yaml is one tools/replay.sh refuses by design.
     # Bounded, because a `wait` that does not return is how this was found.

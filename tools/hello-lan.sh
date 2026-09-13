@@ -10,6 +10,11 @@ seconds=${1:-20}
 # One trap covers the interrupt, the normal end and the error paths, and it
 # reaches across the LAN: a talker left running on the Pi is invisible from here
 # and poisons the next run.
+# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# the cleanup handler kills this workspace's processes, so a refusal after the
+# trap is armed would tear down the session it is refusing to disturb.
+assert_no_session "just hello-lan"
+
 arm_cleanup
 
 marker="hello-from-$(pi_run hostname)"

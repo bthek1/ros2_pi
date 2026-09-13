@@ -6,6 +6,11 @@
 source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
 echo "== gate-hello-ipc =="
 
+# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# the cleanup handler kills this workspace's processes, so a refusal after the
+# trap is armed would tear down the session it is refusing to disturb.
+assert_no_session "bash tools/gates/hello-ipc.sh"
+
 arm_cleanup kill_local
 
 start_container() {     # $1 = log path, $2 = true|false

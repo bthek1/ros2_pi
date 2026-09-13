@@ -200,6 +200,19 @@ base_link ──(static)──▶ camera_link ──(static)──▶ camera_opt
 - `map → odom` is only published once there is a backend to publish it. Until
   then the launch publishes a static identity so the frame exists and RViz has a
   fixed frame, and that fact is stated in the launch file, not hidden.
+- **A dynamic edge and a looping bag are mutually exclusive**, measured
+  2026-09-13. `keypoint_node` stamps `odom → base_link` with the frame's own
+  stamp, and `ros2 bag play --loop` sends those stamps back by the bag's length
+  at every wrap, which `tf2::BufferCore` rejects — so the edge freezes at the
+  bag's last stamp and every listener logs `TF_OLD_DATA` at the frame rate, from
+  inside the buffer's own mutex, which stalls RViz's render loop. The launch
+  therefore takes `pipeline:=false`, bringing up the three static edges and no
+  components at all; that is what `tools/replay.sh` uses to loop a clip safely,
+  and `tools/view-keypoints.sh`, which needs the pose, plays a bag once instead.
+  `--clock` with `use_sim_time` does not rescue it: the backwards jump makes
+  `tf2_ros::Buffer` clear the whole buffer, `tf_static` included, and nothing
+  republishes a latched topic. Full account in
+  [troubleshooting.md](troubleshooting.md).
 - **All three static edges are published as of 2026-09-09**, by
   `tf2_ros/static_transform_publisher` instances that `pimesh_bringup`'s launch
   starts, with their numbers read from `config/pimesh.yaml`. They arrive as

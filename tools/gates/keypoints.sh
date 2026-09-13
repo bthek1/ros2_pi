@@ -61,6 +61,11 @@ MIN_CLIP_COVERAGE_PCT=85
 # of the warm-up. tools/orb_reference.py skips the same number.
 WARMUP_FRAMES=15
 
+# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# the cleanup handler kills this workspace's processes, so a refusal after the
+# trap is armed would tear down the session it is refusing to disturb.
+assert_no_session "bash tools/gates/keypoints.sh"
+
 arm_cleanup kill_local
 
 fail=0

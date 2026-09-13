@@ -18,6 +18,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
 SECONDS_LIMIT=${1:-600}
 RVIZ_CONFIG="$(ros2 pkg prefix pimesh_bringup)/share/pimesh_bringup/rviz/camera.rviz"
 
+# Before arm_cleanup, deliberately: the EXIT handler kills this workspace's
+# processes on both machines, so refusing after the trap is armed would tear down
+# the session being refused.
+assert_no_session "just view-camera"
+
 arm_cleanup
 
 cat <<'CHECKLIST'

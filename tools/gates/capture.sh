@@ -44,6 +44,11 @@ BUSY_EXIT_BUDGET_S=2.0
 RATE_WINDOW_S=30
 STAMP_WINDOW_S=10
 
+# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# the cleanup handler kills this workspace's processes, so a refusal after the
+# trap is armed would tear down the session it is refusing to disturb.
+assert_no_session "bash tools/gates/capture.sh"
+
 arm_cleanup
 
 fail=0

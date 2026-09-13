@@ -48,12 +48,17 @@ fi
 # Local-only cleanup when replaying a bag: nothing here touches the Pi, and an SSH
 # round trip on the way out of a recipe that never opened one is latency for
 # nothing.
+# Before arm_cleanup, deliberately: the EXIT handler kills this workspace's
+# processes, so refusing after the trap is armed would tear down the session
+# being refused.
+assert_no_session "just view-keypoints"
+
 if [[ -n $BAG ]]; then arm_cleanup kill_local; else arm_cleanup; fi
 
 cat <<CHECKLIST
 == view-keypoints ==
 
-  source     ${BAG:-the live camera on the Pi}${BAG:+ — one pass, no loop}
+  source     ${BAG:-the live camera on the Pi}${BAG:+ — one pass, not looped}
 
 What you should see, and what each part of it tells you:
 
@@ -71,7 +76,14 @@ What you should see, and what each part of it tells you:
 When the pose gate fails — fewer than 8 matched pairs, or a mean ray residual over
 0.03 rad — the node **holds** the last pose and logs the regime change. During a
 fast flick you should see the axes stop rather than jump.
-
+${BAG:+
+The clip plays **once** and then everything stops updating — the preview holds its
+last frame and the TF axes fade out over 30 s. That is the end of the clip, not a
+crash: a looping bag replays header stamps minutes into the past, and a pose
+published from them is rejected by every TF listener in the domain. The window
+stays until Ctrl-C or ${SECONDS_LIMIT}s. \`bash tools/replay.sh\` is the one that
+loops, and it can because it publishes no pose at all.
+}
 CHECKLIST
 
 if [[ -n $BAG ]]; then
@@ -86,7 +98,6 @@ else
     # node rather than the shell wrapping it.
     pi_run_for "$SECONDS_LIMIT" "ros2 run pimesh_camera camera_node" &
 fi
-SOURCE_PID=$!
 
 # The container: decode_node and keypoint_node in one process, intra-process comms
 # on, plus the static frame tree keypoint_node takes its optical-to-body basis from.
@@ -98,10 +109,4 @@ sleep 3
 export QT_QPA_PLATFORM=xcb
 
 run_for "$SECONDS_LIMIT" rviz2 -d "$RVIZ_CONFIG" &
-RVIZ_PID=$!
-
-# Whichever ends first ends the session, and the EXIT trap takes the other down.
-# Waiting on rviz2 alone would leave a bag that has played its one pass showing a
-# frozen last frame for the rest of ${SECONDS_LIMIT}, which reads as a hang; the
-# clip running out is a legitimate end to this recipe and should look like one.
-wait -n "$SOURCE_PID" "$RVIZ_PID" || true
+wait $! || true

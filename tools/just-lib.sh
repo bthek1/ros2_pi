@@ -207,6 +207,120 @@ PIMESH_PATTERNS=(
     "$PIMESH_REPUBLISH_PAT"
 )
 
+# --- One session at a time --------------------------------------------------
+
+# Every process on this machine matching the patterns above, except the caller's
+# own process group.
+#
+# `pgrep -f` reads command lines, and the command line asking the question is one
+# of them — a terminal command that merely *mentions* a pattern makes the caller
+# report itself. Everything in the caller's process group is the caller or its
+# children; a process belonging to another session is by definition in another
+# group. tools/stragglers.sh reads this for the dev host, and so does
+# assert_no_session below, because the question "what of ours is running" must
+# not have two spellings.
+pimesh_local_processes() {
+    local mypgid pat hits pid rest pgid
+    mypgid=$(ps -o pgid= -p $$ | tr -d ' ')
+    for pat in "${PIMESH_PATTERNS[@]}"; do
+        hits=$(pgrep -af "$pat" 2>/dev/null || true)
+        [[ -n $hits ]] || continue
+        while read -r pid rest; do
+            [[ -n ${pid:-} ]] || continue
+            pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+            [[ $pgid == "$mypgid" ]] || echo "$pid $rest"
+        done <<<"$hits"
+    done
+}
+
+# The same question at the far end, and tools/stragglers.sh reads this too.
+#
+# Failure-tolerant on purpose, for the guard's sake: the Pi's Wi-Fi link dies
+# while the Pi keeps running, and turning an unreachable Pi into a refusal would
+# stop `just replay` — which does not touch the Pi at all — from opening a bag.
+#
+# **The cost of that is a known soft spot in the sweep, and it is worth stating
+# rather than discovering.** An unreachable Pi is indistinguishable here from a
+# clean one, so `tools/stragglers.sh` reports 0 for a Pi it could not ask. That
+# was already true before this function existed — its Pi loop swallowed the same
+# error — so nothing changed but the number of places it is written down. The
+# fix, if it is ever wanted, is to separate "asked and found nothing" from "could
+# not ask" and make only the first one a pass; it is not free, because a Wi-Fi
+# blip would then fail every gate that ends in a straggler sweep.
+pimesh_pi_processes() {
+    local pat hits
+    for pat in "${PIMESH_PATTERNS[@]}"; do
+        hits=$(pi_run "pgrep -af '$pat'" 2>/dev/null || true)
+        [[ -n $hits ]] && echo "$hits"
+    done
+    return 0
+}
+
+# Refuse to start beside a session that is already running.
+#
+# **Two sessions on one ROS domain are not two independent sessions, and the way
+# that fails is indistinguishable from a bug in whichever one you happen to be
+# looking at.** Measured 2026-09-13: `just view-camera` and `just replay desk1`
+# were up at the same time, so the Pi's live camera and a three-minute-old bag
+# were both publishing `/image_raw/compressed`, one `keypoint_node` was decoding
+# the interleaved mixture, and it published `odom -> base_link` with stamps that
+# jumped minutes back and forth. Every TF listener in the domain — both RViz
+# windows — then logged TF_OLD_DATA at the frame rate from inside tf2's own
+# buffer mutex, which stalls the render loop. Both windows flickered; neither had
+# anything wrong with it. Run alone, each was silent: 0 warnings over 195 s of
+# replay and 75 s of view-camera.
+#
+# That is worth a hard refusal rather than a warning, because the symptom appears
+# in the *innocent* session and points nowhere near the cause. The project
+# already has one rule of this shape — one reader on the topic that crosses
+# Wi-Fi — and this is the same rule from the publisher's side.
+#
+# **Every script that starts a session calls this, gates included**, and for the
+# gates it is the sharper case: a viewer beside a gate makes the gate measure a
+# mixture of two sources and print a number with nothing in it saying so. This
+# file already carries two paragraphs about that exact failure — the leaked bag
+# players, and the three `republish` processes — found both times *after* the
+# measurements they had polluted. A gate that cannot tell whether it had the
+# machine to itself is the green-over-broken shape this project keeps paying for.
+#
+# **Call this before arm_cleanup, always.** The EXIT handler runs kill_local,
+# so a refusal after the trap is armed would tear down the very session it was
+# refusing to disturb.
+assert_no_session() {   # $1 = this recipe's name, for the message
+    local running pi_running
+    running=$(pimesh_local_processes)
+    # The Pi as well as this box, and the Pi half is not optional: on 2026-09-13 a
+    # `camera_node` outlived its session at the far end while this machine was
+    # completely clean, and that one process is a *second publisher* on
+    # /image_raw/compressed — the exact thing this guard exists to prevent, and
+    # the one that also holds /dev/video0 so the next session cannot open it.
+    # A local-only guard would have waved it through.
+    pi_running=$(pimesh_pi_processes)
+    [[ -n $running || -n $pi_running ]] || return 0
+    {
+        echo "${1:-this recipe} refuses to start: a session of this workspace is already running."
+        echo
+        # sed, not printf: printf '  %s\n' on a multi-line string indents only
+        # the first line, which reads as one long wrapped entry rather than a list.
+        [[ -n $running ]] && { echo "  on this machine:"; sed 's/^/    /' <<<"$running"; }
+        [[ -n $pi_running ]] && { echo "  on ${PI}:"; sed 's/^/    /' <<<"$pi_running"; }
+        echo
+        echo "One ROS domain, one pipeline. A second session puts a second publisher on"
+        echo "/image_raw/compressed — the Pi's live camera beside a bag's minutes-old"
+        echo "frames — and keypoint_node decodes the mixture and publishes a pose whose"
+        echo "stamps jump back and forth, which floods every TF listener and stutters"
+        echo "every viewer. A gate run beside another session measures that mixture and"
+        echo "prints a number with nothing in it saying so."
+        echo
+        echo "End the other session (Ctrl-C in its terminal), or sweep with"
+        echo "  bash tools/stragglers.sh"
+        echo "which prints the pid and full path of anything that outlived one, on both"
+        echo "machines. A camera_node left at the far end is the expensive one: it holds"
+        echo "/dev/video0 exclusively, so every later session dies on a busy device."
+    } >&2
+    exit 1
+}
+
 # Container before launcher, always: killing the launcher first orphans the
 # container, which then holds the topics nobody can find a publisher for.
 kill_local() {

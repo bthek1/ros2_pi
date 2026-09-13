@@ -10,6 +10,11 @@ echo "== gate-hello-talk =="
 # patterns match the node binary, never the `ros2 run` wrapper: killing the
 # wrapper orphans the binary, which is how a workspace ends up with a publisher
 # nobody can find on a topic somebody is still debugging.
+# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# the cleanup handler kills this workspace's processes, so a refusal after the
+# trap is armed would tear down the session it is refusing to disturb.
+assert_no_session "bash tools/gates/hello-talk.sh"
+
 arm_cleanup kill_local
 
 start_node() {          # $1 = log path, rest = --ros-args ...

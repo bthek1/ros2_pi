@@ -402,9 +402,46 @@ away at the first `Detected jump back in time. Clearing TF buffer.` and never
 came back. RViz does the same thing to its own displays one layer up
 (`Detected jump back in time. Resetting RViz.`).
 
-**Related.** Out-of-order *and* duplicated stamps in that flood — the same time
-printed two or three times — mean more than one player or container is running.
-`bash tools/stragglers.sh`.
+**Related, and check this first if the stamps look odd.** Out-of-order *and*
+duplicated stamps in that flood — the same time printed two or three times — are
+a different fault with the same symptom. See the next entry.
+
+## Two viewers at once, and both of them flicker
+
+**Symptom.** `just view-camera` and `just replay <bag>` are both up, in two
+terminals, and **both** windows stutter with the `TF_OLD_DATA` flood above. Each
+one looks broken. Run on its own, neither is: measured 2026-09-13, 0 warnings
+over 195 s of `just replay desk1` and 75 s of `just view-camera`.
+
+**Cause.** One ROS domain, one set of topics. The Pi's live camera and the bag
+player both publish `/image_raw/compressed`, so the single `keypoint_node` in the
+container decodes an interleaved mixture of frames whose stamps are minutes
+apart, and publishes `odom -> base_link` with stamps that jump back and forth.
+tf2 rejects whichever arrives out of order, at the frame rate, from inside its own
+buffer mutex — so both RViz windows stall on `lookupTransform`. The tell is in
+the warning text: the same timestamp printed two or three times, and timestamps
+that go *backwards* within a second of log.
+
+This is the rule about one reader on the Wi-Fi topic, seen from the publisher's
+side, and it is not limited to two viewers — a gate run beside a viewer measures
+the same mixture and says nothing about it.
+
+**Fix.** `assert_no_session` in `tools/just-lib.sh` refuses to start while
+anything of this workspace's is already running, and prints the pids it found.
+**Every script that starts a session calls it — the three viewers, the recording
+and calibration tools, and the gates.** For a gate it is the sharper case: a
+measurement taken beside another session is a measurement of a mixture, with
+nothing in the output saying so.
+
+It is called before `arm_cleanup`, deliberately: the cleanup handler kills this
+workspace's processes, so refusing *after* the trap is armed would tear down the
+session it was refusing to disturb. To find what is running at any time,
+`bash tools/stragglers.sh` — the same pattern list and the same
+`pimesh_local_processes`, asked after the fact instead of before it.
+
+**A gate that suddenly refuses is usually telling the truth.** If several in a
+row refuse, something is up in another terminal; check before assuming the guard
+is wrong.
 
 ## `cameracalibrator` sees nothing, and `republish` is why
 

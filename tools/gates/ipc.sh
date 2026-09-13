@@ -34,6 +34,11 @@ MIN_FRAMES=20
 MAX_CONTROL_MATCH_PCT=25
 MEASURE_S=8
 
+# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# the cleanup handler kills this workspace's processes, so a refusal after the
+# trap is armed would tear down the session it is refusing to disturb.
+assert_no_session "bash tools/gates/ipc.sh"
+
 arm_cleanup
 
 fail=0
