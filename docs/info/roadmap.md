@@ -1,6 +1,7 @@
 # Roadmap
 
-Status as of **2026-09-12** (M3 and M4 done that day, M2.5 the same day). The build order and per-phase tests live in
+Status as of **2026-09-13** (M4 closed that day against the reference clip; M2.5 and
+M3 the day before). The build order and per-phase tests live in
 [../plans/future/project_final_state.md](../plans/future/project_final_state.md);
 this page is the one-line status view. Milestones map to its phases: M1 = P0,
 M2 = P1, and so on through M9 = P8.
@@ -22,7 +23,7 @@ evidence.
 | M2 | `pimesh_camera` on the Pi — V4L2 MJPEG, honest capture stamps, fails loudly | **done 2026-09-09** — [issue #4](https://github.com/bthek1/ros2_pi/issues/4) P1, `bash tools/gates/capture.sh`: 44–59 Hz on the dev box, stamp offset 4.21 ms single-clock, two launches agreeing to 0.30–1.02 ms, busy device refused in 0.24 s |
 | M2.5 | Camera calibration — real C922 intrinsics, served on `/camera_info` | **done 2026-09-12** — [issue #9](https://github.com/bthek1/ros2_pi/issues/9) P9, `bash tools/gates/calibration.sh`: fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection 0.4955 px, median straightness 0.7796 px, coverage 0.896 over 4/4 quadrants, 24 marker-confirmed frames. Numbered `P9` and sequenced before P3 — the number is an identity, the order is a schedule |
 | M3 | Dev-box container — `decode_node` with intra-process comms proven zero-copy | **done 2026-09-12** — [issue #5](https://github.com/bthek1/ros2_pi/issues/5) P2, `bash tools/gates/ipc.sh`: 504/504 published buffer addresses reaching their consumers with intra-process comms on against 0/395 with it off, exactly 1 subscriber on the Wi-Fi topic, decode 1.90 ms/frame. The zero-copy claim had to be earned twice — it passed at 429/429 with one consumer and failed at 0/574 the moment a second one arrived, because rclcpp copies for every ownership-taking subscription but the last |
-| M4 | `keypoint_node` — ORB, matching, annotated preview | **done 2026-09-12** — [issue #5](https://github.com/bthek1/ros2_pi/issues/5) P3, `bash tools/gates/keypoints.sh`: 48.6 Hz sustained, 6.71 ms/frame on the node's own clock against an 8 ms budget, matched fraction 0.952 against the predecessor's 0.951 on the same clip |
+| M4 | `keypoint_node` — ORB, matching, annotated preview | **done 2026-09-13** — [issue #5](https://github.com/bthek1/ros2_pi/issues/5) P3, `bash tools/gates/keypoints.sh` over all 3489 frames of `bags/desk1`: 57.9 Hz sustained, 5.99 ms/frame on the node's own clock against an 8 ms budget, matched fraction 0.9063 against the predecessor's algorithm at 0.9065, pose-gate reject rate 8.2% at a mean residual of 0.0017 rad |
 | M5 | `depth_node` — ONNX Runtime C++ on the GPU, metric depth published | not started |
 | M6 | `fusion_node` — TSDF integration with per-frame scale alignment | not started |
 | M7 | `mesh_node` — marching cubes, cleanup, Marker + PLY export | not started |

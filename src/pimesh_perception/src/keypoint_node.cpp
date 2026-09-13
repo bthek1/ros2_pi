@@ -263,7 +263,17 @@ void KeypointNode::process_frame(sensor_msgs::msg::Image::ConstSharedPtr msg)
   detect_sum_ms_ = detect_sum_ms_.load() + tracked.detect_ms;
   match_sum_ms_ = match_sum_ms_.load() + tracked.match_ms;
   keypoints_sum_ = keypoints_sum_.load() + static_cast<double>(tracked.keypoints.size());
-  matched_sum_ = matched_sum_.load() + tracked.matched_fraction();
+  // A frame with no features has no matched fraction — 0/0 is undefined, not zero —
+  // so it is counted separately rather than averaged in. Averaging it in as zero
+  // conflates "no corners in this part of the room" with "corners found and none
+  // recognised", and only the second is this node's doing. Measured on bags/desk1:
+  // the difference is ~5 points of matched fraction.
+  if (tracked.keypoints.empty()) {
+    ++empty_frames_;
+  } else {
+    matched_sum_ = matched_sum_.load() + tracked.matched_fraction();
+    ++measured_frames_;
+  }
   ++frames_;
 
   publish_keypoints(tracked, *msg);
@@ -502,6 +512,7 @@ void KeypointNode::log_stats()
   }
 
   const double frames_total = static_cast<double>(frames_now);
+  const double measured = static_cast<double>(measured_frames_.load());
   const std::uint64_t ok = pose_ok_.load();
   const std::uint64_t held = pose_held_.load();
 
@@ -510,13 +521,14 @@ void KeypointNode::log_stats()
   // matched fraction says nothing about whether the corners mean anything.
   RCLCPP_INFO(
     get_logger(),
-    "stats rate=%.1fHz dropped=%zu kp=%.0f matched=%.3f cost_mean=%.2fms cost_max=%.2fms "
-    "detect=%.2fms match=%.2fms preview=%.2fms pose_ok=%lu held=%lu reject_rate=%.3f "
-    "residual=%.4frad",
+    "stats rate=%.1fHz dropped=%zu kp=%.0f matched=%.3f empty=%lu cost_mean=%.2fms "
+    "cost_max=%.2fms detect=%.2fms match=%.2fms preview=%.2fms pose_ok=%lu held=%lu "
+    "reject_rate=%.3f residual=%.4frad",
     static_cast<double>(delta) / span_s,
     dropped_delta,
     keypoints_sum_.load() / frames_total,
-    matched_sum_.load() / frames_total,
+    (measured > 0.0) ? matched_sum_.load() / measured : 0.0,
+    static_cast<unsigned long>(empty_frames_.load()),
     cost_sum_ms_.load() / frames_total,
     cost_max_ms_.load(),
     detect_sum_ms_.load() / frames_total,

@@ -149,6 +149,11 @@ private:
 
   // --- Counters -------------------------------------------------------------
   std::atomic<std::uint64_t> frames_ {0};
+  /// Frames with at least one feature, which is the denominator of the matched
+  /// fraction — and `empty_frames_` is the rest. See process_frame() for why the two
+  /// are counted apart.
+  std::atomic<std::uint64_t> measured_frames_ {0};
+  std::atomic<std::uint64_t> empty_frames_ {0};
   std::atomic<std::uint64_t> pose_ok_ {0};
   std::atomic<std::uint64_t> pose_held_ {0};
   std::atomic<std::uint64_t> previews_ {0};

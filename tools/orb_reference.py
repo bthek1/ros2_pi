@@ -97,6 +97,7 @@ def main() -> int:
     fractions = []
     counts = []
     frames = 0
+    empty = 0
 
     for msg in read_compressed(args.bag, args.topic):
         frames += 1
@@ -145,9 +146,18 @@ def main() -> int:
 
         window.append((descriptors, ids))
 
-        if frames > args.warmup_frames and n:
-            fractions.append(sum(1 for f in is_new if not f) / n)
-            counts.append(n)
+        if frames <= args.warmup_frames:
+            continue
+        if not n:
+            # A frame with no features has no matched fraction: 0/0 is undefined, not
+            # zero. It is counted and excluded, which is exactly what keypoint_probe
+            # does — the two have to count the same way or the difference the gate
+            # asserts on is measuring their conventions rather than the tracker. On
+            # bags/desk1 this convention is worth about 5 points.
+            empty += 1
+            continue
+        fractions.append(sum(1 for f in is_new if not f) / n)
+        counts.append(n)
 
     if not fractions:
         print('ref frames=0', file=sys.stdout)

@@ -36,7 +36,7 @@ doc, commit and conversation.
 | | Issue | Phases | True when it closes |
 | --- | --- | --- | --- |
 | A | [#4](https://github.com/bthek1/ros2_pi/issues/4) | P0–P1 | ✓ **closed 2026-09-09** — one source tree builds under both distros; the Pi ships stamped MJPEG |
-| B | [#5](https://github.com/bthek1/ros2_pi/issues/5) | P2–P3 | One reader, one decode, corners on it, and `bags/desk1` exists — **P2 done 2026-09-12** |
+| B | [#5](https://github.com/bthek1/ros2_pi/issues/5) | P2–P3 | One reader, one decode, corners on it, and `bags/desk1` exists — ✓ **done 2026-09-13** |
 | C | [#6](https://github.com/bthek1/ros2_pi/issues/6) | P4 | Depth on the GPU at ≤ 80 ms, CUDA provider named in the log |
 | D | [#7](https://github.com/bthek1/ros2_pi/issues/7) | P5–P6 | A triangle mesh you can recognise your room in |
 | E | [#8](https://github.com/bthek1/ros2_pi/issues/8) | P7–P8 | Translation is visible, and one tab shows the pipeline |
@@ -268,7 +268,67 @@ shaped around — see
 
 ---
 
-## ☐ P3 — Keypoints and a recorded clip
+## ✓ P3 — Keypoints and a recorded clip
+
+**Done 2026-09-13.** `bags/desk1` is a 59.7 s hand-held sweep, 3489 frames at
+58.5 Hz, 220 MB, `sha256 1333c5bd29a256157e590ef1e10c1753b7e170dab66051783683d77e4fccb3d0`
+(`bags/` is git-ignored, so that hash is the clip's only identity). Every phase from
+here replays it. `bash tools/gates/keypoints.sh` printed:
+
+```
+clip                : desk1  (220M, 59.7s, 3489 frames)
+messages measured   : 3442 of 3489 = 98.7%  (assert >= 85%; 15 warm-up skipped)
+frames with corners : 3265  (177 had none — the clip's texture, not the tracker)
+sustained rate      : 57.93 Hz  (assert >= 30)
+worst interval      : 24.86 ms at p95  (printed: a mean hides a stall)
+keypoints per frame : 408.0  (cap is 500)
+per-frame cost      : 5.99 ms  (assert <= 8.0, node's own clock)
+  ... detection     : 4.04 ms
+  ... matching      : 1.77 ms  (500 features against a 10-frame window)
+  ... preview       : 2.19 ms  (not in the cost above: ~10 Hz, for a person)
+frames dropped      : 0 in the last stats window  (by design: newest wins)
+matched fraction    : 0.9063  (p05 0.8180; over frames that had corners)
+  ... reference     : 0.9065 over 3297 frames, 408.4 kp, 25s to run
+  ... difference    : 0.02 points  (assert <= 5.0)
+pose gate           : reject rate 0.082, mean residual 0.0017 rad
+descriptor bytes    : 32  (assert 32)
+```
+
+**Two independent implementations agreeing to 0.02 points** is the number worth
+keeping: `tools/orb_reference.py` is the predecessor's pooled-window matching written
+in Python from its description, sharing nothing with the C++ but OpenCV's ORB itself.
+
+**The gate failed twice on a correct tracker first, and both failures were the
+gate's.** It is the same lesson as P0's teardown gate and P2's single consumer —
+what a measurement *does not* cover decides what its number means.
+
+1. **It measured a 20 s window of a looping 60 s clip and compared it against the
+   reference's whole-clip average**, and reported the two as **11.26 points** apart.
+   A hand-held sweep is not uniform: the node matched 87% of its corners over the
+   early part of `desk1` and far fewer in a stretch near the end, so *which seconds*
+   each side averaged moved the answer further than a real regression would. Three
+   windows that each covered something slightly different was not a tolerance
+   problem, it was three different measurements being compared. The clip now plays
+   **once, start to finish**, the probe's window is the clip's own duration from its
+   metadata, and the gate asserts that **≥85% of the clip's frames reached the
+   probe** — because a comparison only means something if both sides saw the same
+   material.
+2. **A frame with no features at all was averaged in as a zero by one side and
+   skipped by the other.** Its matched fraction is 0/0 — undefined, not zero — and
+   treating it as zero also conflates "no corners in this part of the room" with
+   "corners found and none recognised", which are different failures and only the
+   second is the tracker's. 177 of 3489 frames on this clip are in that category;
+   the convention was worth ~5 points on its own. The node, the probe and the
+   reference now all count the same way, and the count is printed rather than hidden.
+
+A third, smaller one: the gate's first run failed with "/keypoint_node never
+appeared" while the log beside it said `Loaded node '/keypoint_node'` — the `ros2`
+daemon was serving a stale graph. It now waits on the container's own load
+confirmation in the launch log, which is first-hand and needs no helper process.
+
+---
+
+### P3 as specified, for the record
 
 **Goal:** repeatable corners, matched across frames, cheap.
 
@@ -280,8 +340,10 @@ shaped around — see
 - Rotation-only odometry with its gates: ≥ 8 matched pairs, mean ray residual
   < 0.03 rad, and **hold the last pose** rather than publish a guess when the
   gate fails. The node logs which regime it is in.
-- **Record `bags/desk1`** — a 60 s hand-held sweep of the room, `just record`.
-  Every later phase replays it, so the numbers compare like for like.
+- **Record `bags/desk1`** — a 60 s hand-held sweep of the room,
+  `bash tools/record-clip.sh desk1 60`. Every later phase replays it, so the numbers
+  compare like for like. (Written as `just record` when this phase was drafted; the
+  justfile is `build` + `run` only, so it is a script.)
 
 **Test:** `bash tools/gates/keypoints.sh` — replays `bags/desk1` and asserts ≥ 30 Hz
 sustained, mean per-frame cost ≤ 8 ms measured against the node's own clock

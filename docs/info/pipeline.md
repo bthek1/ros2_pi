@@ -156,13 +156,23 @@ rotation-only regime is built; the RGB-D regime below is P7.
 **Job:** find repeatable corners, match them across frames, and turn the matches
 into camera motion.
 
-**Measured** (`bash tools/gates/keypoints.sh`): **6.71 ms/frame** mean against an
-8 ms budget, on the node's own clock — **4.44 ms** of detection and **2.09 ms** of
-matching — sustaining **48.6 Hz**, with a matched-keypoint fraction of **0.952**
-against the predecessor's algorithm at **0.951** over the same clip. The annotated
-preview costs a further **2.2 ms** and is capped at ~10 Hz, which is why it is
-accounted separately: it is an output for a person, and folding it into the
-pipeline's cost would make that number depend on whether anybody was watching.
+**Measured** (`bash tools/gates/keypoints.sh`, over all 3489 frames of
+`bags/desk1`): **5.99 ms/frame** mean against an 8 ms budget, on the node's own
+clock — **4.04 ms** of detection and **1.77 ms** of matching — sustaining
+**57.9 Hz**, with a matched-keypoint fraction of **0.9063** against the
+predecessor's algorithm at **0.9065** on the same frames. The annotated preview
+costs a further **2.2 ms** and is capped at ~10 Hz, which is why it is accounted
+separately: it is an output for a person, and folding it into the pipeline's cost
+would make that number depend on whether anybody was watching.
+
+**Two conventions make those two numbers comparable, and each was worth ~5
+points.** A frame in which ORB finds *no* features has no matched fraction — 0/0 is
+undefined, not zero — so such frames are counted (`empty=` in the node's stats line;
+177 of 3489 on this clip) and excluded from the average, on both sides. And the
+measurement covers the **whole clip**: a hand-held sweep is not uniform, so a 20 s
+window of it answers a different question from the clip's average. The first version
+of this gate compared a 20 s window against a whole-clip reference and reported an
+11-point gap on a tracker that was working correctly.
 
 **Those are optimised numbers**, and before 2026-09-12 they could not have been:
 `tools/build.sh` set no `CMAKE_BUILD_TYPE`, so the workspace compiled with no
@@ -171,9 +181,10 @@ the budget that was really 13%. Every C++ cost in this document now assumes
 `-O2 -g`.
 
 - `cv::ORB`, **500 features** — enough that ranking churn at the cap does not
-  dominate, cheap enough at 30+ fps. 4.44 ms/frame **(measured)**; note the cap is
-  a target rather than a ceiling, since ORB distributes its quota per pyramid level
-  and rounds up (asking for 120 returned 121).
+  dominate, cheap enough at 30+ fps. 4.04 ms/frame **(measured)**, finding **408 on
+  average** in this room rather than the full 500: the cap is a ceiling the scene does
+  not always reach. It is not an exact ceiling either, since ORB distributes its quota
+  per pyramid level and rounds up — asking for 120 returned 121.
 - Match against a **pooled window of the last 10 frames**, not just the previous
   one: strict frame-to-frame matching loses ~25% of keypoints to detection
   flicker at the feature cap **(inherited)**. Reject matches whose Hamming
@@ -187,8 +198,10 @@ the budget that was really 13%. Every C++ cost in this document now assumes
 - Gates before a pose is trusted: at least 8 matched pairs, and a mean ray
   residual under 0.03 rad (~1.7°, ~28 px at fx=953) after reject-worst refits.
   Failing the gate means *hold the last pose*, not publish a guess — and the node
-  logs the regime change when it starts and stops holding. **Measured** on a
-  static clip: a 0.1% reject rate and a mean residual of 0.0000 rad.
+  logs the regime change when it starts and stops holding. **Measured** on
+  `bags/desk1`, a real hand-held sweep: an **8.2% reject rate** and a mean residual
+  of **0.0017 rad** over the frames it accepted. (On a clip of a stationary camera it
+  is 0.1% and 0.0000 rad, which says more about the clip than about the gate.)
 
   **The residual ceiling is not equally sharp in all three axes**, which is worth
   knowing before trusting it. A ray on the axis of rotation does not move at all,

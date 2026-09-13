@@ -10,6 +10,16 @@
 // Rate is measured on *this* program's steady clock. Not from header.stamp: the
 // stamps in a bag are the Pi's capture times and under `ros2 bag play` they say
 // nothing whatsoever about how fast anything is running now.
+//
+// **A frame with no keypoints at all is counted, and kept out of the matched
+// fraction.** Its matched fraction is 0/0 — undefined, not zero — and averaging it
+// in as zero conflates two different failures: "the room had no corners here"
+// (a lens cap, a blank wall, a badly blurred frame) and "there were corners and the
+// tracker recognised none of them". Only the second is the tracker's. On the desk1
+// clip the difference was worth **5 points** of matched fraction, which is the
+// whole tolerance the gate asserts on, so it is not a rounding detail. It is also
+// what tools/orb_reference.py does, and the two have to count the same way or the
+// comparison between them is measuring their conventions.
 
 #include <algorithm>
 #include <chrono>
@@ -62,16 +72,23 @@ public:
 
   int report() const
   {
-    if (matched_.empty()) {
-      fprintf(stderr, "keypoint_probe: no messages on %s\n", topic_.c_str());
+    if (messages_ == 0 || matched_.empty()) {
+      fprintf(
+        stderr, "keypoint_probe: %zu messages on %s, %zu of them with features\n",
+        messages_, topic_.c_str(), matched_.size());
       printf("probe frames=0\n");
+      printf("probe messages=%zu\n", messages_);
+      printf("probe empty_frames=%zu\n", empty_frames_);
       return 1;
     }
 
     const double span_s = std::chrono::duration<double>(last_ - first_).count();
-    // n-1 intervals between n messages.
-    const double rate = (span_s > 0.0 && matched_.size() > 1) ?
-      (static_cast<double>(matched_.size()) - 1.0) / span_s : 0.0;
+    // n-1 intervals between n messages, and *every* message counts towards the
+    // rate — including the ones with no features in them. The rate is a statement
+    // about the pipeline keeping up, and a frame the tracker found nothing in still
+    // cost a decode, a detection and a publish.
+    const double rate = (span_s > 0.0 && messages_ > 1) ?
+      (static_cast<double>(messages_) - 1.0) / span_s : 0.0;
 
     double matched_sum = 0.0;
     double kp_sum = 0.0;
@@ -83,6 +100,10 @@ public:
 
     printf("probe topic=%s\n", topic_.c_str());
     printf("probe frames=%zu\n", matched_.size());
+    printf("probe messages=%zu\n", messages_);
+    // Frames ORB found nothing in. Real information about the *clip* rather than
+    // about the tracker, which is why it is printed rather than asserted on.
+    printf("probe empty_frames=%zu\n", empty_frames_);
     printf("probe skipped_warmup=%zu\n", skipped_);
     printf("probe span_s=%.3f\n", span_s);
     printf("probe rate_hz=%.2f\n", rate);
@@ -106,13 +127,14 @@ private:
     const auto arrival = std::chrono::steady_clock::now();
     if (seen_++ < warmup_) {++skipped_; return;}
 
-    if (matched_.empty()) {
+    if (messages_ == 0) {
       first_ = arrival;
       matched_.reserve(4096);
     } else {
       intervals_ms_.push_back(std::chrono::duration<double, std::milli>(arrival - last_).count());
     }
     last_ = arrival;
+    ++messages_;
 
     if (std::chrono::duration<double>(arrival - first_).count() > duration_s_) {
       done_ = true;
@@ -129,13 +151,26 @@ private:
       msg->response.size() == n && msg->track_id.size() == n &&
       msg->descriptors.size() == n * msg->descriptor_bytes;
     if (!consistent) {++malformed_;}
+
+    if (n == 0) {
+      // Nothing to measure and nothing wrong: a frame with no features has no
+      // matched fraction and no descriptor width. Counting it here rather than
+      // averaging a zero in is what keeps this comparable with the reference.
+      ++empty_frames_;
+      return;
+    }
+
+    // Read from a message that actually has descriptors. Taking it unconditionally
+    // put a 0 here whenever the *last* frame of the window happened to be
+    // featureless, which failed the gate's "descriptor_bytes == 32" assertion over
+    // a clip that was fine.
     descriptor_bytes_ = msg->descriptor_bytes;
 
     std::size_t tracked = 0;
     for (std::int32_t id : msg->track_id) {if (id >= 0) {++tracked;}}
 
     counts_.push_back(static_cast<double>(n));
-    matched_.push_back(n == 0 ? 0.0 : static_cast<double>(tracked) / static_cast<double>(n));
+    matched_.push_back(static_cast<double>(tracked) / static_cast<double>(n));
   }
 
   std::string topic_;
@@ -147,6 +182,8 @@ private:
   std::vector<double> counts_;
   std::vector<double> intervals_ms_;
   std::size_t seen_ {0};
+  std::size_t messages_ {0};
+  std::size_t empty_frames_ {0};
   std::size_t skipped_ {0};
   std::size_t malformed_ {0};
   std::uint32_t descriptor_bytes_ {0};
