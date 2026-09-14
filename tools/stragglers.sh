@@ -32,7 +32,11 @@ for host in dev pi; do
     count=$(grep -c . <<<"${found%$'\n'}" || true)
     [[ -z ${found//[$'\n' ]/} ]] && count=0
     echo "stragglers on ${host}: ${count}"
-    [[ $count -gt 0 ]] && printf '  %s\n' "${found%$'\n'}"
+    # sed, not printf: `printf '  %s\n'` on a multi-line string indents only the
+    # first line, so a Pi with three of ours on it printed one indented entry and
+    # two flush-left ones that read like a new section. Same spelling as
+    # assert_no_session, which carries the same note.
+    [[ $count -gt 0 ]] && sed 's/^/  /' <<<"${found%$'\n'}"
     total=$(( total + count ))
 done
 

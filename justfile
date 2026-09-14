@@ -17,9 +17,9 @@
 #   bash tools/test.sh                ...just run them here (tools/test-pi.sh there)
 #
 #   bash tools/gates/hello-{build,talk,ipc,lan,clean}.sh  the scaffolding's own
-#                                     five gates: a package builds, the talker
-#                                     honours its rate, a pointer is handed over,
-#                                     two distros talk, and Ctrl-C leaves nothing
+#                                     five gates: a package builds, the talker honours
+#                                     its rate, a pointer is handed over, two distros
+#                                     talk, and a session ends when you end it
 #   bash tools/gates/justfile.sh      this file's own shape
 #   bash tools/stragglers.sh          assert nothing outlived its session
 #   bash tools/sync-pi.sh             ship source to the Pi — source only

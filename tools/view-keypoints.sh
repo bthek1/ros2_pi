@@ -8,10 +8,13 @@
 # before trusting a number about it.
 #
 # Same shape as tools/view-camera.sh, and the teardown is all in just-lib.sh: a
-# handler on EXIT and on INT/TERM/HUP that pkills both machines, and rviz2
-# *backgrounded* rather than in the foreground, because bash defers a trap until its
-# foreground child returns and an rviz2 signalled during its own startup never
-# returns. That leak costs the Pi's camera, which holds /dev/video0 exclusively.
+# handler on EXIT and on INT/TERM/HUP that kills both machines *and then checks*,
+# and rviz2 *backgrounded* rather than in the foreground, because bash defers a
+# trap until its foreground child returns and an rviz2 signalled during its own
+# startup never returns. That leak costs the Pi's camera, which holds
+# /dev/video0 exclusively — and on 2026-09-14 this recipe lost it to the other
+# half of the same problem: the handler ran, fired one pkill at the far end, and
+# exited without ever looking. See the note on kill_pi in tools/just-lib.sh.
 #
 # Takes a bag name to replay instead of the camera: `bash tools/view-keypoints.sh
 # 600 desk1`. With no bag it uses the Pi's live camera.

@@ -173,7 +173,8 @@ bash tools/gates/hello-build.sh   # one real package builds
 bash tools/gates/hello-talk.sh    # the talker honours its rate parameter
 bash tools/gates/hello-ipc.sh     # one process, message handed over as a pointer
 bash tools/gates/hello-lan.sh     # one source tree, two distros, over the LAN
-bash tools/gates/hello-clean.sh   # Ctrl-C leaves nothing running, either machine,
+bash tools/gates/hello-clean.sh   # Ctrl-C, a closed terminal and a closed window
+                                  #   each leave nothing running, either machine,
                                   #   for every recipe in the justfile's `run` group
 
 bash tools/calibrate.sh record    # a bag of the board from many angles

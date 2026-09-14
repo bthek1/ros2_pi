@@ -13,6 +13,11 @@ models/
 # the calibration YAML are small and ARE committed.
 calib/**/*.tar.gz
 
+# calibrate.sh rotates the old frame set aside before a fresh grab, so a *.prev
+# directory is a backup this workspace made for itself, not a calibration. One
+# was committed by accident and sat superseded — nothing reads `.prev`.
+calib/**/frames.prev/
+
 # recorded data and output
 bags/
 captures/

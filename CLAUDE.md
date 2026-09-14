@@ -662,12 +662,23 @@ strong priors, re-verify before quoting a number as this project's own.
   10 lines, no `ssh`/`pkill`/prelude inlined in a body, `setup.md`'s quoted
   recipe list equal to `just --list`, and 0 shellcheck findings over `tools/`
   (`uv tool install shellcheck-py`).
-- **Sessions tear themselves down — no stragglers.** Ctrl-C and closing the
-  window must both end everything the recipe started, **on both machines**. The
-  mechanism: viewer in the foreground, `arm_cleanup` in `tools/just-lib.sh`
-  installing a handler on EXIT and on INT/TERM/HUP that `pkill -f`s every node
-  pattern, locally and over SSH. (EXIT alone does fire on Ctrl-C; naming the
-  signals is what makes the closed-window case deliberate rather than lucky.)
+- **Sessions tear themselves down — no stragglers.** Ctrl-C, a closed terminal
+  and a **closed viewer window** must all end everything the recipe started, **on
+  both machines**. The mechanism: viewer backgrounded and waited on,
+  `arm_cleanup` in `tools/just-lib.sh` installing a handler on EXIT and on
+  INT/TERM/HUP that kills every pattern, locally and over SSH, and then *checks*.
+  (EXIT alone does fire on Ctrl-C; naming the signals is what makes the
+  closed-window case deliberate rather than lucky.)
+
+  **The three endings are three different code paths, and only two of them were
+  ever tested.** A signal runs the handler; a closed window sends no signal at
+  all — `wait` returns because its child exited and the EXIT trap runs from an
+  ordinary end of script. `gates/hello-clean.sh` had signalled every recipe ten
+  times over and had never once closed a window, and that is the path that leaked
+  on 2026-09-14. It now covers `INT`, `HUP`, `CLOSE` and `CLOSE-EARLY` — 14 cases
+  over five recipes — and waits for the recipe to *return* rather than sleeping
+  three seconds and sweeping, because the contract is that nothing is running by
+  the time it has returned.
   The signal handler cleans up **once** and then re-raises after `trap -`,
   because a bare `trap handler INT` does not end a script — bash runs the
   handler and resumes at the next line, so an interrupted gate carries on
@@ -704,11 +715,66 @@ strong priors, re-verify before quoting a number as this project's own.
   see the troubleshooting entry on why the plain spelling kills the shell that
   runs it.
 
+  **It happened again on 2026-09-14, and that time the missing patterns were the
+  *wrappers* rather than another process.** Every pattern matched the leaf of the
+  Pi's four-deep chain — the installed binary — and none matched the login shell,
+  the `timeout` or the `ros2 run` above it. One second after a remote start the
+  sweep printed `stragglers on pi: 1` where `pgrep` at the far end listed three
+  of ours, and during the startup window it printed 0 over a chain that was about
+  to open `/dev/video0`. `PIMESH_RUN_PAT` and `PIMESH_PI_WRAP_PAT` close it. The
+  question to ask of a new pattern is not "is this a process we start" but "what
+  starts it, and would the sweep see *that* in the second before the node
+  exists".
+
   **`assert_no_session` is the same question asked before the fact**, out of the
   same pattern list and the same `pimesh_local_processes`, so "what of ours is
   running" has exactly one spelling. The sweep says what outlived a session; the
   guard refuses to start beside one. Every script that starts a session calls it,
   gates included, before `arm_cleanup`.
+- **Teardown verifies; it does not fire and return. Measured 2026-09-14, and
+  this is the rule the rest of the bullet above was missing.** `kill_pi` used to
+  be one line — one `pkill -f` of the node pattern, over one ssh whose failure
+  was discarded twice — and it returned 0 whether the far end died, was never
+  matched, or was never reached. A `just view-keypoints` closed at the window
+  therefore exited believing itself clean while a `camera_node` went on holding
+  `/dev/video0` on the Pi, and the next session refused to start. The sweep
+  reported a clean dev box throughout.
+
+  Two mechanisms, and both generalise past this one function:
+
+  1. **A pattern kill can only end what already exists.** `pi_run_for` puts a
+     login shell, a `timeout` and a `ros2 run` between ssh and the node, so a
+     kill aimed at the leaf can land *before the leaf exists*, match nothing,
+     report success, and leave the wrapper to exec it a moment later. Measured:
+     `kill_pi` half a second after a remote start returned 0, and twelve seconds
+     later the Pi had the whole chain running. So teardown kills every link of
+     the chain — `PIMESH_RUN_PAT` and `PIMESH_PI_WRAP_PAT` are there for this —
+     and then **keeps asking until two consecutive sweeps come back empty**,
+     which is a terminal answer rather than a snapshot, because with the
+     wrappers dead nothing can create a node.
+  2. **A cleanup that cannot fail is a cleanup nobody checks.** `kill_local` and
+     `kill_pi` now return non-zero when they could not get their machine clean,
+     print the pid and full path of what survived on stderr, and
+     `_pimesh_on_exit` turns that into the script's exit status. A viewer may
+     exit 0 for having shown somebody a picture; it may not exit 0 having left a
+     `camera_node` on the Pi. An unreachable Pi lands in the same branch on
+     purpose — the sweep cannot tell "asked and found nothing" from "could not
+     ask", and reporting the second as a failure to clean is the reading that
+     sends somebody to look.
+
+  **Killing the local `ssh` does not reach the far end** (measured the same day:
+  the remote `timeout`/`ros2 run`/`camera_node` chain carried on after its client
+  was killed), so the client is housekeeping and `kill_pi` is the teardown. That
+  is also why `kill_local` runs first: it ends this session's client before
+  `kill_pi` opens a connection of its own.
+
+  **Verifying costs about five seconds and it is worth them.** Closing
+  `view-camera`'s window to the recipe returning with both machines swept clean:
+  **6.94, 7.42 and 8.99 s** over three runs (2026-09-14), against roughly 2.5 s
+  for the fire-and-forget version that could not tell you whether it had worked.
+  `PIMESH_TEARDOWN_SECONDS` (default 20) is the ceiling on how long each half
+  keeps insisting before it gives up and says so; it is only ever paid when
+  something is genuinely refusing to die.
 - **This applies to ad-hoc runs too — that means you, Claude.** Anything you
   start by hand while verifying has no EXIT trap. Bound it up front —
   **`timeout --foreground -s INT 30 …`**, and on the Pi

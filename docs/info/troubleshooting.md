@@ -55,6 +55,54 @@ Sweep both machines for stragglers. This is why every recipe has an EXIT trap
 and why ad-hoc runs get `run_for` / `timeout --foreground -s INT` or an
 explicit `pkill -f`.
 
+## A recipe refuses to start, naming a `camera_node` on the Pi that nothing killed
+
+```
+just view-keypoints refuses to start: a session of this workspace is already running.
+  on pi:
+    308947 /home/bthek1/ros2_pi/install/pimesh_camera/lib/pimesh_camera/camera_node
+```
+
+…after the window was closed, with `stragglers on dev: 0`. **Fixed
+2026-09-14; the shape of the failure is the part worth keeping.**
+
+`kill_pi` was one `pkill -f` of the node pattern, over one ssh whose failure was
+discarded, and it returned 0 in every case — including the ones where it killed
+nothing. Two things made that a permanent leak rather than a missed beat:
+
+- **The kill can land before the thing it kills exists.** `pi_run_for` starts a
+  login `bash -lc`, which starts `timeout`, which starts `/usr/bin/python3
+  …/bin/ros2 run`, which starts the node. A kill aimed at the leaf half a second
+  after the session began matched nothing, reported success, and the wrapper
+  exec'd the node a moment later. Measured: `kill_pi` at t=0.5 s returned 0, and
+  the Pi had the full chain running at t=12 s.
+- **Nothing on either machine would ever end it.** The dev-box script had exited
+  believing itself clean; the far end runs to its own `timeout`, which for a
+  viewer is ten minutes. Killing the leftover local `ssh` client does **not**
+  reach it — measured, the remote chain carried on afterwards.
+
+And the sweep could not see two thirds of it: every pattern matched the leaf,
+none matched `timeout` or `ros2 run`, so one second after a remote start
+`tools/stragglers.sh` printed `stragglers on pi: 1` where `pgrep` at the far end
+listed three.
+
+**If you see this now**, it is a genuinely unreachable Pi rather than the old
+bug — teardown says so on stderr when it gives up. Sweep with `bash
+tools/stragglers.sh`, which reports the whole chain, and clear it with:
+
+```bash
+ssh pi 'bash -lc "pkill -f \"[t]imeout -s INT [0-9]* ros2 run pimesh_\"; pkill -f \"/[r]os2 run pimesh_\"; pkill -f \"/lib/[p]imesh_[a-z]*/\""'
+```
+
+## A session exits non-zero after a perfectly normal run
+
+Teardown could not confirm both machines were clean, and it prints what survived
+on stderr before the script exits. That is deliberate: a viewer may exit 0 for
+having shown somebody a picture, and may not exit 0 having left a `camera_node`
+holding `/dev/video0`. An unreachable Pi lands in the same branch, because the
+sweep cannot tell "asked and found nothing" from "could not ask" — and of the two
+readings, the one that sends somebody to look is the right default.
+
 ## `/dev/video1` gives no frames
 
 It is not a capture device — it is the C922's UVC metadata node. Capture is

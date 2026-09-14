@@ -10,8 +10,16 @@
 # It starts the camera on the Pi and RViz here, and it tears both down on Ctrl-C
 # or a closed window. The teardown is the fiddly part and it is all in
 # just-lib.sh: arm_cleanup installs a handler on EXIT and on INT/TERM/HUP that
-# pkills the node patterns on both machines, and run_for keeps rviz2 in this
-# shell's process group so a terminal's Ctrl-C reaches it at all.
+# kills the patterns on both machines, and run_for keeps rviz2 in this shell's
+# process group so a terminal's Ctrl-C reaches it at all.
+#
+# **The handler checks rather than fires, which is why the recipe takes ~7 s to
+# return.** It used to send one pkill to the Pi and exit whatever happened; on
+# 2026-09-14 a closed window left a camera_node there holding /dev/video0, and
+# nothing said so. kill_pi now kills the whole remote wrapper chain and keeps
+# asking until the Pi answers with nothing — and when it cannot get that answer
+# it prints what is still running and this script exits non-zero. See the note on
+# kill_pi in tools/just-lib.sh.
 
 source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
 

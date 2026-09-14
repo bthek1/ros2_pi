@@ -200,11 +200,65 @@ PIMESH_BAG_PAT='/bin/[r]os2 bag play'
 # `ros2 run` waits on its child and exits when the child is killed.
 PIMESH_REPUBLISH_PAT='/image_transport/[r]epublish'
 
+# The two wrappers a node on the Pi is started *inside*, and they are the reason
+# a camera_node outlived `just view-keypoints` on 2026-09-14 while
+# tools/stragglers.sh reported a clean Pi.
+#
+# `pi_run_for` starts `timeout -s INT <n> ros2 run pimesh_camera camera_node`
+# inside a login shell, so the far end is three processes deep before the node
+# exists: the login `bash -lc`, then `timeout`, then `/usr/bin/python3
+# .../bin/ros2 run`, and only then the installed binary that PIMESH_NODE_PAT
+# matches. **Every pattern above matches the leaf and none of them matches the
+# stem**, and the stem is the half that matters, for two separate reasons.
+#
+#  1. **The sweep under-reports.** Measured 2026-09-14, one second after a
+#     remote start: `tools/stragglers.sh` printed `stragglers on pi: 1` while
+#     `pgrep` at the far end listed three of ours. During the startup window it
+#     prints 0 — a clean Pi, over a chain that is about to open /dev/video0.
+#  2. **Teardown loses a race it cannot see it lost.** `kill_pi` used to send one
+#     SIGTERM to the leaf pattern and return 0 whether or not anything matched.
+#     Fire it before the leaf exists and it matches nothing, reports success, and
+#     the *wrapper it did not match* goes on to exec the node a moment later.
+#     Measured 2026-09-14: `kill_pi` half a second after a remote start returned
+#     0, and twelve seconds later the Pi had a full `camera_node` running with
+#     its whole wrapper chain — which is the exact state the user's leaked
+#     session was found in.
+#
+# So these two are in the kill list as much as in the sweep. Between them they
+# cover the chain with no gap: before `timeout` has forked, the login shell's own
+# command line still carries the whole `timeout -s INT <n> ros2 run pimesh_…`
+# text and matches PIMESH_PI_WRAP_PAT; between fork and exec the child is still
+# `timeout` and matches it too; after exec the python matches PIMESH_RUN_PAT; and
+# after *that* the node matches PIMESH_NODE_PAT. Kill any live link and nothing
+# downstream of it is ever created, which is what makes "the far end is clean"
+# a terminal answer rather than a snapshot.
+#
+# Path-anchored on `/ros2`, per the rule the republish pattern was rewritten
+# under: the process is `/opt/ros/jazzy/bin/ros2 run pimesh_camera camera_node`,
+# and the leading slash is what separates it from a shell — or a comment — that
+# merely contains the words `ros2 run pimesh_camera`.
+PIMESH_RUN_PAT='/[r]os2 run pimesh_[a-z]*'
+
+# `timeout` has no path to anchor on: pi_run_for writes it as a bare word so the
+# Pi's own PATH resolves it. The bracket is doing all the work here, and it is
+# enough — a script or a `pgrep` command line quoting this pattern contains
+# `[t]imeout`, which does not match `timeout`, and that is precisely what the
+# bracket is for.
+#
+# It matches the **local** ssh client too, whose command line carries the same
+# remote text, and that is deliberate rather than a side effect: the client is
+# what stays behind on this machine when a session's far end is orphaned. On
+# 2026-09-14 one sat reparented to systemd --user with the dead session's ssh
+# under it, invisible to every pattern in this file. kill_local now ends it, and
+# because kill_local runs *before* kill_pi the connection is gone before the
+# verified remote sweep opens a fresh one of its own.
+PIMESH_PI_WRAP_PAT='[t]imeout -s INT [0-9]* ros2 run pimesh_[a-z]*'
+
 # shellcheck disable=SC2034  # read by tools/stragglers.sh
 PIMESH_PATTERNS=(
     "$PIMESH_NODE_PAT" "$PIMESH_CONTAINER_PAT" "$PIMESH_LAUNCH_PAT"
     "$PIMESH_VIEWER_PAT" "$PIMESH_TF_PAT" "$PIMESH_BAG_PAT"
-    "$PIMESH_REPUBLISH_PAT"
+    "$PIMESH_REPUBLISH_PAT" "$PIMESH_RUN_PAT" "$PIMESH_PI_WRAP_PAT"
 )
 
 # --- One session at a time --------------------------------------------------
@@ -247,12 +301,20 @@ pimesh_local_processes() {
 # fix, if it is ever wanted, is to separate "asked and found nothing" from "could
 # not ask" and make only the first one a pass; it is not free, because a Wi-Fi
 # blip would then fail every gate that ends in a straggler sweep.
+#
+# **One connection, not one per pattern.** This used to loop `pi_run` over the
+# pattern list, which is nine ssh handshakes over Wi-Fi for one question — about
+# six seconds, paid by `assert_no_session` at the start of every recipe and
+# again by every turn of kill_pi's verify loop. Worse than the latency, nine
+# round trips are nine chances for the link to blink mid-answer, in a function
+# whose failure mode is reporting a dirty Pi as a clean one. The patterns are
+# joined into a single remote command instead.
 pimesh_pi_processes() {
-    local pat hits
+    local pat cmd=
     for pat in "${PIMESH_PATTERNS[@]}"; do
-        hits=$(pi_run "pgrep -af '$pat'" 2>/dev/null || true)
-        [[ -n $hits ]] && echo "$hits"
+        cmd+="pgrep -af '$pat'; "
     done
+    pi_run "{ $cmd }; true" 2>/dev/null || true
     return 0
 }
 
@@ -321,40 +383,207 @@ assert_no_session() {   # $1 = this recipe's name, for the message
     exit 1
 }
 
+# How long teardown keeps *asking*, in seconds, before it gives up and says so.
+#
+# The number that matters is not how long a node takes to die — that is well
+# under a second — but how long the slowest thing this workspace starts takes to
+# come into existence. A `ros2 launch` that has not yet forked its container, or
+# a remote `timeout` that has not yet exec'd `ros2 run`, cannot be killed by a
+# pattern that describes the child. Teardown therefore kills the *parent* too
+# (see PIMESH_RUN_PAT and PIMESH_PI_WRAP_PAT) and then keeps looking until two
+# consecutive sweeps come back empty.
+#
+# 20 s is roughly four times the worst startup this project has measured, and it
+# is only ever paid when something is genuinely refusing to die: the ordinary
+# path is one kill and one confirming sweep.
+PIMESH_TEARDOWN_SECONDS=${PIMESH_TEARDOWN_SECONDS:-20}
+
+# What is running *here* that matches any of our patterns, without the
+# process-group filter that pimesh_local_processes applies.
+#
+# The filter is right for the sweep and wrong for teardown, and the difference is
+# the whole reason this is a second function rather than a reused one. A session's
+# own launcher, container, viewer and static transform publishers are all in the
+# *caller's* process group — that is what a session is — so
+# pimesh_local_processes, asked from inside one, correctly reports none of them.
+# A teardown loop built on it would see an empty machine on its first look and
+# declare victory over a container that is still decoding frames.
+#
+# It is safe for the same reason `pkill -f` in kill_local is: every pattern is
+# bracketed, so neither this shell's command line nor the ssh that carries a
+# pattern to the Pi can match the thing it is asking about.
+pimesh_live_locally() {
+    local pat
+    for pat in "${PIMESH_PATTERNS[@]}"; do
+        pgrep -af "$pat" 2>/dev/null || true
+    done
+}
+
 # Container before launcher, always: killing the launcher first orphans the
 # container, which then holds the topics nobody can find a publisher for.
+#
+# **This used to fire once and return, and returning was the bug.** A pattern
+# kill can only end a process that exists when it runs, and a session torn down
+# early — a window closed while RViz was still painting, a Ctrl-C three seconds
+# in — has processes that do not exist yet. They are created a moment later by
+# parents the old pattern list did not describe, and nothing looked again.
 kill_local() {
-    # SIGINT to the launcher *first*, and a moment to act on it. `ros2 launch`
-    # shuts its own children down on an interrupt, which is the only way they
-    # get a clean exit — TERM to the launcher tends to leave the tree behind,
-    # and that is how nine static_transform_publishers accumulated. The pattern
-    # kills below are the backstop for whatever that misses, not the mechanism.
-    pkill -INT -f "$PIMESH_LAUNCH_PAT" 2>/dev/null || true
-    pkill -INT -f "$PIMESH_VIEWER_PAT" 2>/dev/null || true
-    # SIGINT to the player too, and for a reason the others do not have: a bag
-    # player that has been stopped by SIGTTIN (see PIMESH_BAG_PAT) cannot run a
-    # handler at all, so the plain pkill below is what actually ends that one.
-    # Signalling first is still right for the ordinary case, where it closes the
-    # storage cleanly instead of being cut off mid-read.
-    pkill -INT -f "$PIMESH_BAG_PAT" 2>/dev/null || true
-    sleep 1
+    local deadline=$(( SECONDS + PIMESH_TEARDOWN_SECONDS )) clean=0
 
-    pkill -f "$PIMESH_VIEWER_PAT" 2>/dev/null || true
-    pkill -f "$PIMESH_REPUBLISH_PAT" 2>/dev/null || true
-    pkill -CONT -f "$PIMESH_BAG_PAT" 2>/dev/null || true
-    pkill -f "$PIMESH_BAG_PAT" 2>/dev/null || true
-    pkill -f "$PIMESH_CONTAINER_PAT" 2>/dev/null || true
-    pkill -f "$PIMESH_NODE_PAT" 2>/dev/null || true
-    pkill -f "$PIMESH_TF_PAT" 2>/dev/null || true
-    sleep 0.5
-    pkill -f "$PIMESH_LAUNCH_PAT" 2>/dev/null || true
+    while :; do
+        # SIGINT to the launcher *first*, and a moment to act on it. `ros2 launch`
+        # shuts its own children down on an interrupt, which is the only way they
+        # get a clean exit — TERM to the launcher tends to leave the tree behind,
+        # and that is how nine static_transform_publishers accumulated. The pattern
+        # kills below are the backstop for whatever that misses, not the mechanism.
+        pkill -INT -f "$PIMESH_LAUNCH_PAT" 2>/dev/null || true
+        pkill -INT -f "$PIMESH_VIEWER_PAT" 2>/dev/null || true
+        # SIGINT to the player too, and for a reason the others do not have: a bag
+        # player that has been stopped by SIGTTIN (see PIMESH_BAG_PAT) cannot run a
+        # handler at all, so the plain pkill below is what actually ends that one.
+        # Signalling first is still right for the ordinary case, where it closes the
+        # storage cleanly instead of being cut off mid-read.
+        pkill -INT -f "$PIMESH_BAG_PAT" 2>/dev/null || true
+        sleep 1
+
+        pkill -f "$PIMESH_VIEWER_PAT" 2>/dev/null || true
+        pkill -f "$PIMESH_REPUBLISH_PAT" 2>/dev/null || true
+        pkill -CONT -f "$PIMESH_BAG_PAT" 2>/dev/null || true
+        pkill -f "$PIMESH_BAG_PAT" 2>/dev/null || true
+        pkill -f "$PIMESH_CONTAINER_PAT" 2>/dev/null || true
+        pkill -f "$PIMESH_NODE_PAT" 2>/dev/null || true
+        pkill -f "$PIMESH_TF_PAT" 2>/dev/null || true
+        # The ssh client of this session's far end, and the local `ros2 run`
+        # wrapper if a gate started one. Killing the client does *not* reach the
+        # Pi — measured 2026-09-14, the remote timeout/ros2 run/camera_node chain
+        # carried on after its client was killed — so this is housekeeping, not
+        # teardown. kill_pi is what ends the far side, and it runs after this and
+        # opens a connection of its own.
+        pkill -f "$PIMESH_PI_WRAP_PAT" 2>/dev/null || true
+        pkill -f "$PIMESH_RUN_PAT" 2>/dev/null || true
+        sleep 0.5
+        pkill -f "$PIMESH_LAUNCH_PAT" 2>/dev/null || true
+
+        # Two empty sweeps, not one. A single empty look is exactly what the old
+        # version trusted: it is also what you get in the half-second between a
+        # launcher being killed and the container it already forked appearing.
+        sleep 0.5
+        if [[ -z $(pimesh_live_locally) ]]; then
+            sleep 0.5
+            [[ -z $(pimesh_live_locally) ]] && { clean=1; break; }
+        fi
+        (( SECONDS < deadline )) || break
+    done
+
+    if (( clean != 1 )); then
+        # SIGKILL, once, and then say so either way. A process that has survived
+        # a bounded loop of SIGINT and SIGTERM is not going to be talked round.
+        local pat
+        for pat in "${PIMESH_PATTERNS[@]}"; do
+            pkill -KILL -f "$pat" 2>/dev/null || true
+        done
+        sleep 1
+        local left; left=$(pimesh_live_locally)
+        [[ -n $left ]] && {
+            echo "teardown: ${PIMESH_TEARDOWN_SECONDS}s was not enough on this machine:" >&2
+            sed 's/^/  /' <<<"$left" >&2
+            return 1
+        }
+    fi
+    return 0
 }
 
+# End the far side, and *check*, which is the entire point of this rewrite.
+#
+# **The old body was one line and it was a lie by omission:**
+#
+#     pi_run "pkill -f '$PIMESH_NODE_PAT' || true" >/dev/null 2>&1 || true
+#
+# One SIGTERM, to the leaf of a four-deep wrapper chain, over an ssh whose
+# failure was discarded twice over — and it returned 0 in every case that
+# matters: connection refused, Wi-Fi down, pattern matched nothing. Measured
+# 2026-09-14: called half a second after `pi_run_for` started a camera_node, it
+# returned 0, and twelve seconds later the Pi had `timeout`, `ros2 run` and a
+# live `camera_node` holding /dev/video0. Nothing on either machine would ever
+# have ended them; the session that started them had already exited, believing
+# itself clean, and the next `just view-keypoints` refused to start.
+#
+# So it kills the whole chain rather than its leaf, and it keeps asking until the
+# Pi answers with nothing — which is a terminal answer and not a snapshot,
+# because with the wrappers dead there is nothing left that can create a node.
+# When it cannot get that answer it prints what is still there, on stderr, with
+# the pid and the full path. An unreachable Pi ends up in the same branch: the
+# sweep cannot tell "asked and found nothing" from "could not ask", so a link
+# that dies mid-teardown is reported as a failure to clean rather than as a
+# success. That is the right way round — it is the reading that sends somebody to
+# look.
 kill_pi() {
-    pi_run "pkill -f '$PIMESH_NODE_PAT' || true" >/dev/null 2>&1 || true
+    local deadline=$(( SECONDS + PIMESH_TEARDOWN_SECONDS )) left reached
+
+    while :; do
+        # Both wrappers and the node, in one remote shell: three round trips over
+        # Wi-Fi to kill three processes is three chances for the link to blink.
+        #
+        # **The ssh's own status is the reachability probe**, and it is needed
+        # because `pimesh_pi_processes` cannot tell "asked and found nothing"
+        # from "could not ask" — see its note, and the reason it must stay that
+        # way: turning an unreachable Pi into an error there would fail
+        # `just replay`, which never touches the Pi at all. Teardown is the one
+        # caller that needs the distinction, because an *unconfirmed* far end is
+        # precisely the state this rewrite exists to stop reporting as clean. So
+        # it comes free: ssh exits 255 when it cannot connect, and the remote
+        # command is `…; true`, so any other status means the Pi answered.
+        reached=1
+        pi_run "pkill -INT -f '$PIMESH_PI_WRAP_PAT'; pkill -f '$PIMESH_RUN_PAT'; pkill -f '$PIMESH_NODE_PAT'; true" \
+            >/dev/null 2>&1 || reached=0
+        sleep 1
+        if (( reached )); then
+            # Two empty sweeps, not one. With the wrappers dead there is nothing
+            # left that can create a node, so an empty answer is terminal rather
+            # than a snapshot — but only once it is empty twice, because the
+            # first look can land in the gap between a wrapper being killed and
+            # the child it had already forked appearing.
+            left=$(pimesh_pi_processes)
+            [[ -z $left ]] && { sleep 1; left=$(pimesh_pi_processes); }
+            [[ -z $left ]] && return 0
+        fi
+        (( SECONDS < deadline )) || break
+    done
+
+    if (( reached )); then
+        pi_run "pkill -KILL -f '$PIMESH_PI_WRAP_PAT'; pkill -KILL -f '$PIMESH_RUN_PAT'; pkill -KILL -f '$PIMESH_NODE_PAT'; true" \
+            >/dev/null 2>&1 || reached=0
+        sleep 1
+        left=$(pimesh_pi_processes)
+        (( reached )) && [[ -z $left ]] && return 0
+    fi
+
+    {
+        if (( reached )); then
+            echo "teardown: ${PIMESH_TEARDOWN_SECONDS}s was not enough on ${PI}:"
+            sed 's/^/  /' <<<"$left"
+        else
+            echo "teardown: ${PI} stopped answering, so what is running there is unknown."
+            echo "The Pi's Wi-Fi link dies while the Pi keeps running — ping it, and read"
+            echo "journalctl -b -1 after it comes back."
+        fi
+        echo "A camera_node left there holds /dev/video0 exclusively, so the next"
+        echo "session will die on a busy device. Sweep with: bash tools/stragglers.sh"
+    } >&2
+    return 1
 }
 
-cleanup_both() { kill_local; kill_pi; }
+# Both ends, and the status says whether they are actually clean.
+#
+# Order is load-bearing: kill_local first, because it ends the ssh *client* of
+# this session's far end, and kill_pi then opens a connection of its own to a Pi
+# that nothing is still driving.
+cleanup_both() {
+    local rc=0
+    kill_local || rc=1
+    kill_pi || rc=1
+    return $rc
+}
 
 # One trap for the four signals that end a session. Bash fires EXIT on Ctrl-C
 # too, so EXIT alone would nearly do — the rest are there because a recipe that
@@ -378,16 +607,33 @@ cleanup_both() { kill_local; kill_pi; }
 arm_cleanup() {         # $1 = optional cleanup function, default cleanup_both
     PIMESH_CLEANUP_FN=${1:-cleanup_both}
     PIMESH_CLEANED=
-    trap '_pimesh_cleanup_once' EXIT
+    trap '_pimesh_on_exit' EXIT
     trap '_pimesh_on_signal INT'  INT
     trap '_pimesh_on_signal TERM' TERM
     trap '_pimesh_on_signal HUP'  HUP
 }
 
 _pimesh_cleanup_once() {
-    [[ -n ${PIMESH_CLEANED:-} ]] && return 0
+    [[ -n ${PIMESH_CLEANED:-} ]] && return "${PIMESH_CLEANUP_RC:-0}"
     PIMESH_CLEANED=1
-    "${PIMESH_CLEANUP_FN:-cleanup_both}"
+    PIMESH_CLEANUP_RC=0
+    "${PIMESH_CLEANUP_FN:-cleanup_both}" || PIMESH_CLEANUP_RC=$?
+    return "$PIMESH_CLEANUP_RC"
+}
+
+# **A session that could not clean up exits non-zero, even when what it was
+# doing succeeded.** That is the whole difference between this teardown and the
+# one it replaces: the old one could not fail, so a leak left no trace anywhere
+# except on the machine it leaked onto, where the next session found it hours
+# later. A viewer is allowed to end at 0 for having shown somebody a picture;
+# it is not allowed to end at 0 having left a camera_node holding /dev/video0.
+#
+# The script's own status wins when it is already non-zero — a gate that failed
+# its assertion should report the assertion, not the tidying up.
+_pimesh_on_exit() {
+    local rc=$?
+    _pimesh_cleanup_once || { (( rc == 0 )) && rc=1; }
+    exit "$rc"
 }
 
 _pimesh_on_signal() {   # $1 = signal name
