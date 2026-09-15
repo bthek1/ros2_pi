@@ -357,6 +357,16 @@ rate.
 
 **Goal:** metric depth at the rate the GPU can sustain.
 
+> **Part-done, 2026-09-15.** The toolchain half below — "do the toolchain work
+> first and standalone, no ROS code until it prints `CUDAExecutionProvider`" — is
+> built and gated: `bash tools/fetch-gpu-stack.sh` installs the stack rootless and
+> sha256-pinned, and `bash tools/gates/gpu-stack.sh` reports
+> **`CUDAExecutionProvider`, 51.20 ms mean / 51.50 ms p95**, with a CPU control at
+> 213.18 ms, a default-linker-flags control that reaches only the CPU, and
+> `nvidia-smi` witnessing the process on the card. **`depth_node`, `/depth`,
+> `/depth/rgb` and `tools/gates/depth.sh` are not written**, so the phase stays ☐.
+> See [#6](https://github.com/bthek1/ros2_pi/issues/6) for the running log.
+
 This phase carries the project's real setup risk — see
 [../../info/setup.md](../../info/setup.md#gpu). Do the toolchain work **first and
 standalone**: a 20-line C++ program that loads the model, runs one frame, and

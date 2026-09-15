@@ -232,16 +232,33 @@ both; the calibration work of P9 has the long version of why that matters.
 
 **Job:** one RGB frame in, one metric depth map out.
 
+**Status, 2026-09-15: the toolchain is measured, the node is design intent.**
+Everything in this section below the inference numbers is what P4 intends to
+build, not a description of running code — `depth_node` does not exist, and
+neither do `/depth`, `/depth/rgb` or `tools/gates/depth.sh`. What *is* closed is
+that a plain C++ link against ONNX Runtime reaches this GPU:
+`bash tools/gates/gpu-stack.sh`.
+
 - **Depth Anything V2 Small (ViT-S/14), ONNX.** RGB in, ImageNet-normalised,
   spatial dims a multiple of 14 — **518 = 37×14** is the trained size. ~99 MB of
   weights, fetched and checksummed, never committed.
 - **ONNX Runtime C++ with the CUDA execution provider**, CPU as an explicit
   fallback that logs which provider it got. Do not let it silently land on CPU
   and then wonder why the mesh stopped updating.
-- **Measured on this GPU (GTX 1660 SUPER, via the predecessor):**
-  **72–79 ms/frame** on CUDA, **280–305 ms/frame** on CPU, ~1.3 s first-inference
-  warm-up. So: **~13 Hz with the GPU, ~3 Hz without.** Warm the session at
-  startup so the first real frame is not the slow one.
+- **Measured in C++ on this GPU, 2026-09-15** (`bash tools/gates/gpu-stack.sh`,
+  ONNX Runtime 1.30 + CUDA 13.1 + cuDNN 9.26): **51.20 ms/frame mean, 51.50 ms
+  p95** on CUDA against **213.18 ms** on the CPU provider, with a 300–860 ms first
+  inference. So: **~19 Hz of inference with the GPU, ~4.7 Hz without** — and
+  `depth_node`'s own rate will be lower, because that figure is `session.Run`
+  alone and preprocessing, the reciprocal and two publishes all go on top. The
+  predecessor's Python path measured 72–79 ms / 280–305 ms for the same model on
+  the same card; different runtime, different CUDA, same ratio. **Warm the session
+  at startup** so the first real frame is not the cold one.
+- **Link it with `-Wl,--disable-new-dtags`.** The CUDA provider is dlopened and
+  has no search path of its own, and `DT_RUNPATH` is not inherited down a dlopen
+  chain — so with CMake's default flags ONNX Runtime silently falls back to the
+  CPU and the only symptom is a pipeline four times slower than it should be. See
+  [setup.md](setup.md#gpu).
 - Convert to metres with `depth_scale`, clip beyond 6 m *before* the reciprocal,
   and publish `32FC1` with the **input frame's** stamp and `camera_optical_frame`
   — derived data keeps the header of what it describes, not the moment inference

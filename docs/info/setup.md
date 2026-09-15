@@ -21,35 +21,92 @@ sudo apt install -y \
 
 ### GPU
 
-This is the part that needs doing and is not trivial. The driver (595.84) is
-installed. Nothing else is.
-
-**`nvcc` is absent and there is no CUDA runtime in `/usr/lib`.** Python's
-`onnxruntime-gpu` works anyway because its wheels vendor the CUDA libraries — a
-C++ build gets none of that.
-
-Two things need the toolkit, and they are separable:
-
-1. **ONNX Runtime with the CUDA execution provider** — needed by `depth_node`.
-   The lowest-friction route is the **prebuilt GPU release tarball** from ONNX
-   Runtime's GitHub releases: headers plus `libonnxruntime.so` and the CUDA
-   provider shared library, unpacked into `/opt/onnxruntime` and found by CMake
-   via an explicit `ONNXRUNTIME_ROOT`. It still needs the matching CUDA runtime
-   and cuDNN present at load time — check the release's stated versions against
-   what driver 595.84 supports before downloading, and **log which provider the
-   session actually got at startup** so a silent CPU fallback is visible in one
-   line rather than as "the mesh got slow".
-2. **Hand-written CUDA kernels** (a future TSDF integrator) — needs a real
-   `cuda-toolkit` install and a `find_package(CUDAToolkit)` in CMake. **Do not
-   plan on this until the CPU integrator works and has been profiled.**
-
-Sanity checks, in order:
+**Done and gated as of 2026-09-15** — `bash tools/gates/gpu-stack.sh`. One
+command installs it:
 
 ```bash
-nvidia-smi                       # driver alive, GPU visible
-nvcc --version                   # currently absent — expected
-ls /opt/onnxruntime/lib          # after installing the tarball
+bash tools/fetch-gpu-stack.sh     # ~2.2 GB down, 2.0 GB installed, no sudo
 ```
+
+It lands in `~/.local/opt/pimesh-gpu` (override with `PIMESH_GPU_PREFIX`), every
+component pinned by version and verified by sha256. Removing it is `rm -rf` of
+that one directory.
+
+| | Version | Why this one |
+| --- | --- | --- |
+| ONNX Runtime | 1.30.0 `gpu_cuda13` | The first release with a CUDA 13 tarball |
+| CUDA runtime | 13.1 redistributables | cudart, cuBLAS 13.2, cuRAND, nvrtc, nvJitLink |
+| cuDNN | 9.26.0.51 `_cuda13` | Without it the CUDA provider does not load at all |
+
+The driver is the one piece this does not install — 595.91.07, already present,
+advertising CUDA 13.2, which is the ceiling the versions above were chosen
+against.
+
+**Why not `apt`.** Ubuntu 26.04's multiverse does carry `cuda-cudart-13-1` and
+friends, and `sudo` on this box prompts for a password that no script here has.
+NVIDIA publish the same libraries as public redistributable tarballs with a
+sha256 manifest, so the whole stack installs rootless — and being pinned and
+checksummed, it is reproducible in a way an `apt install` of a moving target is
+not.
+
+**The ONNX Runtime tarball vendors no CUDA whatsoever.** `objdump -p` on
+`libonnxruntime_providers_cuda.so` lists `libcudart.so.13`, `libcublas.so.13`,
+`libcublasLt.so.13` and `libcurand.so.10` as NEEDED, and before 2026-09-15 none
+of those existed on this machine. Python's `onnxruntime-gpu` works only because
+pip wheels vendor them; a C++ build gets none of that.
+
+#### Three things that bite, all measured on 2026-09-15
+
+**1. Link with `-Wl,--disable-new-dtags` or you silently get the CPU.**
+`libonnxruntime_providers_cuda.so` is *dlopened* by `libonnxruntime.so` and
+carries no `RPATH` or `RUNPATH` of its own. `DT_RUNPATH` — what CMake and every
+modern linker emit by default — is **not inherited down a dlopen chain**, while
+the older `DT_RPATH` is. So with default flags the provider cannot find
+`libcublas.so.13` sitting in the same directory, and ONNX Runtime falls back to
+the CPU. Same source, same libraries, one linker flag apart:
+
+| | Provider | Mean |
+| --- | --- | --- |
+| `--enable-new-dtags` (CMake default) | `CPUExecutionProvider` | 236.62 ms |
+| `--disable-new-dtags` | `CUDAExecutionProvider` | 51.20 ms |
+
+`gates/gpu-stack.sh` runs both and asserts the default-flags build does *not*
+reach CUDA, so the flag can never quietly stop being load-bearing.
+
+**2. Everything goes in one lib directory, and that is structural.** Since the
+provider has no search path of its own, the only two ways it can find cuBLAS are
+`LD_LIBRARY_PATH` and sitting in the same directory as the thing that loaded it.
+`LD_LIBRARY_PATH` is read by the loader at *process start* and cannot be fixed up
+later with `setenv`, which rules it out for a component loaded into a container
+somebody else launched. So the CUDA and cuDNN shared objects are installed
+*beside* the ONNX Runtime ones and resolve through `libonnxruntime.so`'s
+`RUNPATH $ORIGIN`.
+
+**3. Never flatten `lib/` and `lib/stubs/` together.** Every CUDA redistributable
+ships link-time stub libraries — `libcublas.so`, `libcublasLt.so`, and in cudart
+a `libcuda.so` standing in for the driver. Copying both into one prefix let the
+22 kB stub overwrite the 54 MB real cuBLAS. The result loaded, resolved every
+symbol, printed `You are running using the stub version of cublas` on *stdout*
+where nobody looks, and segfaulted on the first inference. Note what that means
+for verification: `ldd` reporting no unresolved dependencies was true of the
+broken install. **A library that resolves is not a library that works** — which
+is why the fetch script also asserts a size floor on `libcublas.so.13`.
+
+#### Checks, in order
+
+```bash
+nvidia-smi                                  # driver alive, GPU visible
+nvcc --version                              # still absent, still expected
+ls ~/.local/opt/pimesh-gpu/lib              # after the fetch
+bash tools/gates/gpu-stack.sh               # the one that actually decides
+```
+
+#### Still not installed: the toolkit
+
+Hand-written CUDA kernels — a future TSDF integrator — need a real
+`cuda-toolkit` install and `find_package(CUDAToolkit)`. Runtime libraries are not
+a compiler. **Do not plan on this until the CPU integrator works and has been
+profiled.**
 
 ### Model weights
 
@@ -61,9 +118,20 @@ https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/
 sha256  afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c
 ```
 
-The fetch belongs in a `just fetch-model` recipe that verifies the checksum and
-exits early if the file is already good. **The model does not go on the Pi** —
-inference is dev-box-only, so any sync to the Pi excludes it.
+```bash
+bash tools/fetch-model.sh          # fetch if missing, verify either way
+```
+
+It is a script and not a `just` recipe on purpose — the justfile's bar is "would
+a newcomer's first `just` need to see this?", and fetching weights is setup, not
+a normal day. It **verifies on every run**, not only after a download: a
+truncated file has the right name and a plausible size, and ONNX Runtime opens it
+and fails with a protobuf parse error that names no cause.
+
+**The model does not go on the Pi** — inference is dev-box-only, and
+`tools/sync-pi.sh` ships `src`, `tools` and the justfile and nothing else, so
+`models/` is excluded by construction rather than by a rule somebody has to
+remember.
 
 ## Raspberry Pi
 

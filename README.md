@@ -72,13 +72,13 @@ them, so every package builds from source on the machine that runs it.
 
 ## The budget
 
-Measured on this hardware, via the predecessor:
+Measured on this hardware — the depth row here, the rest via the predecessor:
 
 | Stage | Cost |
 | --- | --- |
 | Capture + ship (Pi) | ~16 ms/frame, up to 60 fps at 720p MJPEG |
 | Decode + ORB (dev box CPU) | ~9 ms/frame |
-| **Depth (dev box GPU)** | **72–79 ms/frame** — 280–305 ms on CPU |
+| **Depth (dev box GPU)** | **51.2 ms/frame** inference — 213.2 ms on CPU ([gate](docs/info/setup.md#gpu), 2026-09-15) |
 | TSDF integrate | ~15 ms/frame (target) |
 | Mesh extraction | 300–900 ms, every ~10 s, off the hot path |
 

@@ -28,12 +28,53 @@ find_package(tf2_ros REQUIRED)
 # says where ORB comes from.
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs features2d)
 
+# --- ONNX Runtime, and the whole cross-machine story in one if() -------------
+#
+# Dev box only, and *optional*, which is the load-bearing word. The Pi builds this
+# entire workspace — tools/gates/build.sh builds it at both ends — and the GPU
+# stack is x86-64 CUDA that will never exist there. So this is a find, not a
+# REQUIRED find, and what changes with it is only which DepthEngine gets compiled:
+# depth_node itself, its registration and its parameters build identically on both
+# machines. See include/pimesh_perception/depth_engine.hpp for why that matters —
+# pimesh_bringup's test_transforms asserts every launch plugin is registered, and
+# gates/test.sh asserts the same suites pass at both ends with zero skips.
+#
+# The prefix is not written down here: tools/fetch-gpu-stack.sh --print-prefix is
+# the one place that knows it, so PIMESH_GPU_PREFIX moves the install and nothing
+# else has to be told.
+execute_process(
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/fetch-gpu-stack.sh --print-prefix
+  OUTPUT_VARIABLE PIMESH_GPU_PREFIX
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET
+)
+find_library(ONNXRUNTIME_LIB onnxruntime
+  PATHS "${PIMESH_GPU_PREFIX}/lib" NO_DEFAULT_PATH)
+find_path(ONNXRUNTIME_INCLUDE onnxruntime_cxx_api.h
+  PATHS "${PIMESH_GPU_PREFIX}/include" NO_DEFAULT_PATH)
+
+if(ONNXRUNTIME_LIB AND ONNXRUNTIME_INCLUDE)
+  set(PIMESH_HAVE_ONNXRUNTIME TRUE)
+  message(STATUS "pimesh_perception: ONNX Runtime at ${PIMESH_GPU_PREFIX} — depth_node will infer")
+else()
+  set(PIMESH_HAVE_ONNXRUNTIME FALSE)
+  message(STATUS
+    "pimesh_perception: no ONNX Runtime — depth_node builds but refuses to run. "
+    "This is expected on the Pi; on the dev box run bash tools/fetch-gpu-stack.sh")
+endif()
+
 add_library(perception_components SHARED
   src/decode_node.cpp
+  src/depth_node.cpp
+  src/depth_probe.cpp
   src/ipc_probe.cpp
   src/keypoint_node.cpp
   src/orb_tracker.cpp
   src/rotation_fit.cpp
+  # Exactly one of these two is compiled, and the choice is the only thing the
+  # GPU stack's presence changes about this library.
+  $<$<BOOL:${PIMESH_HAVE_ONNXRUNTIME}>:src/depth_engine_ort.cpp>
+  $<$<NOT:$<BOOL:${PIMESH_HAVE_ONNXRUNTIME}>>:src/depth_engine_null.cpp>
 )
 target_include_directories(perception_components PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -56,14 +97,59 @@ target_link_libraries(perception_components PUBLIC
   opencv_features2d
 )
 
+# --- The depth build, and the linker flag that decides whether it uses the GPU --
+#
+# The default model path is baked in here rather than computed at runtime.
+# CMAKE_CURRENT_SOURCE_DIR is <ws>/src/pimesh_perception, so two `..` reach the
+# workspace; the alternative — walking up from get_package_share_directory() at
+# runtime — is four segments of assumption about a layout --symlink-install
+# already bends. models/ is git-ignored and 99 MB, so it is read from the source
+# tree and never installed into share/.
+get_filename_component(PIMESH_WS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+target_compile_definitions(perception_components PRIVATE
+  PIMESH_DEFAULT_MODEL_PATH="${PIMESH_WS_DIR}/models/depth_anything_v2_small.onnx")
+
+if(PIMESH_HAVE_ONNXRUNTIME)
+  target_include_directories(perception_components PRIVATE ${ONNXRUNTIME_INCLUDE})
+  target_link_libraries(perception_components PRIVATE ${ONNXRUNTIME_LIB})
+
+  # **`--disable-new-dtags` is the difference between the GPU and the CPU, and
+  # nothing about the build says so otherwise.**
+  #
+  # libonnxruntime_providers_cuda.so is *dlopened* by libonnxruntime.so and
+  # carries no RPATH or RUNPATH of its own. DT_RUNPATH — which is what CMake and
+  # every modern linker emit by default — is **not inherited down a dlopen
+  # chain**, while the older DT_RPATH is. So with the default flags the provider
+  # cannot find libcublas.so.13 sitting in the very directory it was loaded from,
+  # ONNX Runtime falls back to the CPU, and there is no error anywhere: the only
+  # symptom is a pipeline four times slower than it should be.
+  #
+  # Measured 2026-09-15, same source and same libraries, one flag apart:
+  # RUNPATH gave CPUExecutionProvider at 236.62 ms, RPATH gave
+  # CUDAExecutionProvider at 51.20 ms. tools/gates/gpu-stack.sh keeps a control
+  # run asserting the default-flags build does *not* reach CUDA, so this cannot
+  # quietly stop being load-bearing.
+  #
+  # BUILD_WITH_INSTALL_RPATH because colcon --symlink-install runs the library
+  # from a path CMake would otherwise rewrite the RPATH for on install.
+  set_target_properties(perception_components PROPERTIES
+    BUILD_WITH_INSTALL_RPATH TRUE
+    INSTALL_RPATH "${PIMESH_GPU_PREFIX}/lib")
+  target_link_options(perception_components PRIVATE
+    "-Wl,--disable-new-dtags"
+    "-Wl,-rpath,${PIMESH_GPU_PREFIX}/lib")
+endif()
+
 # Plural, so no main is generated: the thin ones are written by hand in src/.
 rclcpp_components_register_nodes(perception_components
   "pimesh_perception::DecodeNode"
+  "pimesh_perception::DepthNode"
+  "pimesh_perception::DepthProbe"
   "pimesh_perception::IpcProbe"
   "pimesh_perception::KeypointNode"
 )
 
-foreach(node decode_node keypoint_node)
+foreach(node decode_node depth_node keypoint_node)
   add_executable(${node} src/${node}_main.cpp)
   target_link_libraries(${node} PRIVATE perception_components rclcpp::rclcpp)
 endforeach()
@@ -87,7 +173,7 @@ install(TARGETS perception_components
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
-install(TARGETS decode_node keypoint_node keypoint_probe
+install(TARGETS decode_node depth_node keypoint_node keypoint_probe
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -117,6 +203,18 @@ if(BUILD_TESTING)
   ament_add_gtest(test_rotation_fit test/test_rotation_fit.cpp)
   if(TARGET test_rotation_fit)
     target_link_libraries(test_rotation_fit perception_components)
+  endif()
+
+  # The arithmetic either side of the depth model — the whole of P4 that can be
+  # got wrong in silence. No ONNX Runtime, no GPU, no camera, so this suite runs
+  # identically on both machines, which is the reason depth_model.hpp is a
+  # separate header from the engine behind it. A channel order swapped or a
+  # reciprocal taken before the clamp both produce a depth map that renders as a
+  # plausible room and is numerically nonsense.
+  ament_add_gtest(test_depth_model test/test_depth_model.cpp)
+  if(TARGET test_depth_model)
+    target_include_directories(test_depth_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(test_depth_model opencv_core opencv_imgproc)
   endif()
 
   # The tracker, against synthetic frames whose true motion is known. It is the

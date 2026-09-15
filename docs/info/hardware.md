@@ -13,7 +13,7 @@ this project's predecessor down a wrong path more than once.
 | Kernel | `7.0.0-30-generic` |
 | CPU | AMD Ryzen 9 7900X, 16 vCPUs presented to the VM, 1 thread/core |
 | RAM | 18 GB |
-| GPU | **NVIDIA GeForce GTX 1660 SUPER**, 6144 MiB, compute capability **7.5**, driver **595.84** |
+| GPU | **NVIDIA GeForce GTX 1660 SUPER**, 6144 MiB, compute capability **7.5**, driver **595.91.07** (was 595.84 on 2026-09-01; re-read 2026-09-15) |
 | ROS | **Lyrical**, `/opt/ros/lyrical` |
 | LAN | `ens18` |
 | Display | GNOME + Xwayland; the only host that can run `rviz2` |
@@ -26,14 +26,26 @@ this project's predecessor down a wrong path more than once.
   TensorRT fp16 speedup you have not measured.
 - 6 GB is comfortable for a ViT-S at 518² (well under 1 GB of activations) and
   would be tight for anything much larger.
-- **Measured, via the predecessor's ONNX Runtime CUDA path:** Depth Anything V2
-  Small at 518² runs **72–79 ms/frame**, with ~1.3 s of first-inference warm-up.
-  The same model on CPU runs **280–305 ms/frame**. That 4× is the whole reason
-  the GPU is in the design.
-- **No CUDA toolkit is installed** — `nvcc` is absent and there is no
-  `libcudart` in `/usr/lib/x86_64-linux-gnu`. The driver alone is enough for
-  pip's `onnxruntime-gpu` (its wheels vendor the runtime) and **not enough for a
-  C++ build**. See [setup.md](setup.md#gpu).
+- **Measured in C++ on this box, 2026-09-15** (`bash tools/gates/gpu-stack.sh`):
+  Depth Anything V2 Small at 518² runs **51.20 ms/frame mean, p95 51.50 ms**
+  through ONNX Runtime 1.30's CUDA execution provider, against **213.18 ms** for
+  the identical binary on the CPU provider. First inference costs 300–860 ms —
+  CUDA context creation, cuBLAS handles and kernel autotuning — which is why
+  `depth_node` warms its session at startup rather than paying it on frame one.
+  The predecessor measured 72–79 ms for the same model on the same card through
+  Python; the C++ path is faster and the two numbers are not directly comparable
+  (different ONNX Runtime, different CUDA).
+- That 4× CPU-to-GPU separation is the whole reason the GPU is in the design, and
+  it is also what makes P4's 80 ms budget an assertion rather than a decoration:
+  `gates/gpu-stack.sh` asserts the CPU path *fails* that budget, so a silent
+  fallback cannot pass it.
+- **There is still no CUDA toolkit and no `nvcc`.** What exists as of 2026-09-15
+  is a *runtime* stack in a user-writable prefix — ONNX Runtime 1.30 plus CUDA
+  13.1's redistributable libraries and cuDNN 9.26, installed by
+  `bash tools/fetch-gpu-stack.sh` into `~/.local/opt/pimesh-gpu`. That is enough
+  to run an ONNX model and **not** enough to compile a CUDA kernel: a future
+  hand-written TSDF integrator still needs a real toolkit install. See
+  [setup.md](setup.md#gpu).
 
 ### Libraries present
 
@@ -42,8 +54,10 @@ this project's predecessor down a wrong path more than once.
 | OpenCV | 4.10.0 (apt) | **No CUDA module** — `cv::cuda::` will not link |
 | PCL | 1.15.1 (`libpcl-dev` installed) | Plus `ros-lyrical-pcl-ros` |
 | Open3D | **not installed** | Deliberate — see [pipeline.md](pipeline.md) |
-| ONNX Runtime | **not installed for C++** | Python venv has 1.29.0 with CUDA + TensorRT providers |
-| CUDA toolkit | **not installed** | Driver only |
+| ONNX Runtime | **1.30.0** (`gpu_cuda13`) in `~/.local/opt/pimesh-gpu` | `bash tools/fetch-gpu-stack.sh`; CUDA + TensorRT + CPU providers compiled in |
+| CUDA runtime | **13.1** redistributables, same prefix | cudart, cuBLAS 13.2, cuRAND, nvrtc, nvJitLink — libraries only |
+| cuDNN | **9.26.0.51** (`_cuda13`), same prefix | Required: without it the CUDA provider fails to load and ORT falls back to CPU |
+| CUDA **toolkit** | **not installed** | No `nvcc`. Runtime libraries are not a compiler |
 
 ## Raspberry Pi
 

@@ -119,11 +119,29 @@ boot.
 
 ## Depth inference is suddenly 4× slower
 
-**ONNX Runtime fell back to the CPU execution provider.** 72–79 ms/frame on
-CUDA, 280–305 ms/frame on CPU. It falls back silently when the CUDA provider
-library, the CUDA runtime or cuDNN cannot be loaded. `depth_node` must log the
-provider it actually got at startup — if that log line is missing, add it before
-debugging anything else.
+**ONNX Runtime fell back to the CPU execution provider.** Measured here in C++,
+2026-09-15: **51.2 ms/frame** on CUDA against **213.2 ms** on CPU. It falls back
+**silently** whenever the CUDA provider library, the CUDA runtime or cuDNN cannot
+be loaded — there is no error, only the slowdown. Anything using ONNX Runtime
+must log the provider it actually got at startup; if that line is missing, add it
+before debugging anything else.
+
+Three causes, in the order they have actually happened:
+
+1. **The binary was linked without `-Wl,--disable-new-dtags`.** This is the one
+   that bites on a clean, correct install. `libonnxruntime_providers_cuda.so` is
+   *dlopened* and carries no `RPATH`/`RUNPATH`, and `DT_RUNPATH` — CMake's default
+   — is not inherited down a dlopen chain, so the provider cannot find
+   `libcublas.so.13` in its own directory. Check with
+   `objdump -p <binary> | grep -E 'RPATH|RUNPATH'`: it must say **RPATH**.
+2. **The stack is incomplete or the wrong shape.** Run
+   `bash tools/fetch-gpu-stack.sh` — it verifies rather than assuming, and will
+   name what is missing. `ldd` on the provider library is *not* sufficient
+   evidence: a link-time stub resolves every symbol and then segfaults.
+3. **Something else is using the card.** 6 GB is not much; `nvidia-smi` names the
+   processes.
+
+`bash tools/gates/gpu-stack.sh` distinguishes all three and prints which.
 
 ## `cv::cuda::` will not link
 
