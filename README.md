@@ -14,8 +14,8 @@ where it pays.
 
 ## Status
 
-**The first three stages run. Depth onwards does not.** As of **2026-09-12** the
-repository holds five packages and the camera reaches the tracker:
+**The first four stages run. Fusion onwards does not.** As of **2026-09-15** the
+repository holds five packages and the camera reaches the GPU:
 
 - **Capture** (`pimesh_camera`, on the Pi) — 1280×720 MJPEG stamped with the
   kernel's capture time, **44–59 Hz received on the dev box**, serving real
@@ -26,23 +26,30 @@ repository holds five packages and the camera reaches the tracker:
   2.7 MB frame to its consumers as a pointer: **504/504** buffer addresses matched
   with intra-process comms on against **0/395** with it off.
 - **Keypoints** (`pimesh_perception`, here) — ORB at 500 features with pooled
-  matching over a 10-frame window, **48.6 Hz sustained at 6.71 ms/frame**, and a
-  rotation-only `odom → base_link` that holds its last pose rather than guessing
-  when its gates fail.
+  matching over a 10-frame window, **57.9 Hz sustained at 5.75 ms/frame** with
+  depth running beside it, and a rotation-only `odom → base_link` that holds its
+  last pose rather than guessing when its gates fail.
+- **Depth** (`pimesh_perception`, here, on the GPU) — Depth Anything V2 Small at
+  518² through ONNX Runtime's CUDA execution provider, **55.1 ms/frame and
+  17.4 Hz** against an 80 ms budget, publishing `/depth` in metres alongside
+  `/depth/rgb` — the exact frame each map was inferred on, **1048/1048 measured
+  byte-identical**. The metres are the right *shape* and an arbitrary *size*:
+  monocular depth is scale-ambiguous until something measures a known distance.
 
-`just build` then `just view-keypoints` shows it running; `just --list` is the
+`just build` then `just view-depth` shows it running; `just --list` is the
 whole of what you type on a normal day. The tests are the `tools/gates/*.sh`
 scripts, run directly, and each milestone issue records what they printed —
 [#4](https://github.com/bthek1/ros2_pi/issues/4) for capture,
-[#5](https://github.com/bthek1/ros2_pi/issues/5) for these two stages,
+[#5](https://github.com/bthek1/ros2_pi/issues/5) for decode and keypoints,
+[#6](https://github.com/bthek1/ros2_pi/issues/6) for depth,
 [#9](https://github.com/bthek1/ros2_pi/issues/9) for the calibration.
 
-**No depth, fusion, mesh or dashboard code exists yet** — that is
+**No fusion, mesh or dashboard code exists yet** — that is
 [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md),
 and [docs/info/roadmap.md](docs/info/roadmap.md) tracks it. Numbers quoted in
 `docs/` for those stages are measured on the Python predecessor at
 [`~/Documents/piros2`](../piros2), which implements the same pipeline on the same
-hardware; numbers for the three stages above are this project's own.
+hardware; numbers for the four stages above are this project's own.
 
 ## Why a rewrite
 
@@ -78,11 +85,12 @@ Measured on this hardware — the depth row here, the rest via the predecessor:
 | --- | --- |
 | Capture + ship (Pi) | ~16 ms/frame, up to 60 fps at 720p MJPEG |
 | Decode + ORB (dev box CPU) | ~9 ms/frame |
-| **Depth (dev box GPU)** | **51.2 ms/frame** inference — 213.2 ms on CPU ([gate](docs/info/setup.md#gpu), 2026-09-15) |
+| **Depth (dev box GPU)** | **55.1 ms/frame** in the node, 51.1 ms of it inference — 287.9 ms on CPU ([gate](docs/info/setup.md#gpu), 2026-09-15) |
 | TSDF integrate | ~15 ms/frame (target) |
 | Mesh extraction | 300–900 ms, every ~10 s, off the hot path |
 
-**Depth is the pipeline's clock: ~13 Hz.** Every stage drops rather than queues.
+**Depth is the pipeline's clock: 17.4 Hz measured.** Every stage drops rather than
+queues.
 
 ## Documentation
 

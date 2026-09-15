@@ -116,3 +116,50 @@
     odom_frame: odom
     base_frame: base_link
     stats_period_s: 5.0
+
+/**/depth_node:
+  ros__parameters:
+    # Two consumers on the decoded topic now — keypoint_node and this one — which
+    # is the configuration the zero-copy claim is actually about. See
+    # depth_node.hpp: rclcpp moves the buffer into the *last* ownership-taking
+    # subscription and copies it for every other, so both of them take a
+    # ConstSharedPtr and gates/ipc.sh asserts at least two subscribers while it
+    # measures.
+    input_topic: /image_raw
+    # 32FC1 metres, and the exact frame each map was inferred on. The second is
+    # not a convenience: a separate republisher would drop *different* frames from
+    # this node, so their stamp sets would rarely intersect and an exact-sync
+    # consumer would limp at a fraction of either rate.
+    depth_topic: /depth
+    rgb_topic: /depth/rgb
+    publish_rgb: true
+    # The GPU. false is gates/depth.sh's control run, reached through the launch
+    # argument of the same name rather than by editing this file.
+    use_cuda: true
+    # **Arbitrary, and honestly so.** Monocular depth is scale-ambiguous: the model
+    # says "twice as far", never "three metres". The room will be plausibly shaped
+    # and the wrong size until P5 pins this against a tape measure — the
+    # predecessor's came out at 2.69x. Do not tune it by eye against a mesh that
+    # looks about right.
+    depth_scale: 10.0
+    # Applied to the model's *inverse* output before the reciprocal. 1/0 is inf,
+    # not a big number, and one NaN integrated into a TSDF poisons voxels that
+    # were fine.
+    max_range_m: 6.0
+    # The static edge pimesh_bringup publishes and test_transforms checks is the
+    # optical convention. Named, never re-derived here.
+    optical_frame: camera_optical_frame
+    stats_period_s: 5.0
+
+/**/depth_probe:
+  ros__parameters:
+    source_topic: /image_raw
+    depth_topic: /depth
+    rgb_topic: /depth/rgb
+    # Overridden by gates/depth.sh, which sets the window from the clip's own
+    # metadata. The value here is what a hand-run probe gets.
+    duration_s: 60.0
+    warmup_frames: 3
+    # Must match depth_node's clip above, or the range assertion is measuring a
+    # disagreement between two config keys rather than the depth.
+    max_range_m: 6.0

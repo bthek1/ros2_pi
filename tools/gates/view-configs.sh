@@ -56,14 +56,80 @@ arm_cleanup
 # --- What the workspace publishes -------------------------------------------
 #
 # Gathered from the create_publisher calls in src/, resolved into the root
-# namespace, which is where the launch files put these nodes. grep over source
+# namespace, which is where the launch files put these nodes. Reading the source
 # is a blunt instrument and it is the right one: the alternative is a
 # hand-maintained list, which is a second place for the truth to live and the
 # exact thing this gate is trying to stop existing.
-mapfile -t published < <(
-    grep -rhoP 'create_publisher<[^>]+>\(\s*"\K[^"]+' "$PIMESH_WS/src" |
-        sed 's|^~/|/|; s|^\([^/]\)|/\1|' | sort -u
-)
+#
+# **A plain grep for a string literal was not enough, and the gap was invisible.**
+# Half the publishers in this workspace do not name their topic in the call —
+# they pass a variable holding a *parameter's* default, which is how a topic
+# becomes configurable. `create_publisher<Image>(depth_topic, qos)` has no topic
+# in it to find. So a grep for literals reported `/image_raw`, `/depth` and
+# `/depth/rgb` as published by nothing at all, and any config naming one of them
+# would have failed stage 1 for a reason that has nothing to do with the config.
+#
+# It resolves the variable back to the `declare_parameter` it came from, and
+# **refuses to carry on if it cannot**: a publisher this gate could not read is a
+# hole in its coverage, and a hole that says nothing is how the last version of
+# this gate passed over a display that showed an empty panel for a week.
+publisher_topics=$(/usr/bin/python3 - "$PIMESH_WS/src" <<'PUBS'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+
+# create_publisher<T>("…")  — the topic named in the call.
+LITERAL = re.compile(r'create_publisher<[^>]+>\(\s*"([^"]+)"')
+# create_publisher<T>(some_variable, …) — the topic named somewhere else.
+VARIABLE = re.compile(r'create_publisher<[^>]+>\(\s*([A-Za-z_]\w*)\s*,')
+
+topics = set()
+unresolved = []
+
+for path in sorted(root.rglob('*.cpp')):
+    text = path.read_text()
+    for match in LITERAL.finditer(text):
+        topics.add(match.group(1))
+    for match in VARIABLE.finditer(text):
+        name = match.group(1)
+        # `const std::string x = declare_parameter("x_topic", std::string("/x"), …)`
+        # The default is the topic the pipeline actually runs on: config/pimesh.yaml
+        # sets these to the same values, and a launch that overrode one would be
+        # running a topic layout no committed .rviz describes anyway.
+        declared = re.search(
+            r'\b' + re.escape(name) +
+            r'\s*=\s*declare_parameter\s*(?:<[^>]*>)?\(\s*"[^"]*"\s*,'
+            r'\s*std::string\(\s*"([^"]+)"',
+            text)
+        if declared:
+            topics.add(declared.group(1))
+        else:
+            unresolved.append(f'{path.name}: create_publisher(&{name}, …)')
+
+if unresolved:
+    print('UNRESOLVED', file=sys.stderr)
+    for entry in unresolved:
+        print(' ', entry, file=sys.stderr)
+    sys.exit(1)
+
+for topic in sorted(topics):
+    # Into the root namespace, which is where the launch files put these nodes.
+    if topic.startswith('~/'):
+        topic = topic[1:]
+    elif not topic.startswith('/'):
+        topic = '/' + topic
+    print(topic)
+PUBS
+) || {
+    echo "FAIL: a create_publisher call names a topic this gate could not resolve"
+    echo "      (listed above). Stage 1 would report that topic as unpublished,"
+    echo "      so the resolver in this gate has to learn the new spelling —"
+    echo "      silently skipping it is how a display ends up checked by nothing."
+    exit 1
+}
+mapfile -t published <<<"$publisher_topics"
 
 if (( ${#published[@]} == 0 )); then
     echo "FAIL: found no create_publisher calls in src/ — this gate is not looking where it thinks"
@@ -81,7 +147,16 @@ fi
 
 # Parse as YAML, not with grep for "Value:". A .rviz is YAML and the same key
 # means different things at different depths — `Value: true` on a display is its
-# enabled flag. Only Topic.Value is a topic name.
+# enabled flag. Only a topic property's Value is a topic name.
+#
+# **Two spellings, because RViz has two.** A modern display carries a `Topic`
+# group — a dict whose `Value` is the name, with the QoS beside it. An older one
+# carries a bare `RosTopicProperty` named for what it is: `Depth Map Topic` and
+# `Color Image Topic` on DepthCloud, which is the display milestone C added. A
+# parser that knew only the first found *no topics at all* on that display and
+# skipped it in silence, which is this gate's own recurring failure mode — it
+# checked what it could see and said nothing about the rest. Any key ending in
+# "Topic" is one.
 config_topics() {       # $1 = path to a .rviz
     python3 - "$1" <<'PY'
 import sys
@@ -90,13 +165,29 @@ import yaml
 with open(sys.argv[1]) as fh:
     config = yaml.safe_load(fh)
 
+
+def topic_properties(display):
+    """Every (property name, topic) this display names."""
+    for key, value in display.items():
+        if key != 'Topic' and not key.endswith(' Topic'):
+            continue
+        if isinstance(value, dict) and value.get('Value'):
+            yield key, value['Value']
+        elif isinstance(value, str) and value:
+            yield key, value
+
+
 for display in config.get('Visualization Manager', {}).get('Displays', []):
-    topic = display.get('Topic')
     name = display.get('Name', '?')
-    if isinstance(topic, dict) and topic.get('Value'):
-        print(name, topic['Value'])
-    elif isinstance(topic, str) and topic:
-        print(name, topic)
+    for key, topic in topic_properties(display):
+        # The display's name alone is ambiguous once one display names two
+        # topics, so the property is part of the label. **No spaces in it**: the
+        # caller reads these lines with `read -r display topic`, so a label like
+        # "DepthCloud/Color Image" would split and hand it "Image" as the topic —
+        # which it then reported as unpublished, in a message naming a topic
+        # nobody had written anywhere.
+        label = name if key == 'Topic' else name + '/' + key[:-len(' Topic')].replace(' ', '')
+        print(label, topic)
 PY
 }
 
@@ -157,9 +248,22 @@ for config in "${configs[@]}"; do
 
     run_for 45 rviz2 -d "$config" >/dev/null 2>&1 &
 
-    # Wait for the node, then for its subscriptions — RViz creates the node
-    # before it has finished building the displays, so the first `node info`
-    # after the node appears can legitimately be empty.
+    # Wait for the node, then for **every** topic this config names — not for the
+    # first subscription to appear.
+    #
+    # **Stopping at the first one is a race, and it lost.** RViz creates the node
+    # before it has finished building the displays, and it builds them one at a
+    # time: measured 2026-09-15, a DepthCloud display's depth subscription was in
+    # the graph several seconds before its colour one, so a loop that broke on
+    # `subs` being non-empty read the list mid-construction and reported
+    # `/depth/rgb` as RVIZ DID NOT SUBSCRIBE against a config that was completely
+    # correct. Given another ten seconds the same rviz2 had all three (the
+    # camera_info DepthCloud derives from the depth topic's namespace included).
+    #
+    # So the loop ends when the answer is complete or when the time is up, and a
+    # timeout leaves the last list it saw to be reported against — which is the
+    # real failure, reported honestly, rather than a snapshot of a display that
+    # had not been built yet.
     node=""
     subs=""
     for _ in $(seq 40); do
@@ -169,7 +273,13 @@ for config in "${configs[@]}"; do
         subs=$(timeout 10 ros2 node info "$node" 2>/dev/null |
                sed -n '/Subscribers:/,/Publishers:/p' |
                awk 'NF && $1 ~ /^\// {sub(/:$/, "", $1); print $1}')
-        [[ -n $subs ]] && break
+        [[ -n $subs ]] || continue
+        missing=0
+        while read -r _ topic; do
+            [[ -z ${topic:-} ]] && continue
+            grep -qx -- "$topic" <<<"$subs" || missing=1
+        done < <(printf '%s\n' "${referenced[@]}")
+        (( missing == 0 )) && break
     done
 
     echo "$(realpath --relative-to="$PIMESH_WS" "$config"):"

@@ -126,7 +126,7 @@ be loaded — there is no error, only the slowdown. Anything using ONNX Runtime
 must log the provider it actually got at startup; if that line is missing, add it
 before debugging anything else.
 
-Three causes, in the order they have actually happened:
+Four causes, in the order they have actually happened:
 
 1. **The binary was linked without `-Wl,--disable-new-dtags`.** This is the one
    that bites on a clean, correct install. `libonnxruntime_providers_cuda.so` is
@@ -134,14 +134,39 @@ Three causes, in the order they have actually happened:
    — is not inherited down a dlopen chain, so the provider cannot find
    `libcublas.so.13` in its own directory. Check with
    `objdump -p <binary> | grep -E 'RPATH|RUNPATH'`: it must say **RPATH**.
-2. **The stack is incomplete or the wrong shape.** Run
+2. **It is a component, and the flag above does not reach it.** Measured
+   2026-09-15, and it is the more confusing half of the same fact: the same
+   libraries and the same flags gave `tools/gpu_probe` `CUDAExecutionProvider` at
+   51 ms and `depth_node` inside `component_container_isolated`
+   `CPUExecutionProvider` at 517 ms. Resolving a dlopened object's `DT_NEEDED`
+   entries, glibc searches the object's own `DT_RPATH`, its **loader chain's**, and
+   the **main executable's** — and a dlopened object has no loader chain, so the
+   only one that could apply is the executable's. `gpu_probe` is an executable we
+   link; `component_container_isolated` was built by somebody else and has no
+   `RPATH` at all. The tell is the error text, which does name the missing library:
+
+   ```
+   Failed to load library …/libonnxruntime_providers_cuda.so with error:
+   libcublasLt.so.13: cannot open shared object file
+   ```
+
+   The fix is in `preload_cuda_provider()` (`src/pimesh_perception/src/depth_engine_ort.cpp`):
+   load the CUDA libraries **by absolute path** before ONNX Runtime asks for them,
+   so its `DT_NEEDED` entries are satisfied from what is already in the process and
+   no search happens at all. `LD_LIBRARY_PATH` is not an option — it is read once
+   at process start, and this node must work in a container launched by
+   `ros2 component load`.
+3. **The stack is incomplete or the wrong shape.** Run
    `bash tools/fetch-gpu-stack.sh` — it verifies rather than assuming, and will
    name what is missing. `ldd` on the provider library is *not* sufficient
    evidence: a link-time stub resolves every symbol and then segfaults.
-3. **Something else is using the card.** 6 GB is not much; `nvidia-smi` names the
+4. **Something else is using the card.** 6 GB is not much; `nvidia-smi` names the
    processes.
 
-`bash tools/gates/gpu-stack.sh` distinguishes all three and prints which.
+`bash tools/gates/gpu-stack.sh` distinguishes 1, 3 and 4 and prints which — and
+**cannot see 2 at all**, because its instrument is an executable. `bash
+tools/gates/depth.sh` is the one that covers the component, and it exists in that
+shape because of this. Ask what the gate does not touch.
 
 ## `cv::cuda::` will not link
 

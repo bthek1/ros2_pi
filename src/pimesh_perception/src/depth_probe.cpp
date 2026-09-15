@@ -157,7 +157,7 @@ private:
   {
     const auto now = std::chrono::steady_clock::now();
     depth_frames_++;
-    if (depth_frames_ <= warmup_) {
+    if (depth_frames_ <= static_cast<std::uint64_t>(std::max(0, warmup_))) {
       last_arrival_ = now;
       return;
     }

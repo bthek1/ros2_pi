@@ -232,12 +232,12 @@ both; the calibration work of P9 has the long version of why that matters.
 
 **Job:** one RGB frame in, one metric depth map out.
 
-**Status, 2026-09-15: the toolchain is measured, the node is design intent.**
-Everything in this section below the inference numbers is what P4 intends to
-build, not a description of running code — `depth_node` does not exist, and
-neither do `/depth`, `/depth/rgb` or `tools/gates/depth.sh`. What *is* closed is
-that a plain C++ link against ONNX Runtime reaches this GPU:
-`bash tools/gates/gpu-stack.sh`.
+**Status, 2026-09-15: built and measured.** `depth_node` is a component in the
+bringup container, publishing `/depth` and `/depth/rgb`, and
+`bash tools/gates/depth.sh` is what closes the claim: replaying `bags/desk1`
+through the real container it reports `CUDAExecutionProvider` at **55.10 ms mean
+per frame, 58.21 ms p95** against an 80 ms budget and **17.42 Hz** sustained on
+`/depth`, with a CPU control at 287.92 ms that fails the same budget.
 
 - **Depth Anything V2 Small (ViT-S/14), ONNX.** RGB in, ImageNet-normalised,
   spatial dims a multiple of 14 — **518 = 37×14** is the trained size. ~99 MB of
@@ -245,29 +245,50 @@ that a plain C++ link against ONNX Runtime reaches this GPU:
 - **ONNX Runtime C++ with the CUDA execution provider**, CPU as an explicit
   fallback that logs which provider it got. Do not let it silently land on CPU
   and then wonder why the mesh stopped updating.
-- **Measured in C++ on this GPU, 2026-09-15** (`bash tools/gates/gpu-stack.sh`,
-  ONNX Runtime 1.30 + CUDA 13.1 + cuDNN 9.26): **51.20 ms/frame mean, 51.50 ms
-  p95** on CUDA against **213.18 ms** on the CPU provider, with a 300–860 ms first
-  inference. So: **~19 Hz of inference with the GPU, ~4.7 Hz without** — and
-  `depth_node`'s own rate will be lower, because that figure is `session.Run`
-  alone and preprocessing, the reciprocal and two publishes all go on top. The
-  predecessor's Python path measured 72–79 ms / 280–305 ms for the same model on
-  the same card; different runtime, different CUDA, same ratio. **Warm the session
-  at startup** so the first real frame is not the cold one.
-- **Link it with `-Wl,--disable-new-dtags`.** The CUDA provider is dlopened and
-  has no search path of its own, and `DT_RUNPATH` is not inherited down a dlopen
-  chain — so with CMake's default flags ONNX Runtime silently falls back to the
-  CPU and the only symptom is a pipeline four times slower than it should be. See
-  [setup.md](setup.md#gpu).
+- **Measured in C++ on this GPU, 2026-09-15**, at two levels, and the gap between
+  them is the interesting part. Inference alone
+  (`bash tools/gates/gpu-stack.sh`, ONNX Runtime 1.30 + CUDA 13.1 + cuDNN 9.26):
+  **51.08 ms mean, 51.36 ms p95** on CUDA against **181.95 ms** on the CPU
+  provider, with a 217 ms first inference. The whole per-frame cost inside
+  `depth_node` (`bash tools/gates/depth.sh`, the node's own clock): **55.10 ms
+  mean, 58.21 ms p95**, against **287.92 ms** for the CPU control. So preprocessing,
+  the reciprocal, the resize back to 1280×720 and two publishes together cost
+  **~4 ms**, and the node sustains **17.42 Hz** on a 59 Hz input — it sees roughly
+  one frame in three and drops the rest. The predecessor's Python path measured
+  72–79 ms / 280–305 ms for the same model on the same card; different runtime,
+  different CUDA, same ratio. **Warm the session at startup** so the first real
+  frame is not the cold one — `depth_node` does, in its constructor.
+- **Link it with `-Wl,--disable-new-dtags`, and that is only half of it.** The
+  CUDA provider is dlopened and has no search path of its own, and `DT_RUNPATH` is
+  not inherited down a dlopen chain — so with CMake's default flags ONNX Runtime
+  silently falls back to the CPU and the only symptom is a pipeline four times
+  slower than it should be. **The flag rescues an executable and not a component**:
+  glibc consults the *main executable's* `DT_RPATH` for a dlopened object's
+  dependencies, and `component_container_isolated` is not ours. `depth_node`
+  therefore loads the CUDA libraries itself, by absolute path, before ONNX Runtime
+  asks for them — `preload_cuda_provider()` in `depth_engine_ort.cpp`. See
+  [setup.md](setup.md#gpu) and the constraint in `CLAUDE.md`.
 - Convert to metres with `depth_scale`, clip beyond 6 m *before* the reciprocal,
   and publish `32FC1` with the **input frame's** stamp and `camera_optical_frame`
   — derived data keeps the header of what it describes, not the moment inference
-  finished.
+  finished. The clip is in *inverse* space on purpose: the model's output tends to
+  zero on anything it reads as "no idea", and `1/0` is not a large number, it is
+  `inf`. Clamping the result afterwards is one branch too late, because anything
+  that touched the infinity first is already NaN. Asserted by the gate: 0
+  non-finite and 0 out-of-range values in 966,625 sampled distances.
 - Publish `/depth/rgb`, the exact frame inferred on, so fusion gets a true
-  RGB-D pair.
+  RGB-D pair — **1048 of 1048 measured byte-identical** to the `/image_raw` frame
+  with the same stamp. A separate republisher cannot serve this purpose: it would
+  drop *different* frames from `depth_node`, so the two stamp sets would rarely
+  intersect and an exact-sync consumer would limp at a fraction of either rate.
+- **`depth_scale` is arbitrary until P5.** Monocular depth is scale-ambiguous —
+  the model says "twice as far", never "three metres" — so the room comes out
+  plausibly shaped and the wrong size. The predecessor's was 2.69× out.
+  `gates/depth.sh` deliberately asserts nothing about the absolute values, only
+  that near and far differ.
 
-**Optimisations, in the order worth trying:** none of them until the CUDA EP is
-running and measured. Then: input at 392² instead of 518² (roughly halves the
+**Optimisations, in the order worth trying:** none of them yet — at 55 ms against
+an 80 ms budget there is nothing to buy. When there is: input at 392² instead of 518² (roughly halves the
 cost, coarsens thin structure), then TensorRT EP with a cached engine (a real
 speedup but a long build and a per-machine cache), then fp16 — which on Turing
 without tensor cores buys bandwidth only, so measure before believing.
@@ -334,7 +355,7 @@ See [dashboard.md](dashboard.md).
 | --- | --- | --- | --- |
 | Pi | dev box | JPEG, ~100–200 kB | up to 60 Hz, ~2–12 MB/s |
 | `decode` | `keypoint`, `depth` | `cv::Mat` pointer | intra-process, zero copy |
-| `depth` | `fusion` | 3.7 MB float depth + its RGB frame | ~13 Hz, intra-process |
+| `depth` | `fusion` | 3.7 MB float depth + its RGB frame | **17.4 Hz measured**, intra-process |
 | `fusion` | `mesh` | TSDF snapshot | every ~10 s |
 | `mesh` | RViz, dashboard | ~120 k triangles | every ~10 s |
 | all | dashboard | stats | 10 Hz |

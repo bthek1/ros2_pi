@@ -55,7 +55,7 @@ not.
 of those existed on this machine. Python's `onnxruntime-gpu` works only because
 pip wheels vendor them; a C++ build gets none of that.
 
-#### Three things that bite, all measured on 2026-09-15
+#### Four things that bite, all measured on 2026-09-15
 
 **1. Link with `-Wl,--disable-new-dtags` or you silently get the CPU.**
 `libonnxruntime_providers_cuda.so` is *dlopened* by `libonnxruntime.so` and
@@ -73,7 +73,27 @@ the CPU. Same source, same libraries, one linker flag apart:
 `gates/gpu-stack.sh` runs both and asserts the default-flags build does *not*
 reach CUDA, so the flag can never quietly stop being load-bearing.
 
-**2. Everything goes in one lib directory, and that is structural.** Since the
+**2. That flag rescues an executable and not a component, and the two look
+identical from the outside.** `tools/gpu_probe` is a program this workspace links,
+so it carries the `RPATH` above. A `rclcpp_components` component is loaded into
+`component_container_isolated`, which was built by somebody else and carries none
+— and **the main executable's `DT_RPATH` is the only one glibc has left to
+consult** for a dlopened object's dependencies, because a dlopened object has no
+loader chain of its own. Same libraries, same flags, one container apart:
+
+| | Provider | Mean |
+| --- | --- | --- |
+| `tools/gpu_probe`, an executable | `CUDAExecutionProvider` | 51.08 ms |
+| `depth_node`, a component | `CPUExecutionProvider` | 517 ms |
+
+So `depth_node` loads the CUDA libraries itself, by absolute path, before ONNX
+Runtime asks for them — `preload_cuda_provider()` in
+`src/pimesh_perception/src/depth_engine_ort.cpp`. Their `DT_NEEDED` entries are
+then satisfied from what is already in the process and no search happens.
+`bash tools/gates/depth.sh` is what covers this, because `gates/gpu-stack.sh`
+structurally cannot: its instrument is an executable.
+
+**3. Everything goes in one lib directory, and that is structural.** Since the
 provider has no search path of its own, the only two ways it can find cuBLAS are
 `LD_LIBRARY_PATH` and sitting in the same directory as the thing that loaded it.
 `LD_LIBRARY_PATH` is read by the loader at *process start* and cannot be fixed up
@@ -82,7 +102,7 @@ somebody else launched. So the CUDA and cuDNN shared objects are installed
 *beside* the ONNX Runtime ones and resolve through `libonnxruntime.so`'s
 `RUNPATH $ORIGIN`.
 
-**3. Never flatten `lib/` and `lib/stubs/` together.** Every CUDA redistributable
+**4. Never flatten `lib/` and `lib/stubs/` together.** Every CUDA redistributable
 ships link-time stub libraries — `libcublas.so`, `libcublasLt.so`, and in cudart
 a `libcuda.so` standing in for the driver. Copying both into one prefix let the
 22 kB stub overwrite the 54 MB real cuBLAS. The result loaded, resolved every
@@ -213,6 +233,7 @@ Available recipes:
     hello-lan seconds="20"              # Hello world, across the LAN: talker on the Pi, listener here
     replay bag seconds="600"            # A recorded bag in RViz, looping. bag = a name under bags/, or a path to one
     view-camera seconds="600"           # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
+    view-depth seconds="600" bag=""     # The room as a depth cloud, in RViz. bag = optional, else the camera
     view-keypoints seconds="600" bag="" # ORB corners and the rotation-only pose, in RViz. bag = optional, else the camera
 ```
 

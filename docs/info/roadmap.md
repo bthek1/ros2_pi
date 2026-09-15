@@ -1,7 +1,8 @@
 # Roadmap
 
-Status as of **2026-09-13** (M4 closed that day against the reference clip; M2.5 and
-M3 the day before). The build order and per-phase tests live in
+Status as of **2026-09-15** (M5 closed that day: depth on the GPU, measured
+through the real container rather than a standalone probe; M4 on 2026-09-13
+against the reference clip, M2.5 and M3 the day before). The build order and per-phase tests live in
 [../plans/future/project_final_state.md](../plans/future/project_final_state.md);
 this page is the one-line status view. Milestones map to its phases: M1 = P0,
 M2 = P1, and so on through M9 = P8.
@@ -24,7 +25,7 @@ evidence.
 | M2.5 | Camera calibration — real C922 intrinsics, served on `/camera_info` | **done 2026-09-12** — [issue #9](https://github.com/bthek1/ros2_pi/issues/9) P9, `bash tools/gates/calibration.sh`: fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection 0.4955 px, median straightness 0.7796 px, coverage 0.896 over 4/4 quadrants, 24 marker-confirmed frames. Numbered `P9` and sequenced before P3 — the number is an identity, the order is a schedule |
 | M3 | Dev-box container — `decode_node` with intra-process comms proven zero-copy | **done 2026-09-12** — [issue #5](https://github.com/bthek1/ros2_pi/issues/5) P2, `bash tools/gates/ipc.sh`: 504/504 published buffer addresses reaching their consumers with intra-process comms on against 0/395 with it off, exactly 1 subscriber on the Wi-Fi topic, decode 1.90 ms/frame. The zero-copy claim had to be earned twice — it passed at 429/429 with one consumer and failed at 0/574 the moment a second one arrived, because rclcpp copies for every ownership-taking subscription but the last |
 | M4 | `keypoint_node` — ORB, matching, annotated preview | **done 2026-09-13** — [issue #5](https://github.com/bthek1/ros2_pi/issues/5) P3, `bash tools/gates/keypoints.sh` over all 3489 frames of `bags/desk1`: 57.9 Hz sustained, 5.99 ms/frame on the node's own clock against an 8 ms budget, matched fraction 0.9063 against the predecessor's algorithm at 0.9065, pose-gate reject rate 8.2% at a mean residual of 0.0017 rad |
-| M5 | `depth_node` — ONNX Runtime C++ on the GPU, metric depth published | **toolchain done 2026-09-15, node not started** — [issue #6](https://github.com/bthek1/ros2_pi/issues/6) P4. `bash tools/gates/gpu-stack.sh`: `CUDAExecutionProvider` at 51.20 ms mean / 51.50 ms p95 on Depth Anything V2 Small at 518², against 213.18 ms on the CPU provider and a default-linker-flags control that reaches only the CPU. The stack installs rootless and sha256-pinned with `bash tools/fetch-gpu-stack.sh`. **Nothing publishes a distance yet**: `depth_node`, `/depth` and `tools/gates/depth.sh` are unwritten |
+| M5 | `depth_node` — ONNX Runtime C++ on the GPU, metric depth published | **done 2026-09-15** — [issue #6](https://github.com/bthek1/ros2_pi/issues/6) P4. `bash tools/gates/depth.sh` replays `bags/desk1` through the real container: `CUDAExecutionProvider`, **55.10 ms mean per frame / 58.21 ms p95** against an 80 ms budget, 17.42 Hz sustained on `/depth`, **1048/1048** `/depth/rgb` frames byte-identical to the frame their depth was inferred on, and 0 non-finite or out-of-range values in 966,625 sampled distances. The control — same binary, `use_cuda:=false` — is `CPUExecutionProvider` at 287.92 ms, outside the same budget. Toolchain gated separately by `bash tools/gates/gpu-stack.sh`: 51.08 ms mean for inference alone, installed rootless and sha256-pinned by `bash tools/fetch-gpu-stack.sh` |
 | M6 | `fusion_node` — TSDF integration with per-frame scale alignment | not started |
 | M7 | `mesh_node` — marching cubes, cleanup, Marker + PLY export | not started |
 | M8 | 6-DoF odometry from RGB-D keypoints, so the surface stops smearing | not started |

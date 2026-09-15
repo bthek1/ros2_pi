@@ -117,9 +117,17 @@ echo "      ${CLIP_FRAMES} frames over ${CLIP_SECONDS}s; measuring all of it"
 # --- The pipeline, fed from the clip -----------------------------------------
 #
 # The real launch file, so what is measured is the configuration that runs: one
-# container, intra-process comms on, decode_node and keypoint_node composed. The
-# static transforms come with it, and keypoint_node needs them — the optical-to-body
-# basis comes from TF, not from a quaternion written into the node.
+# container, intra-process comms on, decode_node and keypoint_node composed — and,
+# since P4, depth_node beside them holding the GPU. The static transforms come with
+# it, and keypoint_node needs them: the optical-to-body basis comes from TF, not
+# from a quaternion written into the node.
+#
+# **Measuring the whole container rather than keypoint_node alone is the point.**
+# ORB's 8 ms budget is a claim about this stage keeping up in the pipeline it
+# actually runs in, and depth_node is a real neighbour competing for the same
+# cores. It costs something: measured 2026-09-15, ORB went from 5.99 ms with the
+# GPU carrying depth to 19-24 ms when depth fell back to the CPU and took every
+# core with it. The budget failing under a CPU fallback is the correct outcome.
 timeout -s INT $(( MEASURE_S + 40 )) ros2 launch pimesh_bringup pimesh.launch.py \
     >"$work/launch.log" 2>&1 &
 
@@ -156,7 +164,24 @@ run_for $(( MEASURE_S + 30 )) ros2 run pimesh_perception keypoint_probe --ros-ar
     >"$work/probe.out" 2>"$work/probe.err" || true
 
 # Claim 2, from the node's last summary line — after the window, so it covers it.
-stats=$(grep -h 'stats rate=' "$work/launch.log" | tail -1 | sed 's/.*keypoint_node]: //')
+# **keypoint_node's own line, and the node name in that grep is load-bearing.**
+#
+# This used to be `grep 'stats rate='`, which was unambiguous for exactly as long
+# as one node in the container logged a line beginning that way. P4 put depth_node
+# beside it, depth_node logs `stats rate=… cost_mean=…` too, and `tail -1` started
+# returning *its* last window — which, being the seconds after the clip ended, read
+# `cost_mean=0.00`. The gate then asserted 0.00 ms against an 8 ms budget and
+# printed **PASS gate-keypoints** over a claim it had entirely stopped measuring
+# (2026-09-15).
+#
+# Nothing about that output looked wrong except the zero, and a zero in a cost
+# field is the one value that reads as "fast". So: the line is selected by node
+# name, the window is the last one with frames in it — the final window of a run
+# covers the seconds after the bag ended and its mean is 0.00 over nothing — and
+# the cost is asserted to be **greater than zero** below, because a per-frame cost
+# of exactly zero is not a measurement of anything.
+stats=$(grep -h 'keypoint_node.*stats rate=' "$work/launch.log" |
+        grep -v 'rate=0\.0Hz' | tail -1 | sed 's/.*keypoint_node]: //')
 
 kill_local
 sleep 1
@@ -209,6 +234,10 @@ in_range "$rate" "$MIN_RATE_HZ" 1000 ||
 # --- Claim 2: per-frame cost, on the node's own clock ------------------------
 if [[ -z ${cost:-} ]]; then
     note "keypoint_node logged no stats line — cost cannot be read from anywhere else"
+elif [[ $(awk -v c="$cost" 'BEGIN { print (c > 0) ? 1 : 0 }') != 1 ]]; then
+    # Zero is not a fast frame, it is a frame that was never measured — see the
+    # note above the grep for the run where this gate passed on exactly that.
+    note "keypoint_node's per-frame cost parsed as ${cost} ms, which is not a measurement"
 else
     in_range "$cost" 0 "$MAX_COST_MS" ||
         note "mean per-frame cost ${cost} ms, budget is ${MAX_COST_MS} ms"

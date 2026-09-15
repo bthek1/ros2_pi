@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,8 +20,9 @@ namespace pimesh_perception
 
 /// Monocular depth on the GPU: one decoded frame in, one metric depth map out.
 ///
-/// **This is the pipeline's clock.** Inference costs ~51 ms of a ~17 ms frame
-/// interval, so this node sees roughly one frame in four and drops the rest —
+/// **This is the pipeline's clock.** A frame costs ~55 ms here against a ~17 ms
+/// frame interval — measured 17.42 Hz out of 59 Hz on bags/desk1, 2026-09-15 — so
+/// this node keeps roughly one frame in three and drops the rest —
 /// through the same one-slot mailbox every expensive stage here uses, because a
 /// queue between a 59 Hz producer and a 15 Hz consumer is not a buffer, it is
 /// latency with a nice name. Everything downstream of this node inherits its
@@ -97,6 +99,23 @@ private:
   std::atomic<double> infer_sum_ms_ {0.0};
   std::atomic<double> total_sum_ms_ {0.0};
   std::atomic<double> total_max_ms_ {0.0};
+
+  /// Every per-frame cost in the current stats window, so the summary can carry a
+  /// **p95 and not only a mean**.
+  ///
+  /// A mean is the wrong statistic to be alone here. This node's consumers are
+  /// paced by it, so what matters downstream is the tail: a stage that averages
+  /// 60 ms and stalls for 200 ms four times a minute starves fusion in a way no
+  /// mean will ever show, and `tools/gates/depth.sh` asserts its budget against
+  /// this rather than against the average. The max is kept beside it because a
+  /// p95 over a 5 s window is ~4 samples in and can miss the single worst one.
+  ///
+  /// A mutex rather than an atomic because it is a vector, and it is cheap for the
+  /// same reason the vector stays small: this is pushed at the depth rate, ~15
+  /// times a second, and drained by the stats timer. Contention here would require
+  /// the timer and the worker to collide within a few microseconds of each other.
+  std::mutex cost_mutex_;
+  std::vector<double> window_costs_ms_;
 
   std::uint64_t last_logged_out_ {0};
   std::size_t last_logged_dropped_ {0};

@@ -263,29 +263,52 @@ def test_the_launch_description_actually_builds(launch_module):
 
     assert kinds.get(Node) == len(launch_module.STATIC_TRANSFORMS)
     assert kinds.get(ComposableNodeContainer) == 1, 'there is one container, always'
-    # intra_process, log_payloads, probe, pipeline — each of which exists because
-    # something outside this file has to be able to flip it: the first three for
-    # gates, the last for tools/replay.sh.
-    assert kinds.get(DeclareLaunchArgument) == 4
-    # The probe, loaded into the running container rather than listed in it,
-    # because `composable_node_descriptions` cannot be made conditional.
-    assert kinds.get(LoadComposableNodes) == 1
+    # intra_process, log_payloads, probe, probe_duration_s, use_cuda, pipeline —
+    # each of which exists because something outside this file has to be able to
+    # set it: the first five for gates, the last for tools/replay.sh.
+    assert kinds.get(DeclareLaunchArgument) == 6
+    # One per probe, loaded into the running container rather than listed in it,
+    # because `composable_node_descriptions` is built when this file is evaluated
+    # and cannot be made conditional on an argument. One action each rather than
+    # one action over a filtered list, for the same reason: the filtering would
+    # have to happen before `probe` has a value.
+    assert kinds.get(LoadComposableNodes) == len(launch_module.PROBE_COMPONENTS)
     assert len(actions) == sum(kinds.values())
 
 
-def test_the_probe_is_not_loaded_by_default(launch_module):
-    """`probe:=true` is a gate's switch, and the probe logs a line per frame at
-    50 Hz. A default that loaded it would make every ordinary session noisier and
-    put a second subscriber on the decoded topic — in-process and cheap, but still
-    a consumer nobody asked for."""
-    from launch.conditions import IfCondition
+def test_at_most_one_probe_loads_and_none_by_default(launch_module):
+    """`probe` is a gate's switch, and a probe is a consumer nobody asked for in an
+    ordinary session.
+
+    **This evaluates the conditions rather than checking their type**, which the
+    earlier version of this test did not, and the difference matters now that there
+    are two of them. An `isinstance(..., IfCondition)` assertion is satisfied by a
+    condition that is always true, by a condition on the wrong configuration, and
+    by two conditions that match the same value — and that last one is exactly the
+    failure `probe` was turned from a flag into a name to prevent: a depth
+    measurement taken with the IPC probe also subscribed, with nothing in the
+    output saying so.
+
+    So: for every value `probe` can take, count how many loads actually fire."""
+    from launch import LaunchContext
     from launch_ros.actions import LoadComposableNodes
 
     description = launch_module.generate_launch_description()
     loads = [a for a in description.entities if isinstance(a, LoadComposableNodes)]
-    assert len(loads) == 1
-    assert isinstance(loads[0].condition, IfCondition), (
-        'the probe load is unconditional — it would run in every session')
+    assert len(loads) == len(launch_module.PROBE_COMPONENTS)
+
+    names = [name for name, _ in launch_module.PROBE_COMPONENTS]
+    for value, expected in [('none', 0), *[(n, 1) for n in names]]:
+        context = LaunchContext()
+        context.launch_configurations['probe'] = value
+        fired = sum(
+            1 for load in loads
+            if load.condition is not None and load.condition.evaluate(context)
+        )
+        assert fired == expected, (
+            f'probe:={value} loads {fired} probe(s), expected {expected} — '
+            'two probes measuring at once is the thing this argument prevents'
+        )
 
 
 def test_the_container_can_be_left_out_but_is_there_by_default(launch_module):

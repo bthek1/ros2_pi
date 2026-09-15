@@ -57,12 +57,17 @@ start_run() {           # $1 = log path, $2 = true|false (intra-process)
     pi_run_for $(( MEASURE_S + 25 )) "ros2 run pimesh_camera camera_node" \
         >"$1.camera" 2>&1 &
 
-    # probe:=true loads IpcProbe through the container's load service;
-    # log_payloads:=true makes decode_node print the publisher half of the
-    # evidence. `ros2 launch` has no way to override one node's parameter from the
-    # command line, which is why that is a launch argument at all.
+    # probe:=ipc_probe loads IpcProbe, and only it, through the container's load
+    # service; log_payloads:=true makes decode_node print the publisher half of
+    # the evidence. `ros2 launch` has no way to override one node's parameter from
+    # the command line, which is why both are launch arguments at all.
+    #
+    # The probe is named rather than switched on because there are two of them
+    # now: depth_probe subscribes to this very topic, and a boolean that loaded
+    # both would put a third consumer on /image_raw during the measurement whose
+    # entire subject is how many consumers there are.
     timeout -s INT $(( MEASURE_S + 22 )) ros2 launch pimesh_bringup pimesh.launch.py \
-        probe:=true log_payloads:=true intra_process:="$2" >"$1" 2>&1 &
+        probe:=ipc_probe log_payloads:=true intra_process:="$2" >"$1" 2>&1 &
 
     for _ in $(seq 60); do
         if ros2 node list 2>/dev/null | grep -qx /ipc_probe; then return 0; fi

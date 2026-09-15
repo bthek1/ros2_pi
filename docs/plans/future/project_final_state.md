@@ -37,7 +37,7 @@ doc, commit and conversation.
 | --- | --- | --- | --- |
 | A | [#4](https://github.com/bthek1/ros2_pi/issues/4) | P0–P1 | ✓ **closed 2026-09-09** — one source tree builds under both distros; the Pi ships stamped MJPEG |
 | B | [#5](https://github.com/bthek1/ros2_pi/issues/5) | P2–P3 | One reader, one decode, corners on it, and `bags/desk1` exists — ✓ **done 2026-09-13** |
-| C | [#6](https://github.com/bthek1/ros2_pi/issues/6) | P4 | Depth on the GPU at ≤ 80 ms, CUDA provider named in the log |
+| C | [#6](https://github.com/bthek1/ros2_pi/issues/6) | P4 | Depth on the GPU at ≤ 80 ms, CUDA provider named in the log — ✓ **done 2026-09-15**, 55.10 ms mean |
 | D | [#7](https://github.com/bthek1/ros2_pi/issues/7) | P5–P6 | A triangle mesh you can recognise your room in |
 | E | [#8](https://github.com/bthek1/ros2_pi/issues/8) | P7–P8 | Translation is visible, and one tab shows the pipeline |
 
@@ -353,19 +353,35 @@ rate.
 
 ---
 
-## ☐ P4 — Depth on the GPU
+## ✓ P4 — Depth on the GPU *(done 2026-09-15, [#6](https://github.com/bthek1/ros2_pi/issues/6))*
 
 **Goal:** metric depth at the rate the GPU can sustain.
 
-> **Part-done, 2026-09-15.** The toolchain half below — "do the toolchain work
-> first and standalone, no ROS code until it prints `CUDAExecutionProvider`" — is
-> built and gated: `bash tools/fetch-gpu-stack.sh` installs the stack rootless and
-> sha256-pinned, and `bash tools/gates/gpu-stack.sh` reports
-> **`CUDAExecutionProvider`, 51.20 ms mean / 51.50 ms p95**, with a CPU control at
-> 213.18 ms, a default-linker-flags control that reaches only the CPU, and
-> `nvidia-smi` witnessing the process on the card. **`depth_node`, `/depth`,
-> `/depth/rgb` and `tools/gates/depth.sh` are not written**, so the phase stays ☐.
-> See [#6](https://github.com/bthek1/ros2_pi/issues/6) for the running log.
+> **Done 2026-09-15.** `bash tools/gates/depth.sh` replays `bags/desk1` through
+> the real container and reports **`CUDAExecutionProvider`, 55.10 ms mean per
+> frame / 58.21 ms p95 against an 80 ms budget**, 17.42 Hz sustained on `/depth`,
+> **1048 of 1048** `/depth/rgb` frames byte-identical to the `/image_raw` frame
+> with the same stamp (0 different, 0 unmatched), 1045 depth stamps matched to an
+> input frame and 0 not, and 0 non-finite or out-of-range values in 966,625
+> sampled distances. The control run — the same binary one parameter apart,
+> `use_cuda:=false` — reports `CPUExecutionProvider` at **287.92 ms**, outside the
+> same budget, which is what makes 80 ms an assertion rather than a number.
+>
+> The toolchain half was gated first and separately, as the phase demands:
+> `bash tools/fetch-gpu-stack.sh` installs the stack rootless and sha256-pinned,
+> and `bash tools/gates/gpu-stack.sh` reports `CUDAExecutionProvider` at
+> **51.08 ms mean / 51.36 ms p95** for inference alone, with a CPU control at
+> 181.95 ms, a default-linker-flags control that reaches only the CPU, and
+> `nvidia-smi` witnessing the process holding a compute context.
+>
+> **And that gate could not see the bug this phase actually had.** It proves the
+> GPU stack works for a program *we* link; a component loaded into somebody else's
+> container is a different case, and it failed — `depth_node` ran at 517 ms/frame
+> on the CPU inside `component_container_isolated` while `gpu_probe` ran at 51 ms
+> on CUDA, same libraries, same flags, no error anywhere. See the constraint in
+> [CLAUDE.md](../../../CLAUDE.md) and `preload_cuda_provider()` in
+> `src/pimesh_perception/src/depth_engine_ort.cpp`. Ask what the gate does **not**
+> touch.
 
 This phase carries the project's real setup risk — see
 [../../info/setup.md](../../info/setup.md#gpu). Do the toolchain work **first and
@@ -393,6 +409,16 @@ measured 72–79 ms on this GPU), and that `/depth/rgb` is byte-identical to the
 frame each depth map was inferred on. Prints mean, p95, and the provider.
 
 A CPU fallback is a **failed** test however good the mesh looks.
+
+**As built it asserts four more things, and three of them are about not fooling
+itself.** The CPU control has to *fail* the same budget, or 80 ms is a threshold
+nobody has watched exclude anything. `/depth/rgb` frames that could not be checked
+are counted separately from frames that differed, because a run that checked
+nothing would otherwise report zero mismatches and look perfect. Near and far have
+to differ by at least 0.5 m, since a depth map at one distance everywhere is
+exactly what a reciprocal taken on the wrong side of the clamp produces and it
+renders as a convincing flat wall. And the scale is deliberately **not** asserted
+on: monocular depth is scale-ambiguous and P5 is what pins it.
 
 ---
 

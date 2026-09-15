@@ -4,30 +4,22 @@
 # surface of the workspace and nothing else. Everything that is not a day-to-day
 # action is a script in tools/, run as one — no recipe, no wrapper:
 #
-#   bash tools/gates/build.sh         P0: one source tree, two distros, same msgs
-#   bash tools/gates/capture.sh       P1: 720p MJPEG on the LAN, stamped honestly
-#   bash tools/gates/ipc.sh           P2: one reader on the LAN, one decode, a pointer onward
-#   bash tools/gates/keypoints.sh     P3: ORB keeps up, costs its budget, finds real corners
-#   bash tools/record-clip.sh desk1   ...record the reference clip P3 onwards replay
-#   bash tools/gates/calibration.sh   P9: real intrinsics, and that they straighten the lens
-#   bash tools/calibrate.sh           ...run the checkerboard that produces them
-#   bash tools/gates/test.sh          the unit tests pass on both machines
-#   bash tools/gates/view-configs.sh  every .rviz topic is one src/ publishes
+# The phase gates, each exiting non-zero and printing the number it asserted on:
+#   bash tools/gates/{build,capture,ipc,keypoints,depth}.sh   P0-P4
+#   bash tools/gates/calibration.sh   P9: real intrinsics, and that they straighten
+#   bash tools/gates/{test,view-configs,justfile}.sh          the workspace's own
+#   bash tools/gates/hello-{build,talk,ipc,lan,clean}.sh      the scaffolding's own
+# and the scripts they lean on:
+#   bash tools/record-clip.sh desk1   record the reference clip P3 onwards replay
+#   bash tools/fetch-{gpu-stack,model}.sh   the GPU stack and the depth weights
+#   bash tools/calibrate.sh           run the checkerboard P9's intrinsics come from
 #   bash tools/camera-reset.sh        clear the camera's persistent V4L2 controls
-#   bash tools/test.sh                ...just run them here (tools/test-pi.sh there)
-#
-#   bash tools/gates/hello-{build,talk,ipc,lan,clean}.sh  the scaffolding's own
-#                                     five gates: a package builds, the talker honours
-#                                     its rate, a pointer is handed over, two distros
-#                                     talk, and a session ends when you end it
-#   bash tools/gates/justfile.sh      this file's own shape
+#   bash tools/test.sh                the unit tests, here (tools/test-pi.sh there)
 #   bash tools/stragglers.sh          assert nothing outlived its session
-#   bash tools/sync-pi.sh             ship source to the Pi — source only
-#   bash tools/build-pi.sh            ...and build it there, under Jazzy
-#   bash tools/clean.sh               delete the colcon trees (tools/clean-pi.sh for the Pi's)
+#   bash tools/{sync,build,clean}-pi.sh     ship source to the Pi, build it, clean it
+#   bash tools/clean.sh               delete the colcon trees
 #
-# Each gate exits non-zero and prints the number it asserted on. Burying
-# `hello-compose` among seven of them was why this file got trimmed.
+# Burying `hello-compose` among seven gate recipes is why this file got trimmed.
 #
 # Recipe bodies stay one line each. `just` gives a body no way to share code with
 # another, so inlined bash drifts between copies and shellcheck cannot parse
@@ -77,3 +69,8 @@ replay bag seconds="600":
 [group('run')]
 view-keypoints seconds="600" bag="":
     @bash "{{ ws }}/tools/view-keypoints.sh" {{ seconds }} {{ bag }}
+
+# The room as a depth cloud, in RViz. bag = optional, else the camera
+[group('run')]
+view-depth seconds="600" bag="":
+    @bash "{{ ws }}/tools/view-depth.sh" {{ seconds }} {{ bag }}

@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -61,6 +62,19 @@ void raise_to(std::atomic<double> & target, double value)
   double current = target.load(std::memory_order_relaxed);
   while (value > current &&
     !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {}
+}
+
+/// Nearest-rank percentile over a copy, which is the honest spelling for a window
+/// of ~75 samples: interpolating between two neighbours would invent a number that
+/// no frame actually cost.
+double percentile(std::vector<double> values, double fraction)
+{
+  if (values.empty()) {return 0.0;}
+  const std::size_t index = std::min(
+    values.size() - 1,
+    static_cast<std::size_t>(fraction * static_cast<double>(values.size())));
+  std::nth_element(values.begin(), values.begin() + static_cast<long>(index), values.end());
+  return values[index];
 }
 
 }  // namespace
@@ -319,6 +333,10 @@ void DepthNode::process_frame(const sensor_msgs::msg::Image & msg)
   add(infer_sum_ms_, infer_ms);
   add(total_sum_ms_, total_ms);
   raise_to(total_max_ms_, total_ms);
+  {
+    std::lock_guard<std::mutex> lock(cost_mutex_);
+    window_costs_ms_.push_back(total_ms);
+  }
 }
 
 void DepthNode::log_stats()
@@ -333,6 +351,18 @@ void DepthNode::log_stats()
 
   const auto out = frames_out_.load(std::memory_order_relaxed);
   const auto dropped = mailbox_.dropped();
+
+  // Taken and cleared under the lock, then sorted outside it: holding a mutex
+  // across an nth_element would be holding it across the worker's next push for
+  // no reason. The same shape as the counters below — this window's samples, not
+  // the session's.
+  std::vector<double> costs;
+  {
+    std::lock_guard<std::mutex> lock(cost_mutex_);
+    costs.swap(window_costs_ms_);
+  }
+  const double cost_p95 = percentile(costs, 0.95);
+
   const double infer_sum = infer_sum_ms_.load(std::memory_order_relaxed);
   const double total_sum = total_sum_ms_.load(std::memory_order_relaxed);
 
@@ -348,9 +378,10 @@ void DepthNode::log_stats()
 
   RCLCPP_INFO(
     get_logger(),
-    "stats rate=%.1f provider=%s cost_mean=%.2f infer=%.2f max=%.2f dropped=%zu failures=%lu",
+    "stats rate=%.1f provider=%s cost_mean=%.2f cost_p95=%.2f infer=%.2f max=%.2f "
+    "dropped=%zu failures=%lu",
     static_cast<double>(window_out) / elapsed, engine_->provider().c_str(),
-    total_mean, infer_mean, total_max_ms_.load(std::memory_order_relaxed),
+    total_mean, cost_p95, infer_mean, total_max_ms_.load(std::memory_order_relaxed),
     dropped - last_logged_dropped_,
     static_cast<unsigned long>(failures_.load(std::memory_order_relaxed)));
 

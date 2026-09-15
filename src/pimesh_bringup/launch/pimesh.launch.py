@@ -36,11 +36,13 @@ argument or through a second YAML file. An argument threaded into
 `decode_node`'s `parameters` list, after the YAML so it wins, is the smaller of
 the two.
 
-**`probe` loads the gate's instrument**, and it is a `LoadComposableNodes` rather
-than a fourth entry in the list below, because `composable_node_descriptions` is
-built when this file is evaluated and cannot be made conditional on an argument.
-`LoadComposableNodes` can: it calls the running container's load service, which
-is the same path `ros2 component load` takes.
+**`probe` names a gate's instrument**, and each is loaded by its own
+`LoadComposableNodes` rather than listed with the pipeline, because
+`composable_node_descriptions` is built when this file is evaluated and cannot be
+made conditional on an argument. `LoadComposableNodes` can: it calls the running
+container's load service, which is the same path `ros2 component load` takes.
+It is a *name* (`ipc_probe`, `depth_probe`, `none`) and not a flag now that there
+are two of them, so that a run measuring one cannot quietly be loading the other.
 
 **`pipeline:=false` brings up the frame tree and nothing else**, which is the
 shape this file had before P2 put components in it, and it exists again because
@@ -61,7 +63,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import ComposableNodeContainer, LoadComposableNodes, Node
 from launch_ros.descriptions import ComposableNode, ParameterValue
 
@@ -86,13 +88,36 @@ COMPONENTS = [
     ('decode_node', 'pimesh_perception::DecodeNode'),
     # ORB on every decoded frame, plus the rotation-only pose.
     ('keypoint_node', 'pimesh_perception::KeypointNode'),
+    # Monocular depth on the GPU. **This is the pipeline's clock** — a frame costs
+    # ~55 ms against a ~17 ms frame interval, measured at 17.42 Hz out of 59 Hz, so
+    # it keeps roughly one frame in three and drops the rest through its own
+    # one-slot mailbox. It is in this list
+    # unconditionally, like everything else here, because the container is
+    # everything or nothing: the components share one process precisely so that a
+    # 2.7 MB frame reaches all three of them as a pointer.
+    ('depth_node', 'pimesh_perception::DepthNode'),
 ]
 
-# Loaded only with `probe:=true`: the instrument tools/gates/ipc.sh measures the
-# pointer handover with. Separate from COMPONENTS because it is not part of the
-# pipeline and must not be running when anything else is measured.
+# The gates' instruments, none of which is part of the pipeline.
+#
+# **`probe` names one of these rather than being a boolean, and the change of
+# shape is the point.** With one probe a flag was enough; with two, a flag can no
+# longer say the thing this list's old comment claimed — that a probe "must not be
+# running when anything else is measured". `probe:=depth_probe` loading the IPC
+# probe as well would put a third subscriber on the decoded topic during the very
+# measurement it is there to take, and nothing in the output would mention it. A
+# name makes that exclusion structural instead of a comment: `probe:=none` (the
+# default) loads nothing, and no value loads two.
+#
+# The value **is the node name**, not a nickname mapped to one, so there is no
+# second table to drift out of step with this one.
 PROBE_COMPONENTS = [
+    # tools/gates/ipc.sh: compares the buffer address decode_node published
+    # against the one a subscriber received.
     ('ipc_probe', 'pimesh_perception::IpcProbe'),
+    # tools/gates/depth.sh: the depth rate on its own steady clock, and whether
+    # /depth/rgb is byte-identical to the frame each depth map was inferred on.
+    ('depth_probe', 'pimesh_perception::DepthProbe'),
 ]
 
 
@@ -131,11 +156,25 @@ def _component(name: str, plugin: str, params_path: str, extra: list) -> Composa
     order is load-bearing: rclcpp applies them in sequence, so the launch argument
     wins over the file while the file stays the one place the defaults live.
 
-    The override is here at all because `ros2 launch` has no way to set one node's
-    parameter from the command line — it parses its own arguments and stops — so a
-    parameter a gate needs to flip has to be reachable through a launch argument.
-    `log_payloads` is decode_node's and harmless elsewhere: a node that never
-    declared it ignores it.
+    The overrides are here at all because `ros2 launch` has no way to set one
+    node's parameter from the command line — it parses its own arguments and stops
+    — so a parameter a gate needs to flip has to be reachable through a launch
+    argument. Both of these belong to one node and are harmless on the others: a
+    node that never declared a parameter ignores it.
+
+    `log_payloads` is decode_node's, for tools/gates/ipc.sh. `use_cuda` is
+    depth_node's, and it is **the control run** tools/gates/depth.sh needs rather
+    than a fallback anyone should choose: an 80 ms per-frame budget that the CPU
+    path has never been watched to fail is a threshold nobody has seen exclude
+    anything. `duration_s` is depth_probe's measuring window, which that gate sets
+    from the clip's own metadata so that the window and the clip are the same
+    seconds — comparing a 20 s window of a 60 s clip against that clip's average
+    is a mistake this project has already made once, in P3, and it moved the
+    answer further than a real regression would have.
+
+    Note `value_type=` on every one of them. A `LaunchConfiguration` is a string,
+    and the raw substitution would set a *string* parameter of the same name, which
+    the node ignores while saying nothing at all.
     """
     return ComposableNode(
         package='pimesh_perception',
@@ -146,6 +185,10 @@ def _component(name: str, plugin: str, params_path: str, extra: list) -> Composa
             {
                 'log_payloads': ParameterValue(
                     LaunchConfiguration('log_payloads'), value_type=bool),
+                'use_cuda': ParameterValue(
+                    LaunchConfiguration('use_cuda'), value_type=bool),
+                'duration_s': ParameterValue(
+                    LaunchConfiguration('probe_duration_s'), value_type=float),
             },
         ],
         extra_arguments=extra,
@@ -203,9 +246,26 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             'probe',
-            default_value='false',
-            description="Also load pimesh_perception's IpcProbe, the instrument "
-                        'tools/gates/ipc.sh measures the pointer handover with.',
+            default_value='none',
+            description='Also load one of the gates\' instruments into the '
+                        'container, by node name: ipc_probe, depth_probe, or '
+                        'none. A name rather than a flag so that two probes '
+                        'cannot be measuring at once.',
+        ),
+        DeclareLaunchArgument(
+            'probe_duration_s',
+            default_value='60.0',
+            description='Seconds depth_probe measures before printing its '
+                        'summary. tools/gates/depth.sh sets it from the clip it '
+                        'is replaying, so the window and the clip are the same '
+                        'seconds.',
+        ),
+        DeclareLaunchArgument(
+            'use_cuda',
+            default_value='true',
+            description="depth_node's execution provider. false forces the CPU, "
+                        'which is the control run in tools/gates/depth.sh — a '
+                        'budget nobody has watched fail is not an assertion.',
         ),
         *transforms,
         ComposableNodeContainer(
@@ -244,12 +304,30 @@ def generate_launch_description() -> LaunchDescription:
             ],
             output='screen',
         ),
-        LoadComposableNodes(
-            target_container='pimesh_container',
-            condition=IfCondition(LaunchConfiguration('probe')),
-            composable_node_descriptions=[
-                _component(name, plugin, params_path, extra)
-                for name, plugin in PROBE_COMPONENTS
-            ],
-        ),
+        # One load action per probe, each conditional on `probe` naming it.
+        #
+        # A single action taking a filtered list cannot work: the list would have
+        # to be filtered when this file is *evaluated*, which is before any launch
+        # argument has a value. `IfCondition` is the mechanism that defers a
+        # decision to launch time, and it decides for one action at a time — so
+        # there is one action each, and `probe:=none` is simply a value that no
+        # condition matches.
+        #
+        # `PythonExpression` rather than `LaunchConfigurationEquals`: the latter is
+        # deprecated on Lyrical, and this workspace takes the spelling that exists
+        # at both ends whenever two exist. The repr() is what quotes the name — a
+        # value containing a quote would otherwise end the string and be evaluated
+        # as Python.
+        *[
+            LoadComposableNodes(
+                target_container='pimesh_container',
+                condition=IfCondition(
+                    PythonExpression(
+                        [repr(name), ' == ', "'", LaunchConfiguration('probe'), "'"])),
+                composable_node_descriptions=[
+                    _component(name, plugin, params_path, extra),
+                ],
+            )
+            for name, plugin in PROBE_COMPONENTS
+        ],
     ])

@@ -111,7 +111,15 @@ target_compile_definitions(perception_components PRIVATE
 
 if(PIMESH_HAVE_ONNXRUNTIME)
   target_include_directories(perception_components PRIVATE ${ONNXRUNTIME_INCLUDE})
-  target_link_libraries(perception_components PRIVATE ${ONNXRUNTIME_LIB})
+  target_link_libraries(perception_components PRIVATE ${ONNXRUNTIME_LIB} ${CMAKE_DL_LIBS})
+
+  # The prefix, baked in, so depth_engine_ort.cpp can dlopen the CUDA provider by
+  # absolute path before ONNX Runtime tries to. See that file for why that is
+  # load-bearing and not belt-and-braces: the linker flag below gets the provider's
+  # *dependencies* found only when the RPATH in the dlopen chain belongs to
+  # something that has one, and in a component container it does not.
+  target_compile_definitions(perception_components PRIVATE
+    PIMESH_GPU_PREFIX="${PIMESH_GPU_PREFIX}")
 
   # **`--disable-new-dtags` is the difference between the GPU and the CPU, and
   # nothing about the build says so otherwise.**

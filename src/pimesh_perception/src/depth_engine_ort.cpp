@@ -17,8 +17,12 @@
 
 #include <onnxruntime_cxx_api.h>
 
+#include <dlfcn.h>
+#include <glob.h>
+
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,6 +36,103 @@ namespace pimesh_perception
 namespace
 {
 
+/// Load the CUDA runtime libraries by absolute path, then the CUDA provider,
+/// before ONNX Runtime tries to.
+///
+/// **This is the second half of the RPATH story, and the gate that proved the
+/// first half could not see it.** `tools/gates/gpu-stack.sh` establishes that
+/// `-Wl,--disable-new-dtags` is what lets the CUDA provider find `libcublasLt` and
+/// friends — and it establishes that for an *executable*, because `tools/gpu_probe`
+/// is one. A component is not. Measured 2026-09-15, same libraries, same flags,
+/// the two cases one container apart: `gpu_probe` reached `CUDAExecutionProvider`
+/// at 51 ms/frame, and `depth_node` inside `component_container_isolated` reported
+/// "Failed to load library …libonnxruntime_providers_cuda.so with error:
+/// libcublasLt.so.13: cannot open shared object file", then ran on the CPU at
+/// 517 ms/frame with the pipeline around it working perfectly.
+///
+/// **The mechanism, which is not the usual RUNPATH story.** Resolving an object's
+/// `DT_NEEDED` entries, glibc searches: the object's own `DT_RPATH`, then the
+/// `DT_RPATH` of the objects in its **loader chain**, then `LD_LIBRARY_PATH`, then
+/// its own `DT_RUNPATH`, then the cache. Checked here with `readelf -d`:
+/// `libonnxruntime_providers_cuda.so` has **neither** RPATH nor RUNPATH;
+/// `libonnxruntime.so`, which dlopens it, has `DT_RUNPATH=$ORIGIN`, and a RUNPATH
+/// never applies to anything but its own object's dependencies. And a dlopened
+/// object has **no loader chain at all** — glibc sets `l_loader` for `DT_NEEDED`
+/// dependencies, not for a dlopen — so the only RPATH left that could apply is the
+/// **main executable's**. `gpu_probe` is an executable we link, so it has ours;
+/// `component_container_isolated` was built by somebody else and has none. The
+/// linker flag had not stopped mattering, it had stopped *reaching*.
+///
+/// That also rules out the obvious fix. Dlopening the provider ourselves does not
+/// help — measured, and it was the first thing tried: this library's own
+/// `DT_RPATH` is searched to find the *provider*, which was never the part that
+/// failed, and not to resolve the provider's dependencies. `LD_LIBRARY_PATH` is
+/// read once at process start, and this node has to work in a container launched
+/// by `ros2 component load` as well as by our own launch file.
+///
+/// So: load the dependencies **themselves**, by absolute path, first. Each is then
+/// in the process by soname, and the provider's `DT_NEEDED` entries are satisfied
+/// from what is already loaded without any search happening at all. Each of these
+/// libraries does carry `DT_RUNPATH=$ORIGIN`, which is enough for its *own*
+/// dependencies once it has been found, so naming the directory once here is the
+/// whole of it.
+///
+/// A glob rather than a list of sonames, because a list would be a second place
+/// that knows which CUDA version `tools/fetch-gpu-stack.sh` pinned, and the two
+/// would drift the first time it moved. The prefix holds only the redistributable
+/// runtime libraries — `fetch-gpu-stack.sh` keeps the link-time stubs out of it on
+/// purpose, and asserts a size floor on `libcublas.so.13` because a 22 kB stub
+/// that resolves every symbol and segfaults on first use once got in this way.
+///
+/// Returns an empty string on success, or the `dlerror()` text — which is worth
+/// far more than what ONNX Runtime reports for the same failure ("Failed to load
+/// shared library", naming neither library nor path).
+std::string preload_cuda_provider()
+{
+#ifdef PIMESH_GPU_PREFIX
+  const std::string lib_dir = std::string(PIMESH_GPU_PREFIX) + "/lib";
+
+  // RTLD_LAZY here and RTLD_NOW below: these are pulled in for their *presence*,
+  // and cuDNN's dispatch libraries legitimately carry symbols that resolve only
+  // once an engine library is loaded beside them. Failures are ignored on purpose
+  // — the list is a glob, so it is allowed to name something this ONNX Runtime
+  // build does not need — and the one dlopen whose failure is reported is the
+  // provider's, which is the only one that decides anything.
+  glob_t found {};
+  if (glob((lib_dir + "/libcu*.so.*").c_str(), 0, nullptr, &found) == 0) {
+    for (std::size_t i = 0; i < found.gl_pathc; ++i) {
+      dlopen(found.gl_pathv[i], RTLD_LAZY | RTLD_GLOBAL);
+    }
+  }
+  globfree(&found);
+
+  // The provider itself, last, so that a failure here is about the provider and
+  // not about something it needs. RTLD_GLOBAL so its symbols are visible to
+  // anything ONNX Runtime loads after it, and the handle is deliberately never
+  // closed: ONNX Runtime holds its own reference for the life of the session, and
+  // unloading a CUDA library underneath a live context is not a recoverable state.
+  // glibc keys loaded objects by device and inode, so when ONNX Runtime dlopens
+  // this same absolute path a moment later it receives the handle already open
+  // rather than loading a second copy.
+  //
+  // **RTLD_LAZY, and RTLD_NOW is measured wrong here.** The provider is half of a
+  // bridge: it imports `Provider_GetHost` and other symbols that ONNX Runtime
+  // supplies to it *after* loading it, so resolving everything up front fails on a
+  // provider that is completely fine. Measured 2026-09-15 — with RTLD_NOW this
+  // returned "undefined symbol: Provider_GetHost" while the session went on to
+  // reach CUDAExecutionProvider at 54.8 ms/frame, which is a diagnostic line
+  // saying the opposite of what happened. Lazy binding still fails loudly for the
+  // two things this check is actually for: the file being absent, and a dependency
+  // of it being unfindable.
+  const std::string provider = lib_dir + "/libonnxruntime_providers_cuda.so";
+  if (dlopen(provider.c_str(), RTLD_LAZY | RTLD_GLOBAL) != nullptr) {return {};}
+  const char * error = dlerror();
+  return error != nullptr ? std::string(error) : ("dlopen failed: " + provider);
+#else
+  return "built without PIMESH_GPU_PREFIX";
+#endif
+}
+
 class OrtDepthEngine : public DepthEngine
 {
 public:
@@ -42,6 +143,14 @@ public:
     options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
     if (want_cuda) {
+      // Before anything else: see preload_cuda_provider() above. Without this the
+      // append below throws inside a component container and succeeds in a
+      // standalone executable, which is the most confusing pair of outcomes this
+      // stage can produce.
+      const std::string preload_error = preload_cuda_provider();
+      if (!preload_error.empty()) {
+        diagnostic_ = "could not load the CUDA provider: " + preload_error;
+      }
       try {
         OrtCUDAProviderOptionsV2 * cuda = nullptr;
         Ort::ThrowOnError(Ort::GetApi().CreateCUDAProviderOptions(&cuda));
@@ -53,7 +162,11 @@ public:
         options.AppendExecutionProvider_CUDA_V2(*cuda);
         provider_ = "CUDAExecutionProvider";
       } catch (const Ort::Exception & e) {
-        diagnostic_ = std::string("CUDA provider refused: ") + e.what();
+        // Keep the dlopen error if there was one: ONNX Runtime's own message for
+        // this failure names no library and no path, and the dlerror text names
+        // both.
+        diagnostic_ = std::string("CUDA provider refused: ") + e.what() +
+          (preload_error.empty() ? "" : " (" + preload_error + ")");
       }
     } else {
       diagnostic_ = "CUDA not requested (use_cuda:=false) — this is the gate's control run";

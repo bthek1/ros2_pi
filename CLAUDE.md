@@ -101,26 +101,63 @@ And the workspace had been compiling with **no optimisation flags at all**, so
 every C++ cost this project had ever measured was a `-O0` number. P3's budget was
 what found it, at 7.90 ms against an 8 ms ceiling where `-O2` gives 5.99 ms.
 
-**Milestone C's toolchain half is done and gated as of 2026-09-15, and the node
-is not written.** P4 says to do the GPU toolchain first and standalone — no ROS
-code until a plain C++ program prints `CUDAExecutionProvider` — and that is where
-this stands. `bash tools/fetch-gpu-stack.sh` installs ONNX Runtime 1.30, CUDA
-13.1's runtime libraries and cuDNN 9.26 into `~/.local/opt/pimesh-gpu`, pinned and
-sha256-verified, with no sudo; `bash tools/fetch-model.sh` does the same for the
-weights; and `bash tools/gates/gpu-stack.sh` closes the claim with **51.20 ms
-mean, p95 51.50 ms** on Depth Anything V2 Small at 518², three controls beside it
-(a CPU run at 213.18 ms, a default-linker-flags run that reaches only the CPU, and
-`nvidia-smi` independently witnessing the process holding a compute context).
-**`depth_node`, `/depth`, `/depth/rgb` and `tools/gates/depth.sh` do not exist
-yet**, so nothing in this project publishes a distance.
+**Milestone C is closed as of 2026-09-15 — the pipeline publishes distances.**
+P4, [gh issue #6](https://github.com/bthek1/ros2_pi/issues/6). The toolchain was
+done first and standalone, as the phase demands: `bash tools/fetch-gpu-stack.sh`
+installs ONNX Runtime 1.30, CUDA 13.1's runtime libraries and cuDNN 9.26 into
+`~/.local/opt/pimesh-gpu`, pinned and sha256-verified, with no sudo;
+`bash tools/fetch-model.sh` does the same for the weights; and
+`bash tools/gates/gpu-stack.sh` closes *that* claim with **51.08 ms mean, p95
+51.36 ms** for inference alone, three controls beside it (a CPU run at 181.95 ms,
+a default-linker-flags run that reaches only the CPU, and `nvidia-smi`
+independently witnessing the process holding a compute context).
 
-**Two of that afternoon's findings are in the constraints list below and both are
+Then `depth_node`: a component in the same container as `decode_node` and
+`keypoint_node`, publishing `/depth` (32FC1 metres) and `/depth/rgb`.
+`bash tools/gates/depth.sh` replays `bags/desk1` through the real container and
+reports **`CUDAExecutionProvider`, 55.10 ms mean per frame and 58.21 ms p95
+against an 80 ms budget**, **17.42 Hz** sustained on `/depth`, **1048 of 1048**
+`/depth/rgb` frames byte-identical to the `/image_raw` frame with the same stamp,
+1045 depth stamps matched to an input frame and **0 not**, and **0** non-finite or
+out-of-range values in 966,625 sampled distances — with a control run, the same
+binary one parameter apart, at `CPUExecutionProvider` and **287.92 ms**, outside
+the same budget.
+
+**The most valuable thing that phase produced is a bug the gate before it could
+not have seen, and it is the `--disable-new-dtags` lesson one level deeper.**
+`gates/gpu-stack.sh` proves the GPU stack works for a program *this workspace
+links*. A `rclcpp_components` component is loaded into
+`component_container_isolated`, which is somebody else's executable — and for a
+**dlopened** object's dependencies, glibc consults the object's own `DT_RPATH`, its
+*loader chain's*, and the **main executable's**, of which a dlopened object has no
+loader chain at all. So the only `RPATH` that could apply was the executable's, and
+ours was not it. Measured, same libraries and same flags, one container apart:
+`gpu_probe` at 51 ms on CUDA, `depth_node` at **517 ms on the CPU**, with the whole
+pipeline working perfectly around it and no error in any log but one line naming
+`libcublasLt.so.13`. The flag had not stopped mattering; it had stopped *reaching*.
+`preload_cuda_provider()` in `depth_engine_ort.cpp` is the fix — load the CUDA
+libraries by absolute path before ONNX Runtime asks for them — and
+`gates/depth.sh` exists in the shape it does because `gates/gpu-stack.sh`
+structurally cannot cover this: its instrument is an executable.
+
+**And adding one node to the container turned a passing gate into a false green.**
+`gates/keypoints.sh` read the per-frame cost with `grep 'stats rate=' | tail -1`,
+which was unambiguous for exactly as long as one node logged a line beginning that
+way. `depth_node` logs one too, so `tail -1` started returning *its* last window —
+the seconds after the clip ended, `cost_mean=0.00` — and the gate asserted 0.00 ms
+against an 8 ms budget and printed **PASS**. Nothing in the output looked wrong
+except a zero, and a zero in a cost field reads as "fast". It now selects by node
+name, takes the last window with frames in it, and **asserts the cost is greater
+than zero**, because a per-frame cost of exactly zero is not a measurement. With
+that fixed, ORB measures **5.75 ms** with depth beside it.
+
+**Three of that afternoon's findings are in the constraints list below and all are
 the same shape: a wrong thing that resolved, loaded and ran.** A stub cuBLAS that
-`ldd` was perfectly happy with and that segfaulted on first use, and a linker flag
-whose absence costs the GPU with no error message anywhere. Neither was visible
-in any log; both were found by a control run.
+`ldd` was perfectly happy with and that segfaulted on first use, a linker flag
+whose absence costs the GPU with no error message anywhere, and that same flag
+being correct and irrelevant once the code moved into a container.
 
-**Everything downstream of keypoints still does not exist.** No depth, no fusion,
+**Everything downstream of depth still does not exist.** No fusion,
 no mesh, no dashboard — that is
 [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md)
 and milestone issues [#6](https://github.com/bthek1/ros2_pi/issues/6)–[#8](https://github.com/bthek1/ros2_pi/issues/8),
@@ -244,22 +281,25 @@ message types and rates: [docs/info/pipeline.md](docs/info/pipeline.md).
 | --- | --- | --- | --- |
 | Capture | `camera_node` | Pi | 1280×720 MJPEG, up to 60 fps, stamped at `VIDIOC_DQBUF`, calibrated intrinsics on `/camera_info` |
 | Keypoints | `keypoint_node` | dev box | ORB, 500 features, ~5 ms/frame target |
-| Depth | `depth_node` | dev box, **GPU** | Depth Anything V2 Small, 518², **51.2 ms/frame measured here in C++** (node not written) |
+| Depth | `depth_node` | dev box, **GPU** | Depth Anything V2 Small, 518², **55.1 ms/frame, 17.4 Hz measured in the container** |
 | Fusion | `fusion_node` | dev box | TSDF, 1.5 cm voxels, integrate at depth rate |
 | Surface | `mesh_node` | dev box | marching cubes, re-mesh every ~10 s |
 | View | `dashboard_node` | dev box | web UI, 10 Hz stats, ~10 fps preview |
 
-That 51.2 ms is this project's own, measured in C++ on 2026-09-15 by
-`bash tools/gates/gpu-stack.sh` — inference alone, which is the floor under
-`depth_node` rather than its per-frame cost: preprocessing, the reciprocal and two
-publishes all go on top. The predecessor measured 72–79 ms for the same model on
-the same card through Python and an older ONNX Runtime, with a 280–305 ms CPU
-fallback; ours measures 213 ms on the CPU. The two sets of numbers are not
-directly comparable and both say the same thing about the ratio.
+Both halves of that are measured, 2026-09-15. Inference alone is **51.08 ms**
+(`bash tools/gates/gpu-stack.sh`); the whole per-frame cost inside `depth_node`, on
+the node's own clock, is **55.10 ms** (`bash tools/gates/depth.sh`) — so
+preprocessing, the reciprocal, the resize back to 1280×720 and two publishes cost
+about 4 ms together. The predecessor measured 72–79 ms for the same model on the
+same card through Python and an older ONNX Runtime, with a 280–305 ms CPU
+fallback; ours measures 182 ms on the CPU for inference and 288 ms per frame. The
+two sets of numbers are not directly comparable and both say the same thing about
+the ratio.
 
-**Depth is the pipeline's clock.** Nothing downstream of it can run faster than
-~15 Hz, and design accordingly — do not build a fusion stage that assumes 30 Hz
-input.
+**Depth is the pipeline's clock.** Measured at **17.4 Hz** against a 59 Hz input —
+it sees roughly one frame in three and drops the rest through a one-slot mailbox.
+Nothing downstream of it can run faster, so design accordingly: do not build a
+fusion stage that assumes 30 Hz input.
 
 ## Constraints that are easy to get wrong
 
@@ -565,6 +605,23 @@ strong priors, re-verify before quoting a number as this project's own.
   Runtime libraries are **not a compiler** — a hand-written CUDA kernel still
   needs a real toolkit install. Driver is **595.91.07** (the 595.84 in older docs
   has drifted).
+- **A linker flag that works in an executable does nothing for a component, and
+  this is the sharpest finding of P4.** Resolving a **dlopened** object's
+  `DT_NEEDED` entries, glibc searches the object's own `DT_RPATH`, its *loader
+  chain's*, and the **main executable's** — and a dlopened object has no loader
+  chain, so for `libonnxruntime_providers_cuda.so` the executable's is the only one
+  left. `tools/gpu_probe` is an executable this workspace links, so it has ours;
+  `component_container_isolated` is somebody else's and has none. Measured
+  2026-09-15, same libraries and same flags, one container apart: `gpu_probe` at
+  **51 ms on CUDA**, `depth_node` at **517 ms on the CPU**, no error anywhere but a
+  single line naming `libcublasLt.so.13`. The fix is `preload_cuda_provider()` in
+  `depth_engine_ort.cpp`: `dlopen` the CUDA libraries **by absolute path** before
+  ONNX Runtime asks for them, so its `DT_NEEDED` entries are satisfied from what is
+  already loaded and no search happens. Use `RTLD_LAZY` on the provider itself —
+  `RTLD_NOW` reports `undefined symbol: Provider_GetHost` on a provider that is
+  completely fine, because ONNX Runtime supplies those symbols *after* loading it.
+  `LD_LIBRARY_PATH` is not available: it is read once at process start and cannot
+  be set for a component `ros2 component load` put in somebody's container.
 - **Link anything that uses ONNX Runtime with `-Wl,--disable-new-dtags`, or it
   silently runs on the CPU.** `libonnxruntime_providers_cuda.so` is *dlopened* by
   `libonnxruntime.so` and carries no `RPATH` or `RUNPATH` of its own, and
@@ -578,7 +635,10 @@ strong priors, re-verify before quoting a number as this project's own.
   The same fact is why the CUDA and cuDNN libraries are installed **beside** the
   ONNX Runtime ones in one directory: `$ORIGIN` is the only search path that
   works, since `LD_LIBRARY_PATH` is read at process start and cannot be set for a
-  component somebody else's container launched.
+  component somebody else's container launched. **And `gates/gpu-stack.sh` cannot
+  see the component case at all** — its instrument is an executable, which is
+  exactly the configuration that cannot fail. `gates/depth.sh` is what covers it;
+  see the bullet above.
 - **A library that resolves is not a library that works.** Every CUDA
   redistributable ships link-time stubs in `lib/stubs/` — a `libcublas.so`, and
   in cudart a `libcuda.so` standing in for the driver. Flattening `lib/` and
@@ -590,7 +650,20 @@ strong priors, re-verify before quoting a number as this project's own.
 - **A budget nobody has seen fail is not an assertion.** `gates/gpu-stack.sh`
   asserts the CPU path is *slower* than the 80 ms budget as well as the GPU path
   being faster, because a threshold only means something once the thing it is
-  meant to exclude has been shown to fail it.
+  meant to exclude has been shown to fail it. `gates/depth.sh` does the same one
+  level up, on the node's whole per-frame cost: `use_cuda:=false` is a launch
+  argument so the control is the same binary one parameter apart, and it measures
+  287.92 ms against the same 80 ms.
+- **A number parsed out of a shared log is only unambiguous until a second node
+  logs the same prefix.** `gates/keypoints.sh` read ORB's per-frame cost with
+  `grep 'stats rate=' | tail -1`. P4 put `depth_node` in the same container, it
+  logs a `stats rate=… cost_mean=…` line too, and `tail -1` began returning its
+  final window — the idle seconds after the clip ended, `cost_mean=0.00`. The gate
+  asserted **0.00 ms against an 8 ms budget and printed PASS** (2026-09-15).
+  Nothing looked wrong except a zero, and a zero in a cost field reads as *fast*.
+  Grep by node name, take the last window that had frames in it, and assert the
+  number is **greater than zero** — an unmeasured value and a good one must not
+  have the same spelling.
 - **The GPU is Turing TU116: compute capability 7.5, 6 GB, no tensor cores.**
   fp16 buys bandwidth, not math throughput. Budget fp32 and do not plan around
   TensorRT fp16 speedups you have not measured.
@@ -631,7 +704,16 @@ strong priors, re-verify before quoting a number as this project's own.
 - **This repo is the colcon workspace.** Packages go in `src/`, named
   `pimesh_<thing>` — `pimesh_hello`, `pimesh_msgs`, `pimesh_bringup`,
   `pimesh_camera` and `pimesh_perception` exist; planned: `pimesh_world`,
-  `pimesh_dashboard`. (Not `ros2_pi_*`: a `ros2_` prefix reads as core tooling.)
+  `pimesh_dashboard`. **`pimesh_perception` builds on the Pi too, and the GPU code
+  inside it is why that took arranging**: `depth_node`, its registration and its
+  parameters are identical on both machines, and only the inference engine behind
+  a `DepthEngine` interface is conditional — `depth_engine_ort.cpp` where CMake
+  found ONNX Runtime, `depth_engine_null.cpp` where it did not. The Pi therefore
+  builds a `depth_node` that refuses to start, with a message saying why, which is
+  correct for a node that machine must never run. Building it only where the GPU
+  stack exists would break `test_transforms`, which asserts every plugin string in
+  the launch file resolves in the ament index — on the machine where that check
+  matters least, by weakening it everywhere. (Not `ros2_pi_*`: a `ros2_` prefix reads as core tooling.)
   Shared shell helpers live in `tools/` and are rsynced to the Pi, so they must
   work on both distros — `tools/ros-env.sh` discovers the distro rather than
   naming it, and `tools/check-stale.sh` is run by both `gate-hello-build` here
@@ -924,14 +1006,15 @@ somebody once.
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: a GitHub issue of stable phases, a command for a test, executable-only, and the future file |
 | [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this is going.** The whole pipeline as phases P0–P8, none started, each ending in a `tools/gates/*.sh` test, followed by the deferred register |
 | [#9](https://github.com/bthek1/ros2_pi/issues/9) **(closed 2026-09-12)** — camera calibration | **P9, done.** The C922's real intrinsics at 720p: fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection 0.4955 px. `camera_node` loads them from `pimesh_bringup/config/camera_info/c922_720p.yaml` and the NOMINAL warning is gone. Read the closed issue before touching calibration — three of its assumptions turned out to be false, including that this camera has barrel distortion |
-| [#4](https://github.com/bthek1/ros2_pi/issues/4) **(closed 2026-09-09)** [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A is done — P0 and P1, the cross-distro workspace and capture — and B's two phases are built and measured (P2, P3). Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
+| [#4](https://github.com/bthek1/ros2_pi/issues/4) **(closed 2026-09-09)** [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A is done — P0 and P1, the cross-distro workspace and capture — B's two phases are built and measured (P2, P3), and **C is closed (P4): depth on the GPU, 55.10 ms/frame in the container.** Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
 | `bash tools/gates/ipc.sh` / `bash tools/gates/keypoints.sh` | **P2 and P3's gates.** `ipc.sh` runs the real container twice against the Pi's live camera and compares published buffer addresses with intra-process comms on and off — and asserts the decoded topic has at least two subscribers, because one consumer is the configuration that cannot fail. `keypoints.sh` replays `bags/desk1` and measures three things three ways: the rate from a C++ subscriber's steady clock, the per-frame cost from the node's own log line, and the matched-keypoint fraction against `tools/orb_reference.py` — the predecessor's algorithm reimplemented in Python over the same clip, which is the only part of the gate with an outside opinion about whether the corners mean anything |
+| `bash tools/gates/depth.sh` | **P4's gate.** Replays `bags/desk1` through the real container — `decode_node`, `keypoint_node` and `depth_node` in one process — and measures four things. The provider, off `depth_node`'s own startup line. The per-frame cost on the node's own clock, against 80 ms. Whether `/depth/rgb` is **byte-identical** to the `/image_raw` frame with the same stamp, by hashing every source frame as it goes past and comparing — with "could not check" counted separately from "checked and differed", because a run that checked nothing would otherwise report zero mismatches and look perfect. And a **control**: the same binary with `use_cuda:=false`, which has to *fail* the same budget. `depth_probe` is its instrument, loaded into the container with `probe:=depth_probe` — out of process it would be subscribing to ~255 MB/s of images and would be the dominant load on the thing it is measuring |
 | `bash tools/fetch-gpu-stack.sh` / `bash tools/fetch-model.sh` / `bash tools/gates/gpu-stack.sh` | **P4's toolchain, which is as far as milestone C has got.** The first installs ONNX Runtime 1.30 + CUDA 13.1 runtime + cuDNN 9.26 into `~/.local/opt/pimesh-gpu` with no sudo, every component version-pinned and sha256-verified; the second does the weights. The gate is four runs and three of them are controls — CUDA at 51.20 ms, the CPU provider at 213.18 ms (so the 80 ms budget is shown to *discriminate* rather than merely be met), a build with CMake's default linker flags that reaches only the CPU (so `-Wl,--disable-new-dtags` cannot quietly stop being load-bearing), and `nvidia-smi` sampled while the first runs, which is the only witness here that does not go through ONNX Runtime. `tools/gpu_probe.cpp` is its instrument: no ROS, no colcon, compiled by the gate with `g++` so that what is being tested is the toolchain and not four things at once |
 | `bash tools/record-clip.sh desk1 60` | **The reference clip.** A 60 s hand-held sweep, recorded once, that every phase from P3 on replays so the numbers compare like for like. `bags/` is git-ignored, so a fresh clone has none and `gates/keypoints.sh` says so rather than pretending. The script resets the camera's V4L2 controls first and records `/camera_info` alongside the frames, because a clip recorded at 20 fps under a stale manual exposure cannot be un-recorded |
-| `bash tools/replay.sh` / `view-camera.sh` / `view-keypoints.sh` | **The three viewers, and none of them is evidence.** `replay` loops a bag with `pipeline:=false` — the static frame tree and no components, because a pose published over a looping bag freezes and floods every TF listener; `view-camera` is the Pi's live camera; `view-keypoints` is the pipeline, on the camera or on a bag **played once** for the same reason. All three call `assert_no_session` before `arm_cleanup`, as does every gate: two sessions on one domain put two publishers on `/image_raw/compressed` and make both of them look broken |
-| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 135 of them across ten suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+| `bash tools/replay.sh` / `view-camera.sh` / `view-keypoints.sh` / `view-depth.sh` | **The four viewers, and none of them is evidence.** `replay` loops a bag with `pipeline:=false` — the static frame tree and no components, because a pose published over a looping bag freezes and floods every TF listener; `view-camera` is the Pi's live camera; `view-keypoints` is the pipeline, on the camera or on a bag **played once** for the same reason; `view-depth` is the same again with the room as a colour-mapped depth cloud, and it waits longer before starting RViz because `depth_node` loads a 99 MB model and warms a CUDA session first. All four call `assert_no_session` before `arm_cleanup`, as does every gate: two sessions on one domain put two publishers on `/image_raw/compressed` and make both of them look broken |
+| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 145 of them across eleven suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
 evaluates the launch file's `pipeline` condition both ways, so `pipeline:=false`
-cannot quietly stop removing the container —  the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on — plus milestone B's four: `test_mailbox` (newest-wins and its drop accounting), `test_image_buffer` (the bgr8 layout arithmetic, and that a `cv::Mat` over a message shares its memory), `test_rotation_fit` (Kabsch against known rotations, the reflection guard, the reject-worst refits, and the optical-to-body change of basis) and `test_orb_tracker` (synthetic frames with a known displacement: that the window forgives detection churn, that unrelated scenes do not match, and that a track id is never claimed twice in one frame) |
+cannot quietly stop removing the container —  the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on — plus milestone B's four: `test_mailbox` (newest-wins and its drop accounting), `test_image_buffer` (the bgr8 layout arithmetic, and that a `cv::Mat` over a message shares its memory), `test_rotation_fit` (Kabsch against known rotations, the reflection guard, the reject-worst refits, and the optical-to-body change of basis) and `test_orb_tracker` (synthetic frames with a known displacement: that the window forgives detection churn, that unrelated scenes do not match, and that a track id is never claimed twice in one frame); and milestone C's one, `test_depth_model` — the arithmetic either side of the network, which is the whole of P4 that can be got wrong in silence: a channel order swapped, planes interleaved instead of planar, or a reciprocal taken before the clamp each produce a depth map that renders as a plausible room and is numerically nonsense. It needs no ONNX Runtime, no GPU and no camera, which is *why* `depth_model.hpp` is a header separate from the engine behind it — so this suite runs identically on the Pi |
 | `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the shell lives in `tools/`; the justfile was trimmed further the same day to `build` + `run` only, so that issue's `just gate-*` spelling is history, not instruction |
 | [docs/plans/future/milestone-a-future.md](docs/plans/future/milestone-a-future.md) | Work deferred out of milestone A, each entry with its trigger: the checkerboard calibration (waiting on P5's tape-measure visit), `PipelineStats` from `camera_node` (waiting on the dashboard), the dev-box rate margin, and device reconnection |
 
