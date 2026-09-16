@@ -1,10 +1,12 @@
 #ifndef PIMESH_WORLD__SHARED_VOLUME_HPP_
 #define PIMESH_WORLD__SHARED_VOLUME_HPP_
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "pimesh_world/tsdf_volume.hpp"
 
@@ -92,17 +94,79 @@ public:
     std::size_t voxels_allocated {0};
   };
 
-  Snapshot snapshot() const
+  /// Copy the map, `chunk` blocks at a time, releasing the lock between chunks.
+  ///
+  /// **One lock over the whole copy is not a short lock at this size.** A room on
+  /// bags/desk1 is ~205 000 blocks, which is 1.3 GB, and a memcpy of that holds
+  /// the integrator out for well over a hundred milliseconds — two frames gone,
+  /// and visible as exactly the dip in the integration rate that P6's gate
+  /// asserts is absent. Chunked, each acquisition is a few milliseconds and the
+  /// integrator interleaves with it.
+  ///
+  /// **The price is that the copy spans two instants**, and it is worth saying
+  /// plainly rather than discovering: blocks copied early are a fraction of a
+  /// second older than blocks copied late. For a surface that moves by a
+  /// millimetre or two per frame — a weighted average with weight already in the
+  /// tens — that is invisible, and it is the right trade for not stalling the
+  /// stage the whole pipeline feeds.
+  ///
+  /// The key list is taken first, under its own lock, because `unordered_map`
+  /// rehashes on insert and an iterator held across an unlock is a dangling one.
+  /// A block added between chunks is simply not in this snapshot; the next
+  /// re-mesh gets it.
+  /// `min_weight` filters the copy: a block with no voxel at or above it is not
+  /// copied at all.
+  ///
+  /// **This changes nothing about the mesh and a great deal about the memory.** A
+  /// block nothing has reached that weight in has no corner the mesher would
+  /// believe, so every cell touching it is skipped either way — filtering here and
+  /// filtering in `march_cubes` produce the same surface. What it saves is the
+  /// copy: on bags/desk1 the volume is ~200 000 blocks and 1.25 GB, the snapshot
+  /// doubles that, and this machine had 5 GB free. The integrator was measured
+  /// stalling 400 ms against a 56 ms median while the mesher allocated — which is
+  /// the very dip P6's gate exists to assert is absent, arriving through memory
+  /// pressure rather than through the lock everyone expects it from.
+  Snapshot snapshot(std::size_t chunk = 2048, float min_weight = 0.0F) const
   {
     Snapshot out;
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!configured_) {return out;}
-    out.blocks = volume_->blocks();
-    out.voxel_size_m = volume_->voxel_size();
-    out.truncation_m = volume_->truncation_m();
-    out.min_weight = volume_->min_weight();
-    out.frames_integrated = frames_integrated_;
-    out.voxels_allocated = volume_->voxels_allocated();
+    std::vector<std::int64_t> keys;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!configured_) {return out;}
+      out.voxel_size_m = volume_->voxel_size();
+      out.truncation_m = volume_->truncation_m();
+      out.min_weight = volume_->min_weight();
+      out.frames_integrated = frames_integrated_;
+      out.voxels_allocated = volume_->voxels_allocated();
+      keys.reserve(volume_->blocks().size());
+      for (const auto & entry : volume_->blocks()) {keys.push_back(entry.first);}
+    }
+
+    // Reserved for the worst case rather than grown by rehashing: a rehash of a
+    // map holding hundreds of thousands of 6 kB nodes is a second copy of the
+    // whole thing, taken while the integrator is trying to allocate.
+    out.blocks.reserve(keys.size());
+    if (chunk == 0) {chunk = keys.size() ? keys.size() : 1;}
+    for (std::size_t start = 0; start < keys.size(); start += chunk) {
+      const std::size_t end = std::min(keys.size(), start + chunk);
+      std::lock_guard<std::mutex> lock(mutex_);
+      const auto & blocks = volume_->blocks();
+      for (std::size_t i = start; i < end; ++i) {
+        auto it = blocks.find(keys[i]);
+        if (it == blocks.end()) {continue;}
+        if (min_weight > 0.0F) {
+          bool wanted = false;
+          for (int v = 0; v < TsdfVolume::kBlockVoxels; ++v) {
+            if (it->second.voxels[v].weight >= min_weight) {
+              wanted = true;
+              break;
+            }
+          }
+          if (!wanted) {continue;}
+        }
+        out.blocks.emplace(it->first, it->second);
+      }
+    }
     return out;
   }
 

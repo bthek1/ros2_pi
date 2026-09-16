@@ -529,6 +529,13 @@ void FusionNode::process(Frame & frame)
 
   {
     std::lock_guard<std::mutex> lock(sample_mutex_);
+    const auto finished = std::chrono::steady_clock::now();
+    if (have_last_integration_) {
+      interval_ms_.push_back(
+        std::chrono::duration<double, std::milli>(finished - last_integration_).count());
+    }
+    last_integration_ = finished;
+    have_last_integration_ = true;
     integrate_ms_.push_back(integrate_ms);
     align_ms_.push_back(align_ms);
     total_ms_.push_back(total_ms);
@@ -559,6 +566,7 @@ void FusionNode::log_stats()
   std::vector<double> align;
   std::vector<double> total;
   std::vector<double> lag;
+  std::vector<double> interval;
   std::vector<double> gap;
   std::vector<double> overlap;
   std::vector<double> scale;
@@ -569,6 +577,7 @@ void FusionNode::log_stats()
     align.swap(align_ms_);
     total.swap(total_ms_);
     lag.swap(lag_ms_);
+    interval.swap(interval_ms_);
     gap.swap(gap_m_);
     overlap.swap(overlap_);
     scale.swap(scale_);
@@ -599,13 +608,16 @@ void FusionNode::log_stats()
   RCLCPP_INFO(
     get_logger(),
     "stats rate=%.1f integrate_mean=%.2f integrate_p95=%.2f align_mean=%.2f "
-    "cost_mean=%.2f cost_p95=%.2f lag_mean=%.2f lag_p95=%.2f gap_m=%.4f overlap=%.3f "
+    "cost_mean=%.2f cost_p95=%.2f lag_mean=%.2f lag_p95=%.2f "
+    "interval_p50=%.1f interval_max=%.1f gap_m=%.4f overlap=%.3f "
     "agree=%.4f "
     "scale_mean=%.4f blocks=%zu refused=%lu dropped=%zu unpaired=%lu no_pose=%lu "
     "aligned=%lu clamped=%lu",
     rate, mean_of(integrate), pimesh_perception::percentile(integrate, 0.95),
     mean_of(align), mean_of(total), pimesh_perception::percentile(total, 0.95),
     mean_of(lag), pimesh_perception::percentile(lag, 0.95),
+    pimesh_perception::percentile(interval, 0.5),
+    interval.empty() ? 0.0 : *std::max_element(interval.begin(), interval.end()),
     mean_of(gap), mean_of(overlap), mean_of(agree), mean_of(scale), blocks,
     static_cast<unsigned long>(refused_.load(std::memory_order_relaxed)),
     dropped - last_dropped_,

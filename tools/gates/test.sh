@@ -21,7 +21,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh"
 echo "== gate-test =="
 
-MIN_TESTS=208
+MIN_TESTS=237
 
 fail=0
 note() { echo "FAIL: $*"; fail=1; }

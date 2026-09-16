@@ -247,3 +247,53 @@
     # before depth_node finishes inferring on it, so this wait is normally zero.
     tf_timeout_ms: 50.0
     stats_period_s: 5.0
+
+/**/mesh_node:
+  ros__parameters:
+    # A TRIANGLE_LIST Marker, latched. Latched is not this workspace's usual
+    # choice — everywhere else is KEEP_LAST(1) volatile, freshest frame and no
+    # backlog — and it is right here because this is not a stream: it changes
+    # every ten seconds, and an RViz started between two extractions would show an
+    # empty 3D view that looks exactly like a topic nobody publishes.
+    mesh_topic: /world/mesh
+    world_frame: map
+    # Must match fusion_node's volume_key above. A mismatch is two volumes and a
+    # mesh that is silently always empty — see pimesh_world/shared_volume.hpp for
+    # why these two nodes share memory rather than a topic.
+    volume_key: world
+    marker_ns: world_mesh
+    # Human rate, not frame rate. Accumulation happens at ~16 Hz; this is what a
+    # person can follow, and it is deliberately decoupled so the extraction can
+    # cost seconds without the integrator noticing.
+    remesh_period_s: 10.0
+    # **The honest lever on a mesh that is mostly layers of the same wall.** Not
+    # the same question as fusion_node's min_weight, which is the noise floor for
+    # ray-casting: a voxel seen three times is real enough to stop a ray and thin
+    # enough to be one of the shingles a rotation-only sweep lays down.
+    mesh_min_weight: 24.0
+    # Debris islands. Their outer boundaries masquerade as holes, and the honest
+    # fix is to remove the flakes rather than cap them into blobs.
+    min_component_triangles: 30
+    # Interior boundary loops narrower than this are fanned shut. Each component's
+    # *largest* loop is its frontier and is never closed whatever its size — a
+    # sealed box with no openings is the failure that looks most like success.
+    max_hole_radius_m: 0.25
+    # The cap on the published Marker, reached by quadric decimation and never by
+    # subsampling. /world/save_mesh writes the full-detail surface: a Marker is
+    # rebuilt and re-serialised on every publish, a file is written once.
+    max_triangles: 120000
+    # Blocks copied per lock acquisition. ~12 MB and a few milliseconds each; one
+    # lock over a 1.3 GB map would hold the integrator out for over a hundred,
+    # which is exactly the dip gates/mesh.sh asserts is absent.
+    snapshot_chunk_blocks: 2048
+    # **The mesher must lose to the pipeline, and at equal priority it does not.**
+    # Measured while an extraction ran: depth_node's rate fell from 17.8 to 14.6 Hz
+    # with its per-frame cost unchanged at 55.9 ms — not more work, just not being
+    # scheduled — and fusion inherited a 404 ms gap between integrations. Marching
+    # cubes and decimation are seconds of pure CPU with no deadline; every stage
+    # above them has one. Linux nice is per-thread, so only the extraction is
+    # pushed down and the node's services and timer are not.
+    worker_nice: 10
+    # Empty means the directory the container was started in. tools/gates/mesh.sh
+    # sets it to a temp directory of its own.
+    save_dir: ""

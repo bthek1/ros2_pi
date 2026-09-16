@@ -78,10 +78,12 @@ MAX_COST_MS=57.0
 # How much of the clip has to reach the integrator, as a fraction of what depth
 # could have offered it. Not 100%: the first frames go past during startup.
 MIN_INTEGRATED=700
-# The lag from a frame landing in the callback to the worker starting on it.
-# Measured at 0.03-3 ms over the whole clip; this is loose enough not to be a
-# flake and tight enough to catch a queue forming.
-MAX_LAG_MS=15.0
+# The worst lag from a frame landing in the callback to the worker starting on it,
+# over the windows where the clip was playing. Measured at 0.05-10.7 ms with
+# mesh_node extracting a surface in the same process every ten seconds; the
+# ceiling is well under one 57 ms depth interval, which is the point at which the
+# node would be falling behind by a whole frame.
+MAX_LAG_MS=25.0
 # What fraction of depth frames may fail to find a pose at their own stamp.
 # Measured 0 on this clip — keypoint_node holds its pose on ~8% of frames and
 # tf2 interpolates across those — so this is headroom, not an expectation.
@@ -89,6 +91,16 @@ MAX_NO_POSE_PCT=5
 # Colourless frames. Measured 0 after the subscription order was fixed; it was
 # 12% before, with nothing upstream wrong. See fusion_node.cpp.
 MAX_UNPAIRED_PCT=2
+# **Frames displaced in the mailbox, as a fraction — not zero, and the change is
+# a measurement rather than a concession.** Before P6 this was 0 over the whole
+# clip and asserted as such. mesh_node now shares the process and spends 3-4
+# seconds of CPU every ten on marching cubes and quadric decimation, and that
+# costs the integrator a frame or two in a thousand: measured 2 of ~1050, 0.19%.
+# The extraction thread is already niced (see mesh_node's worker_nice) and
+# tools/gates/mesh.sh shows the worst *gap* between integrations is no worse than
+# in a control run with nothing meshing. A ceiling on an effect that has been
+# measured is honest; a zero that was measured before the effect existed is not.
+MAX_DROPPED_PCT=0.5
 
 # Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh: the
 # cleanup handler kills this workspace's processes, so a refusal after the trap
@@ -201,23 +213,32 @@ run_pipeline() {        # $1 = log path, $2 = window seconds, $3 = true|false (a
 
 # --- Reading the node's own stats line ---------------------------------------
 #
-# **Grepped by node name, and only windows with frames in them.** Four nodes in
-# this container log a line starting `stats rate=`, and `grep | tail -1` over
-# them is exactly the mistake that made tools/gates/keypoints.sh assert 0.00 ms
-# against an 8 ms budget and print PASS, the day depth_node joined the container.
-# A window with no frames is a real condition — the clip ended — and its mean is
-# 0.00 over nothing, which reads as "fast".
+# **Grepped by node name, and only windows where the clip was actually playing.**
+# Five nodes in this container log a line starting `stats rate=`, and
+# `grep | tail -1` over them is exactly the mistake that made
+# tools/gates/keypoints.sh assert 0.00 ms against an 8 ms budget and print PASS,
+# the day depth_node joined the container.
+#
+# **The floor is a rate, not merely "more than no frames", and that distinction
+# cost a run.** The last window of every run covers the seconds *after* the clip
+# ended: one or two straggling frames, and mesh_node still grinding through an
+# extraction. Its lag is whatever that idle moment happened to be — measured at
+# 51 ms mean and 121 ms p95, against 0.02-1.96 ms in every window where the
+# pipeline was running — and a `rate > 0` filter keeps it, so the gate failed a
+# run in which nothing was wrong. It is the keypoints lesson arriving by a
+# different door: an idle tail is not a measurement of a loaded pipeline.
+RUNNING_RATE_HZ=5
 #
 # Prints one line per window with frames: index and every field.
 windows_of() {          # $1 = log
     grep -h 'fusion_node' "$1" | grep -o 'stats rate=.*' |
-        awk '{
+        awk -v floor="$RUNNING_RATE_HZ" '{
             delete v
             for (i = 1; i <= NF; ++i) {
                 split($i, kv, "=")
                 v[kv[1]] = kv[2]
             }
-            if (v["rate"] + 0 <= 0) { next }
+            if (v["rate"] + 0 < floor) { next }
             printf "%d %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",
                 ++n, v["rate"], v["integrate_mean"], v["integrate_p95"],
                 v["align_mean"], v["cost_mean"], v["cost_p95"], v["lag_mean"],
@@ -316,14 +337,17 @@ in_range "$cost_mean" 0.01 "$MAX_COST_MS" ||
 # --- Claim 2: it keeps up, and does not drop -------------------------------
 in_range "$rate" "$MIN_RATE_HZ" 1000 ||
     note "integrated at ${rate} Hz, floor is ${MIN_RATE_HZ} Hz"
-(( dropped_total == 0 )) ||
-    note "${dropped_total} frames were displaced in the mailbox — unlike depth_node, dropping here is not the design: this node is meant to keep up with the stage above it"
+dropped_pct=$(awk -v n="$dropped_total" -v d="$integrated" \
+    'BEGIN { printf "%.2f", (d > 0) ? 100 * n / d : 0 }')
+in_range "$dropped_pct" 0 "$MAX_DROPPED_PCT" ||
+    note "${dropped_total} frames = ${dropped_pct}% were displaced in the mailbox (ceiling ${MAX_DROPPED_PCT}%) — unlike depth_node, dropping here is not the design: this node is meant to keep up with the stage above it"
 (( integrated >= MIN_INTEGRATED )) ||
     note "only ${integrated} frames were integrated over ${CLIP_SECONDS}s, floor is ${MIN_INTEGRATED}"
 
 # --- Claim 3: the backlog does not grow --------------------------------------
-in_range "$lag_last" 0 "$MAX_LAG_MS" ||
-    note "the wait from arrival to integration is ${lag_last} ms by the end of the clip (ceiling ${MAX_LAG_MS} ms) — a queue is forming"
+worst_lag_p95=$(column_max "$work/on.win" 9)
+in_range "$worst_lag_p95" 0 "$MAX_LAG_MS" ||
+    note "the worst window's arrival-to-integration p95 was ${worst_lag_p95} ms (ceiling ${MAX_LAG_MS} ms) — at a 57 ms depth interval that is most of a frame spent waiting"
 awk -v a="$lag_first" -v b="$lag_last" 'BEGIN { exit !(b <= a + 5.0) }' ||
     note "arrival-to-integration lag went ${lag_first} ms -> ${lag_last} ms across the clip, which is a backlog growing"
 
@@ -413,8 +437,9 @@ echo "whole per-frame cost: ${cost_mean} ms, p95 ${cost_p95} ms  (assert <= ${MA
 echo "rate                : ${rate} Hz  (assert >= ${MIN_RATE_HZ}; depth offers ~17.5)"
 echo "frames integrated   : ${integrated} of ${offered} offered  (assert >= ${MIN_INTEGRATED})"
 echo
-echo "mailbox displaced   : ${dropped_total}  (assert 0 — dropping here is not the design, unlike depth_node)"
-echo "arrival -> integrate: ${lag_first} ms at the start, ${lag_last} ms at the end  (assert end <= start + 5, and <= ${MAX_LAG_MS})"
+echo "mailbox displaced   : ${dropped_total} = ${dropped_pct}%  (assert <= ${MAX_DROPPED_PCT}%: mesh_node shares this process and costs a frame or two in a thousand)"
+echo "arrival -> integrate: ${lag_first} ms at the start, ${lag_last} ms at the end  (assert end <= start + 5)"
+echo "  ... worst p95     : ${worst_lag_p95} ms  (assert <= ${MAX_LAG_MS}, over windows where the clip was playing)"
 echo "no pose at stamp    : ${no_pose} = ${no_pose_pct}%  (assert <= ${MAX_NO_POSE_PCT}%; dropped, never integrated at a guess)"
 echo "no colour twin      : ${unpaired} = ${unpaired_pct}%  (assert <= ${MAX_UNPAIRED_PCT}%)"
 echo "/pipeline/stats     : $( ((stats_ok)) && echo "carries stage 'fusion'" || echo MISSING )  (assert present: P8 reads it)"

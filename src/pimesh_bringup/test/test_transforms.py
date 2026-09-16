@@ -275,10 +275,11 @@ def test_the_launch_description_actually_builds(launch_module):
 
     assert kinds.get(Node) == len(launch_module.STATIC_TRANSFORMS)
     assert kinds.get(ComposableNodeContainer) == 1, 'there is one container, always'
-    # intra_process, log_payloads, probe, probe_duration_s, align, use_cuda,
-    # pipeline — each of which exists because something outside this file has to
-    # be able to set it: the first six for gates, the last for tools/replay.sh.
-    assert kinds.get(DeclareLaunchArgument) == 7
+    # intra_process, log_payloads, probe, probe_duration_s, align,
+    # remesh_period_s, use_cuda, pipeline — each of which exists because something
+    # outside this file has to be able to set it: the first seven for gates, the
+    # last for tools/replay.sh.
+    assert kinds.get(DeclareLaunchArgument) == 8
     # One per probe, loaded into the running container rather than listed in it,
     # because `composable_node_descriptions` is built when this file is evaluated
     # and cannot be made conditional on an argument. One action each rather than
@@ -416,18 +417,20 @@ def test_the_overrides_are_the_ones_the_gates_actually_pass(launch_module):
     """And that they are typed the way the receiving node declared them.
 
     `use_cuda` is a bool in depth_node, `duration_s` a double in depth_probe,
-    `log_payloads` a bool in decode_node, `align` a bool in fusion_node. A
+    `log_payloads` a bool in decode_node, `align` a bool in fusion_node,
+    `remesh_period_s` a double in mesh_node. A
     `value_type` that disagrees with the declaration is the same silent no-op as
     having none.
     """
     expected = {
-        'log_payloads': bool, 'use_cuda': bool, 'duration_s': float, 'align': bool}
+        'log_payloads': bool, 'use_cuda': bool, 'duration_s': float, 'align': bool,
+        'remesh_period_s': float}
     overrides = _override_values(launch_module)
 
     assert set(overrides) == set(expected), (
         'the override set changed; update the gates that depend on it '
-        '(tools/gates/ipc.sh, tools/gates/depth.sh, tools/gates/fusion.sh) '
-        'and this test together')
+        '(tools/gates/ipc.sh, tools/gates/depth.sh, tools/gates/fusion.sh, '
+        'tools/gates/mesh.sh) and this test together')
     for name, want in expected.items():
         assert overrides[name].value_type is want, (
             f'{name} is declared {want.__name__} by its node')

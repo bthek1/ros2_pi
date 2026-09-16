@@ -110,6 +110,10 @@ COMPONENTS = [
     # volume of hundreds of megabytes whose only consumer is mesh_node, in this
     # same process. See pimesh_world/shared_volume.hpp.
     ('fusion_node', 'pimesh_world', 'pimesh_world::FusionNode'),
+    # Marching cubes over a snapshot of that volume, on a timer. In this container
+    # because it has to be: it reads the volume by pointer, and a mesh_node in
+    # another process finds no volume at all and says so.
+    ('mesh_node', 'pimesh_world', 'pimesh_world::MeshNode'),
 ]
 
 # The gates' instruments, none of which is part of the pipeline.
@@ -207,6 +211,8 @@ def _component(
                     LaunchConfiguration('probe_duration_s'), value_type=float),
                 'align': ParameterValue(
                     LaunchConfiguration('align'), value_type=bool),
+                'remesh_period_s': ParameterValue(
+                    LaunchConfiguration('remesh_period_s'), value_type=float),
             },
         ],
         extra_arguments=extra,
@@ -283,6 +289,14 @@ def generate_launch_description() -> LaunchDescription:
             default_value='true',
             description="fusion_node's per-frame depth scale alignment. false is "
                         'the control run in tools/gates/fusion.sh.',
+        ),
+        DeclareLaunchArgument(
+            'remesh_period_s',
+            default_value='10.0',
+            description="How often mesh_node extracts a surface. "
+                        'tools/gates/mesh.sh sets it past the clip length for its '
+                        'control run, so nothing meshes while the integrator is '
+                        'measured.',
         ),
         DeclareLaunchArgument(
             'use_cuda',

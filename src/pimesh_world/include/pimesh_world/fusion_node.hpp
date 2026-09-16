@@ -160,6 +160,18 @@ private:
   std::vector<double> align_ms_;
   std::vector<double> total_ms_;
   std::vector<double> lag_ms_;
+  /// The wall-clock interval between one integration finishing and the next, on
+  /// the worker's own steady clock.
+  ///
+  /// **This is the number P6's gate reads, and it is not the same as the rate.** A
+  /// rate averaged over five seconds is blind to a single 400 ms stall — which is
+  /// exactly what meshing under the volume's lock would produce, and the whole
+  /// reason `mesh_node` snapshots in chunks. A median and a maximum over the same
+  /// window make the stall the thing being measured rather than something
+  /// averaged away.
+  std::vector<double> interval_ms_;
+  bool have_last_integration_ {false};
+  std::chrono::steady_clock::time_point last_integration_;
   std::vector<double> gap_m_;
   std::vector<double> overlap_;
   std::vector<double> scale_;

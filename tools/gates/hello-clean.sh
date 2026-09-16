@@ -84,7 +84,7 @@ fi
 # something. The camera path is covered by view-camera in the row above.
 
 # recipe -> the argv to run it with, and what "it is up" means for it.
-RECIPES=(lan compose view-camera replay view-keypoints view-depth)
+RECIPES=(lan compose view-camera replay view-keypoints view-depth view-mesh)
 
 # `replay` is the only recipe here that takes an argument, and the bag it takes
 # has to be *this gate's own*. bags/ is git-ignored, so on a fresh clone there
@@ -100,13 +100,14 @@ RECIPES=(lan compose view-camera replay view-keypoints view-depth)
 # publishers and a viewer, all of which must be gone by the time the recipe has
 # returned.
 #
-# **Its length is load-bearing, and it has had to grow twice.** Three seconds was
+# **Its length is load-bearing, and it has had to grow three times.** Three seconds was
 # too short in 2026-09-13 (below); twenty was too short for `view-depth`, added
 # 2026-09-15. That recipe waits six seconds before starting RViz rather than
 # three, because depth_node loads a 99 MB model and warms a CUDA session before
 # the container is of any use — so `session_up` cannot be satisfied until the
 # player, the container and a fully started rviz2 overlap, and the player is the
-# one with a deadline. The fixture has to outlive all of that with room to spare.
+# one with a deadline. `view-mesh`, added 2026-09-16, waits eight. The fixture has
+# to outlive all of that with room to spare.
 #
 # `view-keypoints` plays a bag **once** rather than on a loop (a looping bag
 # replays header stamps minutes into the past, and keypoint_node's pose is then
@@ -118,7 +119,7 @@ RECIPES=(lan compose view-camera replay view-keypoints view-depth)
 # against a recipe that was behaving correctly. The fixture has to outlive RViz's
 # startup, which is what this is: long enough to overlap by a comfortable margin,
 # short enough that building it is not the slowest thing here.
-GATE_BAG_SECONDS=30
+GATE_BAG_SECONDS=40
 GATE_BAG=
 
 # `wait` with a deadline. Bash's builtin has no timeout, so a process that
@@ -186,6 +187,7 @@ argv_for() {                # $1 = recipe, $2 = seconds; prints one argv word pe
         view-camera) printf '%s\n' "$PIMESH_WS/tools/view-camera.sh" "$2" ;;
         view-keypoints) printf '%s\n' "$PIMESH_WS/tools/view-keypoints.sh" "$2" "$GATE_BAG" ;;
         view-depth)  printf '%s\n' "$PIMESH_WS/tools/view-depth.sh" "$2" "$GATE_BAG" ;;
+        view-mesh)   printf '%s\n' "$PIMESH_WS/tools/view-mesh.sh" "$2" "$GATE_BAG" ;;
         *)           printf '%s\n' "$PIMESH_WS/tools/hello-$1.sh" "$2" ;;
     esac
 }
@@ -218,6 +220,13 @@ session_up() {              # $1 = recipe
         # container is not merely started here, it has a model to load and a CUDA
         # context to build before depth_node returns from its constructor.
         view-depth) pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
+                    pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
+                    pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
+        # The same three again, and slower still: this container loads the model,
+        # builds the CUDA context *and* waits eight seconds before starting RViz,
+        # because there is nothing for a mesh viewer to show until frames have been
+        # integrated. The fixture clip has to outlive all of that.
+        view-mesh)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
                     pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
                     pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
     esac

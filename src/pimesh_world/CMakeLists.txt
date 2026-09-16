@@ -29,6 +29,10 @@ find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 
 add_library(world_components SHARED
   src/fusion_node.cpp
+  src/marching_cubes.cpp
+  src/mesh_cleanup.cpp
+  src/mesh_node.cpp
+  src/mesh_io.cpp
   src/scale_aligner.cpp
   src/shared_volume.cpp
   src/tsdf_volume.cpp
@@ -62,9 +66,10 @@ target_link_libraries(world_components PUBLIC
 # Plural, so no main is generated: the thin ones are written by hand in src/.
 rclcpp_components_register_nodes(world_components
   "pimesh_world::FusionNode"
+  "pimesh_world::MeshNode"
 )
 
-foreach(node fusion_node)
+foreach(node fusion_node mesh_node)
   add_executable(${node} src/${node}_main.cpp)
   target_link_libraries(${node} PRIVATE world_components rclcpp::rclcpp)
 endforeach()
@@ -78,7 +83,7 @@ install(TARGETS world_components
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
-install(TARGETS fusion_node
+install(TARGETS fusion_node mesh_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -101,6 +106,23 @@ if(BUILD_TESTING)
   ament_add_gtest(test_scale_aligner test/test_scale_aligner.cpp)
   if(TARGET test_scale_aligner)
     target_link_libraries(test_scale_aligner world_components)
+  endif()
+
+  # The 256-entry lookup table, checked the only way copied constant data can be:
+  # against a property the whole of it has to satisfy at once. A sphere fully
+  # inside the known region has no boundary edges, and one wrong case leaves one.
+  ament_add_gtest(test_marching_cubes test/test_marching_cubes.cpp)
+  if(TARGET test_marching_cubes)
+    target_link_libraries(test_marching_cubes world_components)
+  endif()
+
+  # The cleanup policy and the triangle budget. Every failure available in them is
+  # a mesh that renders: a filled frontier is a sealed box, which looks *more*
+  # finished than a correct scan, and decimation that shrinks a surface in from
+  # its edges looks like walls receding.
+  ament_add_gtest(test_mesh_cleanup test/test_mesh_cleanup.cpp)
+  if(TARGET test_mesh_cleanup)
+    target_link_libraries(test_mesh_cleanup world_components)
   endif()
 endif()
 
