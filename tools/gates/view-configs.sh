@@ -311,7 +311,14 @@ for config in "${configs[@]}"; do
         pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 || break
         sleep 1
     done
-    kill_local
+    # **Reported, not left to `set -e`.** `kill_local` returns non-zero when it
+    # could not get the machine clean, and this script runs under `set -euo
+    # pipefail` — so a bare call here ends the gate *silently*, with exit 1, no
+    # FAIL line and no indication which config it had reached. Seen exactly that
+    # way on 2026-09-15: stage 2 stopped after the first config having printed
+    # nothing about why. A teardown that could not finish is worth a message of
+    # its own; it is not worth discarding the two configs still to check.
+    kill_local || note "could not tear down rviz2 after $(basename "$config")"
     sleep 2
 done
 

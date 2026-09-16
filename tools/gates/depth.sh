@@ -65,6 +65,17 @@ MIN_CLIP_COVERAGE_PCT=85
 # exactly what a reciprocal applied on the wrong side of the clamp produces, and
 # it renders as a convincing flat wall.
 MIN_DEPTH_SPREAD_M=0.5
+# The colour-mapped preview is rate-capped and outside the per-frame budget, so
+# this ceiling is loose on purpose — it is there to catch the map or the JPEG
+# encoder becoming expensive, not to pace it. Measured 1.75 ms at 1280x720.
+MAX_PREVIEW_MS=8.0
+# How much of the /depth/rgb pairing has to be *checkable* for claim 3 to stand.
+# Not 100%: the probe reads /image_raw at KEEP_LAST(1) from inside the container it
+# is measuring and misses ~1.5% of a 59 Hz topic, so a depth frame it did process
+# can be one whose source the probe never recorded. That is the probe's scheduling,
+# not the node's behaviour — see the long note at claim 3. A mismatch is still a
+# failure at any count; this floor only governs "could not check".
+MIN_PAIR_CHECKED_PCT=97
 
 # Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh: the
 # cleanup handler kills this workspace's processes, so a refusal after the trap
@@ -201,7 +212,7 @@ probe_value() {         # $1 = log, $2 = key
 # run's p95 rather than the run's p95 itself. Said plainly because it is the
 # conservative direction and the honest label: a p95 over ~90 samples cannot be
 # pooled across windows from the summaries alone.
-cost_summary() {        # $1 = log; prints "windows mean_ms worst_p95_ms max_ms"
+cost_summary() {        # $1 = log; prints "windows mean_ms worst_p95_ms max_ms preview_ms"
     grep -h 'depth_node' "$1" | grep -o 'stats rate=.*' |
         awk '{
             for (i = 1; i <= NF; ++i) {
@@ -211,12 +222,13 @@ cost_summary() {        # $1 = log; prints "windows mean_ms worst_p95_ms max_ms"
             if (v["rate"] + 0 <= 0) { next }
             n++
             sum += v["cost_mean"]
+            preview += v["preview"]
             if (v["cost_p95"] + 0 > p95) { p95 = v["cost_p95"] }
             if (v["max"] + 0 > mx) { mx = v["max"] }
         }
         END {
-            if (n == 0) { print "0 0 0 0"; exit }
-            printf "%d %.2f %.2f %.2f\n", n, sum / n, p95, mx
+            if (n == 0) { print "0 0 0 0 0"; exit }
+            printf "%d %.2f %.2f %.2f %.2f\n", n, sum / n, p95, mx, preview / n
         }'
 }
 
@@ -232,7 +244,7 @@ echo "-- run 1: the pipeline on the GPU, over the whole clip --"
 run_pipeline "$work/cuda.log" "$MEASURE_S" true || { echo "FAIL gate-depth"; exit 1; }
 
 provider=$(provider_of "$work/cuda.log")
-read -r windows cost_mean cost_p95 cost_max < <(cost_summary "$work/cuda.log")
+read -r windows cost_mean cost_p95 cost_max preview_ms < <(cost_summary "$work/cuda.log")
 
 source_frames=$(probe_value "$work/cuda.log" source_frames)
 rgb_frames=$(probe_value "$work/cuda.log" rgb_frames)
@@ -276,21 +288,61 @@ fi
 in_range "$rate" "$MIN_RATE_HZ" 1000 ||
     note "sustained ${rate} Hz on /depth, floor is ${MIN_RATE_HZ} Hz"
 
+# --- The colour-mapped preview actually ran ----------------------------------
+#
+# `preview=` is non-zero only if depth_node colour-mapped and encoded something, so
+# this is the cheapest evidence that rviz/depth.rviz's Depth panel has a live topic
+# behind it. It is worth asserting rather than printing because the failure is the
+# silent one this project keeps meeting: a display subscribed to a topic nobody
+# publishes shows an empty panel that looks exactly like a camera that is not
+# running, and neither the panel nor any log says otherwise.
+#
+# **It is asserted to be outside the per-frame cost, not inside it.** The 80 ms
+# budget is a claim about the pipeline stage everything downstream waits on, and a
+# JPEG drawn for a person is not part of that — counting it pushed cost_mean from
+# 55 ms to 59 ms and a window's p95 over the ceiling with nothing about the
+# pipeline changed (2026-09-15).
+in_range "${preview_ms:-0}" 0.01 "$MAX_PREVIEW_MS" ||
+    note "the inferno preview cost ${preview_ms:-0} ms/frame — 0 means it never ran, so rviz/depth.rviz's Depth panel has nothing behind it; over ${MAX_PREVIEW_MS} ms means colour-mapping a frame now costs more than a tenth of the depth budget"
+
 # --- Claim 3: the colour twin and the stamps ---------------------------------
 #
 # Three separate counters and they mean three different things. `different` is the
-# failure. `unmatched` is "we could not check", which is not a pass — a run that
-# checked nothing would otherwise report zero mismatches and look perfect.
+# failure, and it is asserted at zero. `identical` is how much of the run was
+# actually checked. `unmatched` is "could not check", and the honest assertion on
+# it is a **coverage floor, not zero**.
+#
+# **`unmatched == 0` is not a property of depth_node and asserting it was wrong.**
+# The probe recognises a /depth/rgb frame by looking up its stamp among the
+# /image_raw frames *it* saw — and the probe subscribes KEEP_LAST(1) on a 59 Hz
+# topic from inside the container it is measuring, so it misses some. Measured
+# 2026-09-15: 3433 source frames of the clip's 3489, and one of the 56 it missed
+# happened to be a frame depth_node had processed, so `unmatched` came back 1 and
+# the gate failed a run in which nothing whatsoever was wrong. It had passed twice
+# before on luck, not on evidence — with ~1.6% of source frames missed and ~960
+# depth frames to coincide with, a nonzero count was always the likely outcome.
+#
+# So: a mismatch is a failure at any count, and "could not check" is a failure only
+# when it is common enough that the run stopped covering itself.
 (( ${rgb_different:-1} == 0 )) ||
     note "${rgb_different} of ${rgb_frames:-?} /depth/rgb frames differed from the \
 /image_raw frame with the same stamp — depth is paired with the wrong picture"
 (( ${rgb_identical:-0} > 0 )) ||
     note "not one /depth/rgb frame was confirmed identical to its source — claim 3 was not measured"
-(( ${rgb_unmatched:-1} == 0 )) ||
-    note "${rgb_unmatched} /depth/rgb frames carried a stamp no /image_raw frame had"
-(( ${stamp_unmatched:-1} == 0 )) ||
-    note "${stamp_unmatched} /depth maps carried a stamp no /image_raw frame had — \
-the stamp is not the input frame's"
+
+rgb_checked_pct=$(awk -v ok="${rgb_identical:-0}" -v total="${rgb_frames:-0}" \
+    'BEGIN { printf "%.1f", (total > 0) ? 100 * ok / total : 0 }')
+in_range "$rgb_checked_pct" "$MIN_PAIR_CHECKED_PCT" 100.1 ||
+    note "only ${rgb_checked_pct}% of ${rgb_frames} /depth/rgb frames could be checked \
+against their source (floor ${MIN_PAIR_CHECKED_PCT}%) — ${rgb_unmatched} had a stamp the \
+probe never saw on /image_raw, so most of this run went unverified"
+
+stamp_checked_pct=$(awk -v ok="${stamp_matched:-0}" -v total="${measured:-0}" \
+    'BEGIN { printf "%.1f", (total > 0) ? 100 * ok / total : 0 }')
+in_range "$stamp_checked_pct" "$MIN_PAIR_CHECKED_PCT" 100.1 ||
+    note "only ${stamp_checked_pct}% of ${measured} /depth maps carried a stamp the probe \
+had seen on /image_raw (floor ${MIN_PAIR_CHECKED_PCT}%) — at this rate the stamps are not \
+the input frames'"
 (( ${wrong_encoding:-1} == 0 )) || note "${wrong_encoding} /depth maps were not 32FC1"
 (( ${wrong_frame:-1} == 0 )) ||
     note "${wrong_frame} messages were not stamped camera_optical_frame"
@@ -326,7 +378,7 @@ echo "-- run 2: the control, use_cuda:=false, same budget --"
 run_pipeline "$work/cpu.log" "$CONTROL_SECONDS" false || { echo "FAIL gate-depth"; exit 1; }
 
 control_provider=$(provider_of "$work/cpu.log")
-read -r c_windows c_cost_mean c_cost_p95 c_cost_max < <(cost_summary "$work/cpu.log")
+read -r c_windows c_cost_mean c_cost_p95 c_cost_max _c_preview_ms < <(cost_summary "$work/cpu.log")
 control_rate=$(probe_value "$work/cpu.log" rate_hz)
 
 [[ ${control_provider:-} == CPUExecutionProvider ]] ||
@@ -354,14 +406,16 @@ echo "provider            : ${provider}  (assert CUDAExecutionProvider)"
 echo "per-frame cost      : ${cost_mean} ms mean over ${windows} windows  (assert <= ${MAX_COST_MS}, node's own clock)"
 echo "  ... p95           : ${cost_p95} ms  (the worst window's p95: an upper bound on the run's)"
 echo "  ... worst frame   : ${cost_max} ms"
+echo "inferno preview     : ${preview_ms} ms/frame  (assert > 0 and <= ${MAX_PREVIEW_MS}; outside the budget above)"
 echo "sustained rate      : ${rate} Hz on /depth  (assert >= ${MIN_RATE_HZ}; the pipeline's clock)"
 echo "  ... p95 interval  : ${interval_p95} ms  (printed: a mean hides a stall)"
 echo "depth maps measured : ${measured} of ${depth_frames} seen  (warm_up_frames from config/pimesh.yaml)"
 echo
-echo "/depth/rgb identical: ${rgb_identical}  (assert > 0, and 0 different, 0 unmatched)"
-echo "  ... different     : ${rgb_different}"
-echo "  ... unmatched     : ${rgb_unmatched}  ('could not check' is not a pass)"
-echo "stamps from input   : ${stamp_matched} matched, ${stamp_unmatched} not  (assert 0 not)"
+echo "/depth/rgb identical: ${rgb_identical} of ${rgb_frames} = ${rgb_checked_pct}%  (assert 0 different, >= ${MIN_PAIR_CHECKED_PCT}% checked)"
+echo "  ... different     : ${rgb_different}  (assert 0 — a mismatch is a failure at any count)"
+echo "  ... unmatched     : ${rgb_unmatched}  (could not check: the probe misses ~1.5% of 59 Hz /image_raw)"
+echo "stamps from input   : ${stamp_matched} of ${measured} = ${stamp_checked_pct}%  (assert >= ${MIN_PAIR_CHECKED_PCT}%)"
+echo "  ... not found     : ${stamp_unmatched}  (same cause as unmatched above, not a wrong stamp)"
 echo "encoding / frame_id : ${wrong_encoding} wrong encoding, ${wrong_frame} wrong frame  (assert 0)"
 echo
 echo "distances sampled   : ${sampled}  (${non_finite} non-finite, ${out_of_range} out of range; assert 0 both)"

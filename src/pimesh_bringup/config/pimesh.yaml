@@ -133,6 +133,17 @@
     depth_topic: /depth
     rgb_topic: /depth/rgb
     publish_rgb: true
+    # For a person, not for the pipeline: a fixed-scale inferno colour map of the
+    # depth, as ~10 Hz of JPEG. 32FC1 metres render as a near-black image in any
+    # viewer that does not know what they are, and RViz's Image display has **no
+    # colour map at all** — only a per-frame `Normalize Range`, which makes the
+    # same distance a different shade from frame to frame. Colouring it here against
+    # a fixed [0, max_range_m] means a colour is a distance. Near is bright, far is
+    # black, so the 6 m clip is the quietest thing on screen rather than the
+    # loudest. Its cost is reported separately in the stats line; 0 Hz disables it.
+    preview_topic: /depth/image/compressed
+    preview_rate_hz: 10.0
+    preview_quality: 80
     # The GPU. false is gates/depth.sh's control run, reached through the launch
     # argument of the same name rather than by editing this file.
     use_cuda: true

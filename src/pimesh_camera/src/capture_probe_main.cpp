@@ -37,10 +37,10 @@ namespace
 /// rate here is quoted the same way or not at all.
 std::uint64_t fnv1a(const std::vector<std::uint8_t> & bytes)
 {
-  std::uint64_t hash = 1469598103934665603ULL;
+  std::uint64_t hash = 0xcbf29ce484222325ULL;
   for (std::uint8_t byte : bytes) {
     hash ^= byte;
-    hash *= 1099511628211ULL;
+    hash *= 0x100000001b3ULL;
   }
   return hash;
 }

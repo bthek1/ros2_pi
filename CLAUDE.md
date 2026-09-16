@@ -647,6 +647,26 @@ strong priors, re-verify before quoting a number as this project's own.
   stub version of cublas` on *stdout*, and segfaulted on the first inference. The
   `ldd`-says-no-unresolved-dependencies check passed over it throughout, which is
   why `fetch-gpu-stack.sh` also asserts a size floor on `libcublas.so.13`.
+- **A constant that is wrong but works is invisible, and only an outside
+  reference finds it.** The FNV-1a offset basis in this project was
+  `1469598103934665603` — the real one, `14695981039346656037`, with its last
+  digit dropped in a paste — in both copies, since milestone A, and it was found on
+  2026-09-15 by the first test that compared it against the published reference
+  vectors. **Nothing had been wrong.** A hash with a different basis avalanches
+  just as well and answers "are these two byte arrays equal" correctly every time,
+  so every number taken with it (`duplicate payloads`, `/depth/rgb identical`)
+  was and remains right; it simply was not FNV-1a, while two comments said it was.
+  Write named constants in the form they are published in — hex for a hash basis —
+  and pin them against a reference vector, because no amount of testing the
+  *behaviour* of a hash will ever tell you it is the wrong hash.
+- **A helper with no home has no tests.** `percentile` existed four times over and
+  FNV-1a twice, each in an anonymous namespace inside a file with a ROS node in it
+  — unreachable by any test and free to drift apart. Every gate in this project
+  prints a number that comes out of one of them. They now live in
+  `pimesh_perception/stats.hpp` with `test_stats` behind them; `pimesh_camera`
+  keeps its own copy on purpose, because a dependency edge from the Pi's package to
+  a dev-box one would point the wrong way down the pipeline for the sake of twelve
+  lines, and that cost is written down in the header rather than discovered later.
 - **A budget nobody has seen fail is not an assertion.** `gates/gpu-stack.sh`
   asserts the CPU path is *slower* than the 80 ms budget as well as the GPU path
   being faster, because a threshold only means something once the thing it is
@@ -744,6 +764,24 @@ strong priors, re-verify before quoting a number as this project's own.
   `launch/*.launch.py`. A key that does not match the node name silently applies
   nothing — a trap that has cost this project's predecessor real time. Declare
   every parameter with a description and validate ranges at declaration.
+
+  **The same trap exists one level down, on the parameter *names*, and it caught
+  this project on 2026-09-15**: three keys for `depth_node`'s colour preview sat in
+  the YAML before the node declared any of them, which is an entirely ordinary
+  order to write things in and leaves no trace once it is wrong — the file loads,
+  the node runs on its code defaults, and it looks configured.
+  `test_no_parameter_in_the_yaml_is_read_by_nobody` in `test_transforms.py` is the
+  guard: it reads every `declare_parameter` name out of the package source and
+  asserts the YAML sets nothing else, so the config and the code have to arrive
+  together.
+
+  **And a launch argument threaded into a node's parameters needs an explicit
+  `value_type`.** A `LaunchConfiguration` is a string, so the raw substitution sets
+  a *string* parameter of that name, which a node expecting a bool or a double
+  ignores while saying nothing — the same failure `use_intra_process_comms` once
+  had, where every frame was serialised and no log line mentioned it.
+  `test_every_launch_argument_override_declares_a_value_type` asserts it over the
+  whole override dict, so a new one is covered without anyone remembering to.
 - **Two kinds of test, and conflating them is a mistake.** The
   `tools/gates/*.sh` scripts are the **phase tests**: slow, often needing the Pi
   and the camera, and they are what closes a claim. `bash tools/test.sh` runs
@@ -751,6 +789,14 @@ strong priors, re-verify before quoting a number as this project's own.
   on both machines. Write a unit test for logic that can be got wrong silently
   (the stamp arithmetic, a matrix layout, a quaternion); write a gate for
   anything that is a number about a running system.
+
+  **What belongs here is decided by whether a mistake is *visible*, not by whether
+  the code is interesting.** Every suite in this workspace exists because some
+  wrong version of that code produces a plausible result: a depth map that renders
+  as a room, a preview whose colours mean the opposite of what they say, a
+  percentile that is quietly the maximum, a quaternion that still publishes three
+  frames. If a bug in it would announce itself — a crash, an exception, a topic
+  that stops — a gate is the cheaper place to catch it.
 
   **`colcon test` exits 0 when a test fails**, because it is reporting that the
   run completed — and it exits 0 again when a package has no tests at all, which
@@ -1012,9 +1058,9 @@ somebody once.
 | `bash tools/fetch-gpu-stack.sh` / `bash tools/fetch-model.sh` / `bash tools/gates/gpu-stack.sh` | **P4's toolchain, which is as far as milestone C has got.** The first installs ONNX Runtime 1.30 + CUDA 13.1 runtime + cuDNN 9.26 into `~/.local/opt/pimesh-gpu` with no sudo, every component version-pinned and sha256-verified; the second does the weights. The gate is four runs and three of them are controls — CUDA at 51.20 ms, the CPU provider at 213.18 ms (so the 80 ms budget is shown to *discriminate* rather than merely be met), a build with CMake's default linker flags that reaches only the CPU (so `-Wl,--disable-new-dtags` cannot quietly stop being load-bearing), and `nvidia-smi` sampled while the first runs, which is the only witness here that does not go through ONNX Runtime. `tools/gpu_probe.cpp` is its instrument: no ROS, no colcon, compiled by the gate with `g++` so that what is being tested is the toolchain and not four things at once |
 | `bash tools/record-clip.sh desk1 60` | **The reference clip.** A 60 s hand-held sweep, recorded once, that every phase from P3 on replays so the numbers compare like for like. `bags/` is git-ignored, so a fresh clone has none and `gates/keypoints.sh` says so rather than pretending. The script resets the camera's V4L2 controls first and records `/camera_info` alongside the frames, because a clip recorded at 20 fps under a stale manual exposure cannot be un-recorded |
 | `bash tools/replay.sh` / `view-camera.sh` / `view-keypoints.sh` / `view-depth.sh` | **The four viewers, and none of them is evidence.** `replay` loops a bag with `pipeline:=false` — the static frame tree and no components, because a pose published over a looping bag freezes and floods every TF listener; `view-camera` is the Pi's live camera; `view-keypoints` is the pipeline, on the camera or on a bag **played once** for the same reason; `view-depth` is the same again with the room as a colour-mapped depth cloud, and it waits longer before starting RViz because `depth_node` loads a 99 MB model and warms a CUDA session first. All four call `assert_no_session` before `arm_cleanup`, as does every gate: two sessions on one domain put two publishers on `/image_raw/compressed` and make both of them look broken |
-| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 145 of them across eleven suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 172 of them across twelve suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
 evaluates the launch file's `pipeline` condition both ways, so `pipeline:=false`
-cannot quietly stop removing the container —  the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on — plus milestone B's four: `test_mailbox` (newest-wins and its drop accounting), `test_image_buffer` (the bgr8 layout arithmetic, and that a `cv::Mat` over a message shares its memory), `test_rotation_fit` (Kabsch against known rotations, the reflection guard, the reject-worst refits, and the optical-to-body change of basis) and `test_orb_tracker` (synthetic frames with a known displacement: that the window forgives detection churn, that unrelated scenes do not match, and that a track id is never claimed twice in one frame); and milestone C's one, `test_depth_model` — the arithmetic either side of the network, which is the whole of P4 that can be got wrong in silence: a channel order swapped, planes interleaved instead of planar, or a reciprocal taken before the clamp each produce a depth map that renders as a plausible room and is numerically nonsense. It needs no ONNX Runtime, no GPU and no camera, which is *why* `depth_model.hpp` is a header separate from the engine behind it — so this suite runs identically on the Pi |
+cannot quietly stop removing the container —  the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on — plus milestone B's four: `test_mailbox` (newest-wins and its drop accounting), `test_image_buffer` (the bgr8 layout arithmetic, and that a `cv::Mat` over a message shares its memory), `test_rotation_fit` (Kabsch against known rotations, the reflection guard, the reject-worst refits, and the optical-to-body change of basis) and `test_orb_tracker` (synthetic frames with a known displacement: that the window forgives detection churn, that unrelated scenes do not match, and that a track id is never claimed twice in one frame); and milestone C's one, `test_depth_model` — the arithmetic either side of the network, which is the whole of P4 that can be got wrong in silence: a channel order swapped, planes interleaved instead of planar, or a reciprocal taken before the clamp each produce a depth map that renders as a plausible room and is numerically nonsense. It needs no ONNX Runtime, no GPU and no camera, which is *why* `depth_model.hpp` is a header separate from the engine behind it — so this suite runs identically on the Pi. It also covers the colour preview's mapping, where a single sign decides whether near is bright or the 6 m clip is: flip it and the picture is still a perfectly plausible depth image of exactly the wrong thing. And `test_stats` — the percentile and the FNV-1a hash every probe reports its numbers through, which had no tests because they had no *home*: four copies of one and two of the other, each in an anonymous namespace inside a translation unit with a node in it. The first run of that suite found the FNV-1a offset basis had been wrong since milestone A |
 | `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the shell lives in `tools/`; the justfile was trimmed further the same day to `build` + `run` only, so that issue's `just gate-*` spelling is history, not instruction |
 | [docs/plans/future/milestone-a-future.md](docs/plans/future/milestone-a-future.md) | Work deferred out of milestone A, each entry with its trigger: the checkerboard calibration (waiting on P5's tape-measure visit), `PipelineStats` from `camera_node` (waiting on the dashboard), the dev-box rate margin, and device reconnection |
 

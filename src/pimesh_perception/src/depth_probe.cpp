@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "pimesh_perception/image_buffer.hpp"
+#include "pimesh_perception/stats.hpp"
 #include "rcl_interfaces/msg/parameter_descriptor.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
@@ -48,30 +49,9 @@ namespace pimesh_perception
 namespace
 {
 
-/// FNV-1a over the payload. Not a cryptographic choice — nothing here is
-/// adversarial — just a cheap 64-bit summary that differs when any byte does.
-std::uint64_t hash_bytes(const std::vector<std::uint8_t> & data)
-{
-  std::uint64_t h = 1469598103934665603ULL;
-  for (const auto byte : data) {
-    h ^= byte;
-    h *= 1099511628211ULL;
-  }
-  return h;
-}
-
 std::int64_t stamp_key(const builtin_interfaces::msg::Time & t)
 {
   return static_cast<std::int64_t>(t.sec) * 1000000000LL + t.nanosec;
-}
-
-double percentile(std::vector<double> values, double fraction)
-{
-  if (values.empty()) {return 0.0;}
-  const std::size_t index =
-    std::min(values.size() - 1, static_cast<std::size_t>(fraction * values.size()));
-  std::nth_element(values.begin(), values.begin() + index, values.end());
-  return values[index];
 }
 
 }  // namespace
@@ -126,7 +106,7 @@ private:
     // so a few seconds of frames is more than enough to still hold the entry when
     // the matching /depth/rgb arrives; unbounded, this would be a 2.7 MB-per-frame
     // leak dressed as a cache.
-    source_hashes_.emplace_back(stamp_key(msg.header.stamp), hash_bytes(msg.data));
+    source_hashes_.emplace_back(stamp_key(msg.header.stamp), fnv1a(msg.data));
     while (source_hashes_.size() > 256) {source_hashes_.pop_front();}
   }
 
@@ -145,7 +125,7 @@ private:
       rgb_unmatched_++;
       return;
     }
-    if (found->second == hash_bytes(msg.data)) {
+    if (found->second == fnv1a(msg.data)) {
       rgb_identical_++;
     } else {
       rgb_different_++;

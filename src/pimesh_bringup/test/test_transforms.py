@@ -343,3 +343,196 @@ def test_the_container_can_be_left_out_but_is_there_by_default(launch_module):
         context = LaunchContext()
         context.launch_configurations['pipeline'] = value
         assert condition.evaluate(context) is expected, f'pipeline:={value}'
+
+
+# --- The parameter overrides the gates flip ----------------------------------
+#
+# `_component` threads three launch arguments into every component's parameter
+# list, because `ros2 launch` has no way to set one node's parameter from the
+# command line. Each belongs to one node and is ignored by the others.
+
+def _override_values(launch_module):
+    """The override dict `_component` builds, as {name: ParameterValue}.
+
+    `ComposableNode` does not keep the dict as written: it normalises every key
+    into a tuple of `TextSubstitution`, because a parameter *name* may itself be a
+    substitution. So the keys are joined back into plain strings here. The values
+    are left exactly as they are — whether they are `ParameterValue` at all is the
+    thing being tested.
+    """
+    component = launch_module._component('depth_node', 'x::Y', '/tmp/params.yaml', [])
+    overrides = [p for p in component.parameters if isinstance(p, dict)]
+    assert len(overrides) == 1, 'the override dict is the second parameters entry'
+
+    def name_of(key):
+        if isinstance(key, str):
+            return key
+        return ''.join(part.text for part in key)
+
+    return {name_of(key): value for key, value in overrides[0].items()}
+
+
+def test_every_launch_argument_override_declares_a_value_type(launch_module):
+    """A `LaunchConfiguration` is a **string**, and a parameter set from the raw
+    substitution is a string parameter — which a node that declared a bool or a
+    double ignores, silently, while the launch reports nothing wrong.
+
+    This is not hypothetical here. The same mistake with `use_intra_process_comms`
+    is written up at the top of the launch file: the components load, every frame
+    is serialised, and no log line mentions it. The cost of finding it was a gate
+    that measured the wrong thing.
+
+    So: every value in that override dict has to be a `ParameterValue` carrying an
+    explicit `value_type`. The test is over the dict rather than over three names,
+    so a fourth override added later is covered without anyone remembering to.
+    """
+    from launch_ros.descriptions import ParameterValue
+
+    overrides = _override_values(launch_module)
+    assert overrides, 'no overrides at all — has _component stopped threading them?'
+
+    for name, value in overrides.items():
+        assert isinstance(value, ParameterValue), (
+            f'{name} is a raw substitution, so it would be set as a string '
+            f'parameter and ignored by any node expecting another type')
+        assert value.value_type is not None, (
+            f'{name} has no value_type, so it resolves to a string')
+
+
+def test_the_overrides_are_the_ones_the_gates_actually_pass(launch_module):
+    """And that they are typed the way the receiving node declared them.
+
+    `use_cuda` is a bool in depth_node, `duration_s` a double in depth_probe,
+    `log_payloads` a bool in decode_node. A `value_type` that disagrees with the
+    declaration is the same silent no-op as having none.
+    """
+    expected = {'log_payloads': bool, 'use_cuda': bool, 'duration_s': float}
+    overrides = _override_values(launch_module)
+
+    assert set(overrides) == set(expected), (
+        'the override set changed; update the gates that depend on it '
+        '(tools/gates/ipc.sh, tools/gates/depth.sh) and this test together')
+    for name, want in expected.items():
+        assert overrides[name].value_type is want, (
+            f'{name} is declared {want.__name__} by its node')
+
+
+# --- The probe's config has to describe the pipeline it is measuring ---------
+
+def test_depth_probe_watches_the_topics_the_pipeline_publishes(config):
+    """`depth_probe` names its three topics itself, and if any of them drifts from
+    what the pipeline publishes the probe simply measures nothing.
+
+    That is not a loud failure. `tools/gates/depth.sh` would report
+    `measured=0` and fail — which is the good case — but a drift in `source_topic`
+    alone would leave the rate and the depth values intact while silently turning
+    every `/depth/rgb` comparison into `rgb_unmatched`, the counter that means
+    "could not check". The gate treats that as a failure precisely because it
+    would otherwise look like a clean run with nothing to report.
+    """
+    decode = config['/**/decode_node']['ros__parameters']
+    depth = config['/**/depth_node']['ros__parameters']
+    probe = config['/**/depth_probe']['ros__parameters']
+
+    assert probe['source_topic'] == decode['output_topic'], (
+        'the probe is hashing a topic decode_node does not publish')
+    assert probe['depth_topic'] == depth['depth_topic']
+    assert probe['rgb_topic'] == depth['rgb_topic']
+    assert depth['input_topic'] == decode['output_topic'], (
+        'depth_node is subscribed to a topic nothing in this container publishes')
+
+
+def test_the_probe_and_the_node_agree_on_the_clip(config):
+    """`max_range_m` is written twice — once as the distance depth_node clips at,
+    once as the bound depth_probe checks every sampled distance against.
+
+    A comment in the YAML says they must match. This is that comment as an
+    assertion, which is the difference between a rule and a hope: if the node's
+    clip were raised and the probe's left behind, every frame would be reported as
+    `out_of_range` and the gate would fail against perfectly good depth. If it
+    went the other way the range check would pass over distances beyond the clip —
+    a check that cannot fail, which is worse.
+    """
+    depth = config['/**/depth_node']['ros__parameters']
+    probe = config['/**/depth_probe']['ros__parameters']
+    assert probe['max_range_m'] == depth['max_range_m']
+
+
+def test_depth_publishes_into_the_frame_the_static_tree_defines(config):
+    """`depth_node` stamps its output `camera_optical_frame` by *name*, and the
+    edge that defines that frame is published by `camera_to_optical`.
+
+    The node is explicitly forbidden from re-deriving the optical rotation — it is
+    a static edge, unit-tested above to actually be the optical convention. Naming
+    a frame that nothing publishes would put the depth cloud nowhere, which in
+    RViz looks exactly like a display that is switched off.
+    """
+    optical = config['/**/camera_to_optical']['ros__parameters']['child_frame_id']
+    assert config['/**/depth_node']['ros__parameters']['optical_frame'] == optical
+
+
+# --- Every parameter in the YAML is one a node actually declares --------------
+
+_PERCEPTION_SRC = os.path.join(_HERE, '..', '..', 'pimesh_perception', 'src')
+
+
+@pytest.fixture(scope='module')
+def declared_parameters():
+    """Every name passed to `declare_parameter("…"` in pimesh_perception.
+
+    Read out of the source rather than out of a running node, because the whole
+    point is to stay hermetic: no container, no GPU, no camera, and it runs on the
+    Pi. Every `declare_parameter` in this package takes a string literal, which is
+    what makes a regex honest here — and if one ever does not, the assertion below
+    fails loudly rather than quietly passing over it.
+    """
+    import re
+
+    assert os.path.isdir(_PERCEPTION_SRC), (
+        f'{_PERCEPTION_SRC} is missing, so this test would check nothing')
+
+    pattern = re.compile(r'declare_parameter\s*(?:<[^>]*>)?\(\s*"([^"]+)"')
+    names = set()
+    sources = [f for f in os.listdir(_PERCEPTION_SRC) if f.endswith('.cpp')]
+    assert sources, 'no .cpp files found — this test is not looking where it thinks'
+
+    for filename in sources:
+        with open(os.path.join(_PERCEPTION_SRC, filename)) as handle:
+            names |= set(pattern.findall(handle.read()))
+    assert names, 'found no declare_parameter calls at all'
+    return names
+
+
+def test_no_parameter_in_the_yaml_is_read_by_nobody(config, launch_module, declared_parameters):
+    """**The trap this whole file exists for, one level deeper than it was.**
+
+    `test_config_has_no_keys_the_launch_file_ignores` checks the `/**/<node>` keys.
+    Nothing checked the parameter names *underneath* them — and a ROS 2 parameter
+    file is not validated against anything, so a key no node declares loads
+    cleanly, applies to nothing, and leaves the node on its code default. The file
+    looks configured and is not.
+
+    That is not hypothetical: on 2026-09-15 three keys for `depth_node`'s colour
+    preview were in this YAML before the node declared any of them, which is a
+    perfectly ordinary order to write things in and leaves no trace once it is
+    wrong. This test is what makes the two halves have to arrive together.
+
+    Static transform entries are excluded on purpose: `static_transform_publisher`
+    parses `argv` and exits before it reads a parameter file at all, which
+    `test_static_transform_args_emit_flags_not_parameters` covers separately.
+    """
+    components = {name for name, _ in launch_module.COMPONENTS}
+    components |= {name for name, _ in launch_module.PROBE_COMPONENTS}
+
+    orphans = {}
+    for key, entry in config.items():
+        node = key[len('/**/'):] if key.startswith('/**/') else key
+        if node not in components:
+            continue
+        for parameter in entry['ros__parameters']:
+            if parameter not in declared_parameters:
+                orphans.setdefault(node, []).append(parameter)
+
+    assert not orphans, (
+        f'these parameters are set in config/pimesh.yaml and declared by no node, '
+        f'so they silently apply nothing: {orphans}')

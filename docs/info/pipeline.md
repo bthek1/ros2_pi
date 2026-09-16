@@ -281,6 +281,17 @@ per frame, 58.21 ms p95** against an 80 ms budget and **17.42 Hz** sustained on
   with the same stamp. A separate republisher cannot serve this purpose: it would
   drop *different* frames from `depth_node`, so the two stamp sets would rarely
   intersect and an exact-sync consumer would limp at a fraction of either rate.
+- **Publish `/depth/image/compressed`, an inferno preview at ~10 Hz**, on a
+  **fixed** `[0, max_range]` scale rather than a per-frame one, inverted so near is
+  bright and the clip is black. 32FC1 metres render as near-black in any viewer
+  that does not know what they are, and RViz's Image display has no colour map —
+  only `Normalize Range`, which rescales each frame to its own extremes and makes
+  the same distance a different shade from frame to frame. Its cost sits *outside*
+  the per-frame budget, as `keypoint_node`'s preview does: folding a JPEG encode
+  drawn for a person into the number that decides whether this stage keeps up would
+  make the 80 ms assertion partly a claim about a viewer. Measured: counting it
+  moved `cost_mean` from 55 ms to 59 ms and a window's p95 over the ceiling, with
+  nothing about the pipeline changed.
 - **`depth_scale` is arbitrary until P5.** Monocular depth is scale-ambiguous —
   the model says "twice as far", never "three metres" — so the room comes out
   plausibly shaped and the wrong size. The predecessor's was 2.69× out.

@@ -84,9 +84,13 @@ namespace
 /// purpose, and asserts a size floor on `libcublas.so.13` because a 22 kB stub
 /// that resolves every symbol and segfaults on first use once got in this way.
 ///
-/// Returns an empty string on success, or the `dlerror()` text — which is worth
-/// far more than what ONNX Runtime reports for the same failure ("Failed to load
-/// shared library", naming neither library nor path).
+/// Returns an empty string on success, or the `dlerror()` text. **The caller only
+/// reports that text if appending the CUDA provider then fails** — dlopening the
+/// provider by itself can fail harmlessly, because it imports symbols ONNX Runtime
+/// supplies to it after loading it, and a run that reaches CUDA must not print an
+/// error saying it did not. When the append really does fail, this text is the
+/// only thing that names the missing library and its path; ONNX Runtime's own
+/// message for the same failure ("Failed to load shared library") names neither.
 std::string preload_cuda_provider()
 {
 #ifdef PIMESH_GPU_PREFIX
@@ -147,10 +151,25 @@ public:
       // append below throws inside a component container and succeeds in a
       // standalone executable, which is the most confusing pair of outcomes this
       // stage can produce.
+      //
+      // **Its failure is not reported unless the append below also fails**, and
+      // that is the correction to a log line this node printed for half a day.
+      // The step that actually fixes the container case is loading the CUDA
+      // *libraries*; dlopening the provider on top of that is a cheap early
+      // check, and it can fail for a reason that means nothing — the provider is
+      // half of a bridge, importing `Provider_GetHost` and friends that ONNX
+      // Runtime supplies to it after loading it, so resolving it on its own
+      // reports `undefined symbol: Provider_GetHost` on a provider that is
+      // completely fine. RTLD_LAZY does not help: the symbol is reached through a
+      // data relocation, which is bound eagerly whatever the mode. So a run that
+      // went on to reach CUDA at 55 ms/frame was logging "could not load the CUDA
+      // provider" beside it — a diagnostic saying the opposite of what happened,
+      // which is worse than no diagnostic at all.
+      //
+      // It is kept, not discarded, because when the append *does* fail this text
+      // is the only thing that names the missing library and its path; ONNX
+      // Runtime's own message for the same failure names neither.
       const std::string preload_error = preload_cuda_provider();
-      if (!preload_error.empty()) {
-        diagnostic_ = "could not load the CUDA provider: " + preload_error;
-      }
       try {
         OrtCUDAProviderOptionsV2 * cuda = nullptr;
         Ort::ThrowOnError(Ort::GetApi().CreateCUDAProviderOptions(&cuda));
@@ -161,10 +180,12 @@ public:
         guard(cuda, [](OrtCUDAProviderOptionsV2 * p) {Ort::GetApi().ReleaseCUDAProviderOptions(p);});
         options.AppendExecutionProvider_CUDA_V2(*cuda);
         provider_ = "CUDAExecutionProvider";
+        // Whatever the preload said, the provider is in the session. Nothing to
+        // report.
+        diagnostic_.clear();
       } catch (const Ort::Exception & e) {
-        // Keep the dlopen error if there was one: ONNX Runtime's own message for
-        // this failure names no library and no path, and the dlerror text names
-        // both.
+        // Now the preload error earns its place: ONNX Runtime's message for this
+        // failure names no library and no path, and the dlerror text names both.
         diagnostic_ = std::string("CUDA provider refused: ") + e.what() +
           (preload_error.empty() ? "" : " (" + preload_error + ")");
       }

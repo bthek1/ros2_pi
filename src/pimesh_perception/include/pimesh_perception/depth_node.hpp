@@ -13,6 +13,7 @@
 #include "pimesh_perception/depth_engine.hpp"
 #include "pimesh_perception/mailbox.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 
 namespace pimesh_perception
@@ -47,6 +48,22 @@ namespace pimesh_perception
 /// colour from the frame we actually processed makes every `/depth` message
 /// pairable by construction.
 ///
+/// **A third topic, `/depth/image/compressed`, is for a person and not for the
+/// pipeline.** 32FC1 metres render as a near-black image in any viewer that does
+/// not know what to do with them, and RViz's Image display has no colour map at
+/// all — only a per-frame `Normalize Range`, which rescales every frame to its own
+/// min and max so the *same distance is a different shade from frame to frame*.
+/// So the colouring happens here, with `cv::COLORMAP_INFERNO` over a **fixed**
+/// range of `[0, max_range]`: a colour then means a distance, the same one, in
+/// every frame. Near is bright and far is black, which is the way round that puts
+/// the emphasis on what the camera can actually see — the far clip is this
+/// pipeline's "too far away or no idea", and it should be the quietest thing on
+/// the screen rather than the loudest.
+///
+/// Like `keypoint_node`'s annotated preview it is rate-capped and its cost is
+/// accounted separately from the per-frame budget, because encoding a JPEG is not
+/// work the pipeline needs done.
+///
 /// **Both carry the input frame's stamp and `camera_optical_frame`.** Derived
 /// data keeps the header of what it describes, not the moment the work finished.
 /// That stamp is the Pi's kernel capture time (P1) and it is honest, so `/depth`
@@ -63,11 +80,13 @@ private:
   void on_image(sensor_msgs::msg::Image::ConstSharedPtr msg);
   void work();
   void process_frame(const sensor_msgs::msg::Image & msg);
+  void publish_preview(const sensor_msgs::msg::Image & source);
   void log_stats();
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr depth_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr rgb_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr preview_pub_;
   rclcpp::TimerBase::SharedPtr stats_timer_;
 
   std::unique_ptr<DepthEngine> engine_;
@@ -88,6 +107,17 @@ private:
   cv::Mat metres_small_;
   cv::Mat metres_;
 
+  /// The inferno preview's working buffers, reused for the same reason as the
+  /// tensors above: 8-bit depth, its colour-mapped twin, and the JPEG bytes.
+  cv::Mat preview_8u_;
+  cv::Mat preview_colour_;
+  std::vector<unsigned char> jpeg_;
+
+  int preview_quality_ {80};
+  double preview_period_s_ {0.1};
+  bool have_preview_time_ {false};
+  rclcpp::Time last_preview_;
+
   // --- Counters for the stats line ------------------------------------------
   //
   // Written by the worker, read by the timer on an executor thread, hence atomic.
@@ -99,6 +129,8 @@ private:
   std::atomic<double> infer_sum_ms_ {0.0};
   std::atomic<double> total_sum_ms_ {0.0};
   std::atomic<double> total_max_ms_ {0.0};
+  std::atomic<double> preview_sum_ms_ {0.0};
+  std::atomic<std::uint64_t> previews_ {0};
 
   /// Every per-frame cost in the current stats window, so the summary can carry a
   /// **p95 and not only a mean**.
@@ -121,6 +153,8 @@ private:
   std::size_t last_logged_dropped_ {0};
   double last_infer_sum_ms_ {0.0};
   double last_total_sum_ms_ {0.0};
+  double last_preview_sum_ms_ {0.0};
+  std::uint64_t last_logged_previews_ {0};
   rclcpp::Time last_log_;
 };
 

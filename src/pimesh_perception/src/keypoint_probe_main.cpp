@@ -30,21 +30,13 @@
 #include <vector>
 
 #include "pimesh_msgs/msg/keypoints.hpp"
+#include "pimesh_perception/stats.hpp"
 #include "rclcpp/rclcpp.hpp"
 
-namespace
-{
-
-double percentile(std::vector<double> values, double fraction)
-{
-  if (values.empty()) {return 0.0;}
-  const std::size_t index =
-    std::min(values.size() - 1, static_cast<std::size_t>(fraction * values.size()));
-  std::nth_element(values.begin(), values.begin() + index, values.end());
-  return values[index];
-}
-
-}  // namespace
+// The percentile lives in pimesh_perception/stats.hpp now, tested in
+// test/test_stats.cpp. This probe is not itself in that namespace — it is a plain
+// executable rather than a component — so it names what it uses.
+using pimesh_perception::percentile;
 
 class KeypointProbe : public rclcpp::Node
 {

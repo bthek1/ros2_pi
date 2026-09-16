@@ -41,10 +41,18 @@ prints the number it asserted on; the phase is then annotated with the date and
 what that recipe printed.
 
 Unit tests are a different instrument and do not close a milestone on their own.
-`bash tools/test.sh` runs 29 hermetic tests on both machines — the stamp
-arithmetic, a matrix layout, the static-transform quaternions — and they catch
-the things that are wrong *silently*. A gate is what says the running system did
-the thing. Both are required; neither substitutes for the other.
+`bash tools/test.sh` runs **172 hermetic tests across twelve suites** on both
+machines — the stamp arithmetic, a matrix layout, the static-transform
+quaternions, the arithmetic either side of the depth model, and the percentile and
+hash every probe reports its numbers through — and they catch the things that are
+wrong *silently*. A gate is what says the running system did the thing. Both are
+required; neither substitutes for the other.
+
+The division is about visibility rather than importance: if a mistake would
+announce itself with a crash or a topic that stops, a gate is the cheaper place to
+catch it; if it would produce a plausible number or a room-shaped picture of the
+wrong thing, it belongs here. `bash tools/gates/test.sh` asserts the count, zero
+skips, and that both machines run the *same* suites.
 
 The exceptions are physical-world checks that no script can close: the tape
 measure that pins `depth_scale`, exposure in a real room, and whether the mesh

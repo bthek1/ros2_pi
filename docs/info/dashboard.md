@@ -9,7 +9,13 @@ One browser tab that answers three questions without a ROS installation:
 1. **Is the pipeline alive?** Per-stage rate, latency and drop count, with a
    stage going amber the moment it stalls.
 2. **What is the camera seeing?** The RGB frame, the ORB keypoints drawn on it,
-   and the colourised depth map, side by side.
+   and the colourised depth map, side by side. **Two of those three already
+   exist**: `keypoint_node` has published `/keypoints/image/compressed` since P3
+   and `depth_node` has published `/depth/image/compressed` since P4, both as
+   ~80 kB JPEG at ~10 Hz and both colour-mapped in the node rather than in the
+   viewer. That is deliberate and this page depends on it — a browser cannot
+   colour-map a 3.7 MB float depth map, and a fixed `[0, max_range]` scale is what
+   makes a colour mean a distance across frames instead of per frame.
 3. **What have we built?** The live mesh, orbitable, with the camera's current
    pose and its trajectory drawn in the same scene.
 
@@ -29,7 +35,7 @@ process to start and stop.
 ────────────────         ─────────────────────            ─────────────────
 /pipeline/stats  ──┐
 /keypoints/image ──┤     subscribe → downsample →   WS    ┌─ stats panel
-/depth/image     ──┼──▶  pace → frame → send      ═════▶  ├─ image strip
+/depth/image/... ──┼──▶  pace → frame → send      ═════▶  ├─ image strip
 /world/mesh      ──┤                                      ├─ three.js scene
 /odom, /tf       ──┘     serve static assets      HTTP    └─ (vendored JS)
                                                   ─────▶

@@ -129,6 +129,30 @@ inline void to_metres(
   }
 }
 
+/// Metres to the 8-bit image `cv::applyColorMap` wants, on a **fixed** scale.
+///
+/// `dst` is `CV_8UC1`, with `0 m -> 255` and `max_range -> 0`. Two decisions are
+/// baked in here and both are invisible in the result:
+///
+///  - **Fixed, not per-frame.** RViz's Image display offers `Normalize Range`,
+///    which rescales every frame to its own min and max — so the same distance is
+///    a different shade from one frame to the next, and a hand sweeping past the
+///    lens re-darkens the whole room. Mapping a fixed `[0, max_range]` means a
+///    colour *is* a distance.
+///  - **Inverted.** The gain is negative, so near comes out at 255 and far at 0.
+///    With inferno (black -> purple -> red -> orange -> yellow) that puts bright
+///    on near and black on far, so the clip — this pipeline's "too far away or no
+///    idea" — is the quietest thing on screen instead of the loudest. Flip the
+///    sign and the picture is still a perfectly plausible depth image, showing
+///    exactly the wrong thing.
+///
+/// `convertTo` saturates rather than wrapping, which is what keeps a distance
+/// beyond `max_range` at black instead of sending it back to full brightness.
+inline void depth_to_preview_8u(const cv::Mat & metres, float max_range, cv::Mat & dst)
+{
+  metres.convertTo(dst, CV_8UC1, -255.0 / static_cast<double>(max_range), 255.0);
+}
+
 }  // namespace pimesh_perception
 
 #endif  // PIMESH_PERCEPTION__DEPTH_MODEL_HPP_

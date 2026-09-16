@@ -170,6 +170,7 @@ endforeach()
 # the published track ids, which is the number the gate compares against the
 # predecessor's.
 add_executable(keypoint_probe src/keypoint_probe_main.cpp)
+target_include_directories(keypoint_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(keypoint_probe PRIVATE rclcpp::rclcpp ${pimesh_msgs_TARGETS})
 
 install(DIRECTORY include/ DESTINATION include)
@@ -192,6 +193,16 @@ install(TARGETS decode_node depth_node keypoint_node keypoint_probe
 # the kind of mistake that produces a plausible-looking image and a wrong number.
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+
+  # The numbers every probe in this package reports through. Header-only, no ROS,
+  # no GPU — and until stats.hpp existed there was nothing to point a test at: the
+  # percentile lived four times over in anonymous namespaces inside translation
+  # units with a node in them. Every failure here is a plausible wrong number
+  # rather than a crash, which is the whole category this directory is for.
+  ament_add_gtest(test_stats test/test_stats.cpp)
+  if(TARGET test_stats)
+    target_include_directories(test_stats PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  endif()
 
   ament_add_gtest(test_mailbox test/test_mailbox.cpp)
   if(TARGET test_mailbox)

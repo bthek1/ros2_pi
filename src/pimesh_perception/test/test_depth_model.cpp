@@ -8,6 +8,7 @@
 // the wrong shape several stages later.
 
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <vector>
 
@@ -20,6 +21,7 @@ using pimesh_perception::kImagenetStd;
 using pimesh_perception::kInputElements;
 using pimesh_perception::kModelSize;
 using pimesh_perception::preprocess;
+using pimesh_perception::depth_to_preview_8u;
 using pimesh_perception::to_metres;
 
 namespace
@@ -192,4 +194,117 @@ TEST(DepthModel, ProducesA32FC1MatOfTheInputShape)
   EXPECT_EQ(metres.rows, kModelSize);
   EXPECT_EQ(metres.cols, kModelSize);
   EXPECT_FLOAT_EQ(metres.at<float>(37, 42), 2.5F);
+}
+
+TEST(DepthModel, ClampsExactlyAtTheClipBoundaryAndNotBefore)
+{
+  // The clamp is written `!(r > floor_inverse)` rather than `r <= floor_inverse`,
+  // because every comparison against NaN is false and the negated form catches it.
+  // That spelling also decides the boundary itself, which nothing else pins: a
+  // relative value of exactly `scale / max_range` is the last one that must land on
+  // the cap, and anything above it must be a real distance strictly inside it.
+  const float scale = 10.0F;
+  const float max_range = 6.0F;
+  const float floor_inverse = scale / max_range;           // 1.6667
+
+  cv::Mat relative = (cv::Mat_<float>(1, 3) <<
+    floor_inverse,                                          // exactly at the clip
+    std::nextafter(floor_inverse, 100.0F),                  // the first value past it
+    std::nextafter(floor_inverse, 0.0F));                   // the last value below it
+  cv::Mat metres;
+  to_metres(relative, scale, max_range, metres);
+
+  EXPECT_FLOAT_EQ(metres.at<float>(0, 0), max_range) << "the boundary itself must clamp";
+  EXPECT_LT(metres.at<float>(0, 1), max_range) << "just past the boundary is a real distance";
+  EXPECT_GT(metres.at<float>(0, 1), max_range - 0.01F) << "...and only just inside it";
+  EXPECT_FLOAT_EQ(metres.at<float>(0, 2), max_range) << "below the boundary must clamp";
+}
+
+// --- depth_to_preview_8u -----------------------------------------------------
+//
+// The colour preview is for a person, but its arithmetic fails silently in the
+// most complete way anything here can: every mistake below still produces a
+// smooth, room-shaped, entirely convincing picture of the wrong thing.
+
+TEST(DepthPreview, MapsNearToBrightAndFarToBlack)
+{
+  // The sign of the gain *is* the meaning of the image. Inferno runs black at 0
+  // and yellow at 255, so near has to map high and far has to map low — flipped,
+  // the 6 m clip (this pipeline's "too far away or no idea") becomes the
+  // brightest thing on screen, which is the region carrying the least
+  // information.
+  cv::Mat metres = (cv::Mat_<float>(1, 3) << 0.0F, 3.0F, 6.0F);
+  cv::Mat preview;
+  depth_to_preview_8u(metres, 6.0F, preview);
+
+  EXPECT_EQ(preview.type(), CV_8UC1);
+  EXPECT_EQ(preview.at<std::uint8_t>(0, 0), 255) << "0 m must be the brightest";
+  EXPECT_EQ(preview.at<std::uint8_t>(0, 2), 0) << "the clip must be black";
+  EXPECT_NEAR(preview.at<std::uint8_t>(0, 1), 128, 2) << "half range is mid grey";
+}
+
+TEST(DepthPreview, IsMonotonicSoAColourIsADistance)
+{
+  // Whatever else changes, nearer must never be darker than further. This is the
+  // property that lets somebody read the picture at all.
+  cv::Mat metres(1, 64, CV_32FC1);
+  for (int i = 0; i < 64; ++i) {
+    metres.at<float>(0, i) = 6.0F * static_cast<float>(i) / 63.0F;
+  }
+  cv::Mat preview;
+  depth_to_preview_8u(metres, 6.0F, preview);
+
+  for (int i = 1; i < 64; ++i) {
+    EXPECT_LE(preview.at<std::uint8_t>(0, i), preview.at<std::uint8_t>(0, i - 1))
+      << "brightness rose with distance at column " << i;
+  }
+}
+
+TEST(DepthPreview, SaturatesRatherThanWrappingOutsideTheRange)
+{
+  // convertTo saturates; a hand-rolled cast would wrap, sending a distance just
+  // past the clip back to full brightness — a bright ring around every far
+  // surface that reads as an object.
+  cv::Mat metres = (cv::Mat_<float>(1, 4) << -5.0F, -0.001F, 6.001F, 1000.0F);
+  cv::Mat preview;
+  depth_to_preview_8u(metres, 6.0F, preview);
+
+  EXPECT_EQ(preview.at<std::uint8_t>(0, 0), 255) << "nearer than zero clamps bright";
+  EXPECT_EQ(preview.at<std::uint8_t>(0, 1), 255);
+  EXPECT_EQ(preview.at<std::uint8_t>(0, 2), 0) << "past the clip must stay black";
+  EXPECT_EQ(preview.at<std::uint8_t>(0, 3), 0) << "far past the clip must not wrap";
+}
+
+TEST(DepthPreview, TheScaleIsFixedRatherThanPerFrame)
+{
+  // **The failure this guards is RViz's `Normalize Range`**, which rescales every
+  // frame to its own min and max — so the same distance is a different shade from
+  // one frame to the next and a hand passing the lens re-darkens the whole room.
+  // A given distance must come out the same shade whatever else is in the frame.
+  cv::Mat lonely = (cv::Mat_<float>(1, 2) << 2.0F, 2.5F);
+  cv::Mat varied = (cv::Mat_<float>(1, 4) << 2.0F, 0.1F, 5.9F, 2.5F);
+
+  cv::Mat a;
+  cv::Mat b;
+  depth_to_preview_8u(lonely, 6.0F, a);
+  depth_to_preview_8u(varied, 6.0F, b);
+
+  EXPECT_EQ(a.at<std::uint8_t>(0, 0), b.at<std::uint8_t>(0, 0))
+    << "2.0 m rendered differently depending on its neighbours";
+  EXPECT_EQ(a.at<std::uint8_t>(0, 1), b.at<std::uint8_t>(0, 3));
+}
+
+TEST(DepthPreview, MaxRangeChangesTheMappingAndNothingElseDoes)
+{
+  // max_range is the one input to this mapping besides the metres, and it has to
+  // actually be used — a hard-coded 6.0 would look right for the default config
+  // and silently ignore the parameter.
+  cv::Mat metres = (cv::Mat_<float>(1, 1) << 3.0F);
+  cv::Mat six;
+  cv::Mat twelve;
+  depth_to_preview_8u(metres, 6.0F, six);
+  depth_to_preview_8u(metres, 12.0F, twelve);
+
+  EXPECT_NEAR(six.at<std::uint8_t>(0, 0), 128, 2) << "half of a 6 m range";
+  EXPECT_NEAR(twelve.at<std::uint8_t>(0, 0), 191, 2) << "a quarter of a 12 m range";
 }

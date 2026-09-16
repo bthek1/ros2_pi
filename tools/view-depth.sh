@@ -75,9 +75,11 @@ What you should see, and what each part of it tells you:
              sitting **in front of** camera_optical_frame. A desk edge should be
              nearer than the wall behind it. A flat plane at one distance means
              the reciprocal or the clip is wrong.
-  Depth      the same map as an image, normalised — near dark, far light. Large
-             white regions are the 6 m clip, which is this pipeline's "far away
-             or don't know": the two are the same answer on purpose.
+  Depth      the same map colour-mapped with **inferno over a fixed 0-6 m** —
+             near bright yellow, mid orange and red, far black. The scale does not
+             move between frames, so a colour is a distance: large black regions
+             are the 6 m clip, this pipeline's "far away or don't know", and the
+             two are the same answer on purpose.
   TF         camera_optical_frame with z pointing into the scene. A cloud rotated
              90 degrees from those axes means something re-derived the optical
              convention rather than naming the static edge.
