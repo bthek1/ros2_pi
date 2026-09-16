@@ -100,8 +100,8 @@ def test_config_has_no_keys_the_launch_file_ignores(config, launch_module):
     publishes or a component it composes."""
     keyed = {k[len('/**/'):] for k in config if k.startswith('/**/')}
     expected = set(launch_module.STATIC_TRANSFORMS)
-    expected |= {name for name, _ in launch_module.COMPONENTS}
-    expected |= {name for name, _ in launch_module.PROBE_COMPONENTS}
+    expected |= {name for name, _, _plugin in launch_module.COMPONENTS}
+    expected |= {name for name, _, _plugin in launch_module.PROBE_COMPONENTS}
     assert keyed == expected
 
 
@@ -109,7 +109,7 @@ def test_every_composed_component_has_a_config_key(launch_module, config):
     """And the same check from the other side, stated separately because it fails
     differently: a component with no key in the YAML runs entirely on its code
     defaults, which is a node that works and is not configured."""
-    for name, _ in launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS:
+    for name, _, _plugin in launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS:
         assert f'/**/{name}' in config, f'{name} is composed but has no key in pimesh.yaml'
 
 
@@ -120,22 +120,34 @@ def test_every_plugin_string_is_registered_in_the_ament_index(launch_module):
 
     This is the cheapest check that catches it, and it is checking the real
     index: the same resource file the container reads, written by
-    `rclcpp_components_register_nodes` at build time."""
+    `rclcpp_components_register_nodes` at build time.
+
+    **Each component is looked up in the index of the package the launch file
+    names for it**, not in one fixed package's. The container does exactly that,
+    and since P5 there are two packages supplying components — so a check against
+    a single index would either pass over half of them or report a class as
+    missing when it is merely elsewhere."""
     from ament_index_python.packages import get_package_prefix
 
-    registered = set()
-    prefix = get_package_prefix('pimesh_perception')
-    resource = os.path.join(prefix, 'share', 'ament_index', 'resource_index',
-                            'rclcpp_components', 'pimesh_perception')
-    with open(resource) as handle:
-        for line in handle:
-            if line.strip():
-                # Each line is "<class>;<library path>".
-                registered.add(line.split(';')[0].strip())
+    def registered_in(package):
+        prefix = get_package_prefix(package)
+        resource = os.path.join(prefix, 'share', 'ament_index', 'resource_index',
+                                'rclcpp_components', package)
+        assert os.path.isfile(resource), (
+            f'{package} registers no components at all — is '
+            f'rclcpp_components_register_nodes missing from its CMakeLists?')
+        found = set()
+        with open(resource) as handle:
+            for line in handle:
+                if line.strip():
+                    # Each line is "<class>;<library path>".
+                    found.add(line.split(';')[0].strip())
+        return found
 
-    for name, plugin in launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS:
+    for name, package, plugin in launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS:
+        registered = registered_in(package)
         assert plugin in registered, (
-            f'{name} names {plugin}, which pimesh_perception does not register '
+            f'{name} names {plugin}, which {package} does not register '
             f'(it registers {sorted(registered)})')
 
 
@@ -263,10 +275,10 @@ def test_the_launch_description_actually_builds(launch_module):
 
     assert kinds.get(Node) == len(launch_module.STATIC_TRANSFORMS)
     assert kinds.get(ComposableNodeContainer) == 1, 'there is one container, always'
-    # intra_process, log_payloads, probe, probe_duration_s, use_cuda, pipeline —
-    # each of which exists because something outside this file has to be able to
-    # set it: the first five for gates, the last for tools/replay.sh.
-    assert kinds.get(DeclareLaunchArgument) == 6
+    # intra_process, log_payloads, probe, probe_duration_s, align, use_cuda,
+    # pipeline — each of which exists because something outside this file has to
+    # be able to set it: the first six for gates, the last for tools/replay.sh.
+    assert kinds.get(DeclareLaunchArgument) == 7
     # One per probe, loaded into the running container rather than listed in it,
     # because `composable_node_descriptions` is built when this file is evaluated
     # and cannot be made conditional on an argument. One action each rather than
@@ -297,7 +309,7 @@ def test_at_most_one_probe_loads_and_none_by_default(launch_module):
     loads = [a for a in description.entities if isinstance(a, LoadComposableNodes)]
     assert len(loads) == len(launch_module.PROBE_COMPONENTS)
 
-    names = [name for name, _ in launch_module.PROBE_COMPONENTS]
+    names = [name for name, _, _plugin in launch_module.PROBE_COMPONENTS]
     for value, expected in [('none', 0), *[(n, 1) for n in names]]:
         context = LaunchContext()
         context.launch_configurations['probe'] = value
@@ -360,7 +372,8 @@ def _override_values(launch_module):
     are left exactly as they are — whether they are `ParameterValue` at all is the
     thing being tested.
     """
-    component = launch_module._component('depth_node', 'x::Y', '/tmp/params.yaml', [])
+    component = launch_module._component(
+        'depth_node', 'pimesh_perception', 'x::Y', '/tmp/params.yaml', [])
     overrides = [p for p in component.parameters if isinstance(p, dict)]
     assert len(overrides) == 1, 'the override dict is the second parameters entry'
 
@@ -403,15 +416,18 @@ def test_the_overrides_are_the_ones_the_gates_actually_pass(launch_module):
     """And that they are typed the way the receiving node declared them.
 
     `use_cuda` is a bool in depth_node, `duration_s` a double in depth_probe,
-    `log_payloads` a bool in decode_node. A `value_type` that disagrees with the
-    declaration is the same silent no-op as having none.
+    `log_payloads` a bool in decode_node, `align` a bool in fusion_node. A
+    `value_type` that disagrees with the declaration is the same silent no-op as
+    having none.
     """
-    expected = {'log_payloads': bool, 'use_cuda': bool, 'duration_s': float}
+    expected = {
+        'log_payloads': bool, 'use_cuda': bool, 'duration_s': float, 'align': bool}
     overrides = _override_values(launch_module)
 
     assert set(overrides) == set(expected), (
         'the override set changed; update the gates that depend on it '
-        '(tools/gates/ipc.sh, tools/gates/depth.sh) and this test together')
+        '(tools/gates/ipc.sh, tools/gates/depth.sh, tools/gates/fusion.sh) '
+        'and this test together')
     for name, want in expected.items():
         assert overrides[name].value_type is want, (
             f'{name} is declared {want.__name__} by its node')
@@ -473,12 +489,19 @@ def test_depth_publishes_into_the_frame_the_static_tree_defines(config):
 
 # --- Every parameter in the YAML is one a node actually declares --------------
 
-_PERCEPTION_SRC = os.path.join(_HERE, '..', '..', 'pimesh_perception', 'src')
+# Every package pimesh.launch.py composes a component from. A second package
+# joined this list at P5 and the fixture below silently stopped covering half the
+# parameters until it did — which is the very failure that fixture exists to
+# catch, one level up.
+_COMPONENT_SRC = [
+    os.path.join(_HERE, '..', '..', 'pimesh_perception', 'src'),
+    os.path.join(_HERE, '..', '..', 'pimesh_world', 'src'),
+]
 
 
 @pytest.fixture(scope='module')
 def declared_parameters():
-    """Every name passed to `declare_parameter("…"` in pimesh_perception.
+    """Every name passed to `declare_parameter("…"` in the component packages.
 
     Read out of the source rather than out of a running node, because the whole
     point is to stay hermetic: no container, no GPU, no camera, and it runs on the
@@ -488,17 +511,16 @@ def declared_parameters():
     """
     import re
 
-    assert os.path.isdir(_PERCEPTION_SRC), (
-        f'{_PERCEPTION_SRC} is missing, so this test would check nothing')
-
     pattern = re.compile(r'declare_parameter\s*(?:<[^>]*>)?\(\s*"([^"]+)"')
     names = set()
-    sources = [f for f in os.listdir(_PERCEPTION_SRC) if f.endswith('.cpp')]
-    assert sources, 'no .cpp files found — this test is not looking where it thinks'
-
-    for filename in sources:
-        with open(os.path.join(_PERCEPTION_SRC, filename)) as handle:
-            names |= set(pattern.findall(handle.read()))
+    for directory in _COMPONENT_SRC:
+        assert os.path.isdir(directory), (
+            f'{directory} is missing, so this test would check less than it thinks')
+        sources = [f for f in os.listdir(directory) if f.endswith('.cpp')]
+        assert sources, f'no .cpp files in {directory} — not looking where it thinks'
+        for filename in sources:
+            with open(os.path.join(directory, filename)) as handle:
+                names |= set(pattern.findall(handle.read()))
     assert names, 'found no declare_parameter calls at all'
     return names
 
@@ -521,8 +543,8 @@ def test_no_parameter_in_the_yaml_is_read_by_nobody(config, launch_module, decla
     parses `argv` and exits before it reads a parameter file at all, which
     `test_static_transform_args_emit_flags_not_parameters` covers separately.
     """
-    components = {name for name, _ in launch_module.COMPONENTS}
-    components |= {name for name, _ in launch_module.PROBE_COMPONENTS}
+    components = {name for name, _, _plugin in launch_module.COMPONENTS}
+    components |= {name for name, _, _plugin in launch_module.PROBE_COMPONENTS}
 
     orphans = {}
     for key, entry in config.items():

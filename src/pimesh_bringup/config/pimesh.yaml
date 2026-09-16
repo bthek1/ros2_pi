@@ -174,3 +174,76 @@
     # Must match depth_node's clip above, or the range assertion is measuring a
     # disagreement between two config keys rather than the depth.
     max_range_m: 6.0
+
+# --- The map ------------------------------------------------------------------
+
+/**/fusion_node:
+  ros__parameters:
+    # Both from depth_node, paired by stamp with **no tolerance**. depth_node
+    # publishes the colour twin from the frame it actually inferred on precisely
+    # so that pairing is exact; a tolerance here would colour a wall with the
+    # picture of a different instant and nothing downstream could tell.
+    depth_topic: /depth
+    rgb_topic: /depth/rgb
+    info_topic: /camera_info
+    # The volume lives in map, not odom. A pose-graph backend correcting
+    # map -> odom (P7/P8) must move the *frames*, not the surface underneath them.
+    world_frame: map
+    optical_frame: camera_optical_frame
+    # Which process-local volume this fills. mesh_node reads the same key and a
+    # mismatch is two volumes and an empty mesh — see pimesh_world/shared_volume.hpp
+    # for why the two nodes share memory rather than a topic.
+    volume_key: world
+    # P5's numbers. 15 mm voxels keep a desk edge; 4 voxels of truncation is 6 cm
+    # of band, which has to be wider than the depth noise being averaged or
+    # observations of the same wall never land in the same voxel. Three
+    # observations before a voxel is meshed is the noise floor: a single frame's
+    # flying pixel at an object edge is exactly what it excludes.
+    voxel_size_m: 0.015
+    truncation_voxels: 4
+    min_weight: 3.0
+    # Where the running average saturates. An unbounded weight is a map that has
+    # stopped listening, which looks fine until something has to give way.
+    max_weight: 64.0
+    # **Must match depth_node's max_range_m above.** Beyond it a reading is the
+    # model's "far away or no idea" and integrating it builds a shell of the clip
+    # plane — a room with a smooth dome over it that looks like a ceiling.
+    max_range_m: 6.0
+    min_range_m: 0.15
+    # Pixel stride of the block-allocation pass only; the update pass that follows
+    # reads every pixel. At fx=953 and 6 m, 8 pixels is 5 cm — well inside a 12 cm
+    # block, so nothing in the frustum is missed and it is 64x less hash traffic.
+    allocation_stride: 8
+    # A hard ceiling on the map, in 6 kB blocks: 300 000 is ~1.9 GB, and P6's
+    # mesher takes a *copy*, so budget twice that. **desk1 reaches it, and that is
+    # a symptom rather than a resolution set too fine** — 145 000 blocks after 40 s
+    # is 2090 m2 of surface for a room with perhaps 60 m2 in it, which is thirty
+    # layers of the same wall laid down by rotation-only odometry (P7), an unpinned
+    # depth_scale (a tape measure and a person), and a per-frame scale wobble well
+    # past the aligner's clamp. The ceiling is what stops a session dying of memory
+    # while those are outstanding; it fixes none of them.
+    max_blocks: 300000
+    # Per-frame scale alignment. The model's output scale wobbles ~4% frame to
+    # frame, which at 2.5 m is 10 cm — wider than the truncation band, so unaligned
+    # frames stack into shingles instead of averaging into a wall. false is
+    # gates/fusion.sh's control run, reached through the launch argument of the
+    # same name rather than by editing this file.
+    align: true
+    min_overlap: 0.2
+    max_correction: 0.15
+    align_window: 50
+    # 16 gives 80x45 rays: thousands of samples for a median, a few milliseconds
+    # of marching. The aligner needs a statistic, not a picture.
+    raycast_stride: 16
+    # How close, as a *fraction* of the distance, the map has to be to an incoming
+    # reading to count as agreeing with it. Relative and not absolute because
+    # depth_scale is unpinned — until a tape measure fixes it, centimetres here are
+    # unknown units. gates/fusion.sh compares this figure between its aligned and
+    # unaligned runs; the median gap does not discriminate, because it is
+    # conditioned on the ray-cast having found something and the two runs differ in
+    # how often it does.
+    agree_tolerance: 0.05
+    # Slack, not a design rate. keypoint_node publishes the pose for a frame ~50 ms
+    # before depth_node finishes inferring on it, so this wait is normally zero.
+    tf_timeout_ms: 50.0
+    stats_period_s: 5.0

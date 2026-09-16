@@ -73,11 +73,19 @@ from launch_ros.descriptions import ComposableNode, ParameterValue
 # makes a mesh smear and shows up in no single log.
 STATIC_TRANSFORMS = ['map_to_odom', 'base_to_camera', 'camera_to_optical']
 
-# The components composed into the container, as (node name, plugin string). The
-# node name is also the key in config/pimesh.yaml, and the plugin string is what
-# the container looks up in the ament index at runtime — so a typo in either is a
-# failure with no build error in front of it: a mis-keyed parameter silently
-# applies nothing, and a mis-spelled plugin fails at launch.
+# The components composed into the container, as (node name, package, plugin).
+# The node name is also the key in config/pimesh.yaml, and the package and plugin
+# together are what the container looks up in the ament index at runtime — so a
+# typo in any of the three is a failure with no build error in front of it: a
+# mis-keyed parameter silently applies nothing, and a mis-spelled plugin fails at
+# launch.
+#
+# **The package was a hard-coded 'pimesh_perception' until P5**, which was correct
+# for exactly as long as one package supplied every component. It is in the tuple
+# now because the alternative — deriving it from the plugin's namespace — is a
+# convention nothing enforces, and the failure it would hide is a container
+# looking up a class in the wrong package's index and reporting only that it could
+# not find it.
 #
 # A list rather than literals inline, for the same reason STATIC_TRANSFORMS is one:
 # test_transforms.py checks both halves of it against the YAML and the index, and
@@ -85,9 +93,9 @@ STATIC_TRANSFORMS = ['map_to_odom', 'base_to_camera', 'camera_to_optical']
 COMPONENTS = [
     # The container's one network subscriber. Everything else here reads its
     # output in-process, by pointer.
-    ('decode_node', 'pimesh_perception::DecodeNode'),
+    ('decode_node', 'pimesh_perception', 'pimesh_perception::DecodeNode'),
     # ORB on every decoded frame, plus the rotation-only pose.
-    ('keypoint_node', 'pimesh_perception::KeypointNode'),
+    ('keypoint_node', 'pimesh_perception', 'pimesh_perception::KeypointNode'),
     # Monocular depth on the GPU. **This is the pipeline's clock** — a frame costs
     # ~55 ms against a ~17 ms frame interval, measured at 17.42 Hz out of 59 Hz, so
     # it keeps roughly one frame in three and drops the rest through its own
@@ -95,7 +103,13 @@ COMPONENTS = [
     # unconditionally, like everything else here, because the container is
     # everything or nothing: the components share one process precisely so that a
     # 2.7 MB frame reaches all three of them as a pointer.
-    ('depth_node', 'pimesh_perception::DepthNode'),
+    ('depth_node', 'pimesh_perception', 'pimesh_perception::DepthNode'),
+    # The TSDF. **This is where the pipeline stops being a stream and starts
+    # remembering** — and it is in this container rather than a process of its own
+    # for a reason one size up from the frame handover: what it produces is a
+    # volume of hundreds of megabytes whose only consumer is mesh_node, in this
+    # same process. See pimesh_world/shared_volume.hpp.
+    ('fusion_node', 'pimesh_world', 'pimesh_world::FusionNode'),
 ]
 
 # The gates' instruments, none of which is part of the pipeline.
@@ -114,10 +128,10 @@ COMPONENTS = [
 PROBE_COMPONENTS = [
     # tools/gates/ipc.sh: compares the buffer address decode_node published
     # against the one a subscriber received.
-    ('ipc_probe', 'pimesh_perception::IpcProbe'),
+    ('ipc_probe', 'pimesh_perception', 'pimesh_perception::IpcProbe'),
     # tools/gates/depth.sh: the depth rate on its own steady clock, and whether
     # /depth/rgb is byte-identical to the frame each depth map was inferred on.
-    ('depth_probe', 'pimesh_perception::DepthProbe'),
+    ('depth_probe', 'pimesh_perception', 'pimesh_perception::DepthProbe'),
 ]
 
 
@@ -149,7 +163,9 @@ def _static_transform_args(entry: dict) -> list:
     ]
 
 
-def _component(name: str, plugin: str, params_path: str, extra: list) -> ComposableNode:
+def _component(
+        name: str, package: str, plugin: str, params_path: str, extra: list
+) -> ComposableNode:
     """One entry in the container's list.
 
     The parameters are the keyed YAML first and a single override second, and the
@@ -177,7 +193,7 @@ def _component(name: str, plugin: str, params_path: str, extra: list) -> Composa
     the node ignores while saying nothing at all.
     """
     return ComposableNode(
-        package='pimesh_perception',
+        package=package,
         plugin=plugin,
         name=name,
         parameters=[
@@ -189,6 +205,8 @@ def _component(name: str, plugin: str, params_path: str, extra: list) -> Composa
                     LaunchConfiguration('use_cuda'), value_type=bool),
                 'duration_s': ParameterValue(
                     LaunchConfiguration('probe_duration_s'), value_type=float),
+                'align': ParameterValue(
+                    LaunchConfiguration('align'), value_type=bool),
             },
         ],
         extra_arguments=extra,
@@ -261,6 +279,12 @@ def generate_launch_description() -> LaunchDescription:
                         'seconds.',
         ),
         DeclareLaunchArgument(
+            'align',
+            default_value='true',
+            description="fusion_node's per-frame depth scale alignment. false is "
+                        'the control run in tools/gates/fusion.sh.',
+        ),
+        DeclareLaunchArgument(
             'use_cuda',
             default_value='true',
             description="depth_node's execution provider. false forces the CPU, "
@@ -300,7 +324,8 @@ def generate_launch_description() -> LaunchDescription:
             # precondition for anything in this workspace.
             executable='component_container_isolated',
             composable_node_descriptions=[
-                _component(name, plugin, params_path, extra) for name, plugin in COMPONENTS
+                _component(name, package, plugin, params_path, extra)
+                for name, package, plugin in COMPONENTS
             ],
             output='screen',
         ),
@@ -325,9 +350,9 @@ def generate_launch_description() -> LaunchDescription:
                     PythonExpression(
                         [repr(name), ' == ', "'", LaunchConfiguration('probe'), "'"])),
                 composable_node_descriptions=[
-                    _component(name, plugin, params_path, extra),
+                    _component(name, package, plugin, params_path, extra),
                 ],
             )
-            for name, plugin in PROBE_COMPONENTS
+            for name, package, plugin in PROBE_COMPONENTS
         ],
     ])

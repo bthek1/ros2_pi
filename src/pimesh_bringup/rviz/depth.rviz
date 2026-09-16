@@ -1,54 +1,11 @@
-# Milestone C's viewer: is the depth map a room, and is it in front of the camera.
-#
-# A *viewer*, not evidence. `bash tools/gates/depth.sh` is what passes or fails
-# P4 — the provider, the per-frame cost, and whether /depth/rgb is byte-identical
-# to the frame its depth map was inferred on. This is here because the first three
-# dimensional output in this project is also the first that a person can sanity
-# check faster than a script can.
-#
-# What you should see, and what each part of it tells you:
-#
-#   DepthCloud a recognisable colour-mapped shell of whatever the camera is
-#              pointed at, **in front of** camera_optical_frame rather than behind
-#              it or off to one side. A desk edge should be nearer than the wall
-#              behind it. A cloud that renders as a flat plane at one distance
-#              means the reciprocal or the clip is wrong — which is the failure
-#              gates/depth.sh asserts a near/far spread against.
-#   Depth      the same data as an image, colour-mapped with **inferno over a
-#              fixed 0-6 m**: near is bright yellow, mid is orange and red, far is
-#              black. A colour is a distance — the scale does not move between
-#              frames — so large black regions are the 6 m clip, which is this
-#              pipeline's "far away or don't know"; the two are deliberately the
-#              same answer, and deliberately the quietest thing on the screen.
-#   TF         camera_optical_frame with z pointing *into* the scene. If the cloud
-#              is rotated 90 degrees from the axes, something re-derived the
-#              optical convention instead of naming the static edge.
-#
-# **What you should NOT trust here: absolute scale.** Monocular depth is
-# scale-ambiguous — the model says "twice as far", never "three metres" — so the
-# room will be plausibly shaped and the wrong size. The predecessor's came out at
-# 2.69x. Pinning it is P5's job, with a tape measure. Do not "fix" it by eye.
-#
-# **This viewer costs more than the other two, and knowingly.** The DepthCloud
-# subscribes to /depth and /depth/rgb out of process, so 6.4 MB is serialised out
-# of the container per frame — roughly 110 MB/s at 17 Hz. That is memory bandwidth
-# on one machine rather than Wi-Fi, which is the only reason it is acceptable at
-# all: the same arithmetic over the Pi's link is what the "one reader, not five"
-# rule exists to prevent.
-#
-# The Depth panel below is **not** part of that. It watches depth_node's ~80 kB
-# colour-mapped preview at 10 Hz rather than raw /depth, which is a thousandth of
-# the traffic — the same choice keypoints.rviz makes, and the reason the colour map
-# lives in the node instead of being asked for here.
 Panels:
   - Class: rviz_common/Displays
+    Help Height: 70
     Name: Displays
     Property Tree Widget:
-      Expanded:
-        - /DepthCloud1
-        - /TF1
+      Expanded: ~
       Splitter Ratio: 0.5
-    Tree Height: 500
+    Tree Height: 178
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -56,7 +13,6 @@ Panels:
     Splitter Ratio: 0.5
 Visualization Manager:
   Class: ""
-  Name: root
   Displays:
     - Alpha: 0.5
       Cell Size: 0.5
@@ -64,140 +20,141 @@ Visualization Manager:
       Color: 160; 160; 164
       Enabled: true
       Line Style:
-        Line Width: 0.03
+        Line Width: 0.029999999329447746
         Value: Lines
       Name: Grid
       Normal Cell Count: 0
-      Offset: {X: 0, Y: 0, Z: 0}
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
       Plane: XY
       Plane Cell Count: 10
       Reference Frame: <Fixed Frame>
       Value: true
-
-    # The room, in 3D, coloured by the frame its depth was inferred on.
-    #
-    # **The pairing is by `header.stamp`, which is why depth_node publishes the
-    # colour twin at all.** RViz matches the two topics on their stamps, and a
-    # separate republisher of /image_raw would drop *different* frames from the
-    # ones depth_node processed — so their stamp sets would rarely intersect and
-    # this display would render a fraction of the rate either topic is running at.
-    # /depth/rgb is the exact frame, republished unchanged, so every map has a
-    # partner by construction.
-    #
-    # Both are raw: no `/compressed` suffix, because there is no compressed
-    # transport on either and a 32FC1 depth map is not a thing to JPEG. The
-    # transport hints are spelled out rather than left to default so that the pair
-    # cannot silently disagree about it.
-    #
-    # DepthCloud takes the intrinsics from `<depth topic's namespace>/camera_info`,
-    # which for /depth is /camera_info — the topic camera_node serves the C922's
-    # real calibration on (P9: fx=953.4, fy=957.6). There is no property for it
-    # here; it is derived, and a wrongly-namespaced depth topic would silently get
-    # no intrinsics and draw nothing.
-    - Auto Size:
+    - Alpha: 1
+      Auto Size:
         Auto Size Factor: 1
         Value: true
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      CameraInfo Topic: /camera_info
+      Channel Name: intensity
       Class: rviz_default_plugins/DepthCloud
+      Color: 255; 255; 255
       Color Image Topic: /depth/rgb
-      Color Transform: RGB8
+      Color Transformer: RGB8
       Color Transport Hint: raw
       Decay Time: 0
       Depth Map Topic: /depth
       Depth Map Transport Hint: raw
       Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
       Name: DepthCloud
       Occlusion Compensation:
         Occlusion Time-Out: 30
         Value: false
       Position Transformer: XYZ
       Queue Size: 1
+      Reliability Policy: Best effort
       Selectable: true
       Size (Pixels): 3
       Style: Flat Squares
       Topic Filter: false
       Use Fixed Frame: true
+      Use rainbow: true
       Value: true
-
-    # The same data flat, which is the quickest read on whether the *model* is
-    # working as opposed to the geometry around it.
-    #
-    # **This is `depth_node`'s colour-mapped preview, not the raw `/depth`, and
-    # the reason is that RViz cannot colour a depth map.** Its Image display has
-    # no colour map property at all — the only thing it offers is `Normalize
-    # Range`, which rescales *each frame* to that frame's own min and max. So a
-    # raw 32FC1 topic renders as a grey wash in which the same distance is a
-    # different shade from one frame to the next, and a hand passing the lens
-    # re-darkens the whole room. `depth_node` therefore applies
-    # `cv::COLORMAP_INFERNO` over a **fixed** [0, max_range_m] and publishes ~80 kB
-    # of JPEG at ~10 Hz, so a colour here *is* a distance.
-    #
-    # Near is bright and far is black — the inverse of the obvious mapping, and
-    # deliberately: the far clip is this pipeline's "too far away or no idea", and
-    # it should be the quietest thing on the screen rather than the brightest.
-    #
-    # **The `/compressed` suffix is the instruction to decode JPEG**, not
-    # decoration. RViz infers the transport from the topic name
-    # (`displays/image/get_transport_from_topic.cpp`) and there is no transport
-    # property to set; naming the base topic gives a display subscribed to
-    # something nothing publishes, which looks exactly like a dead camera.
-    #
-    # It also costs a thousandth of what watching raw `/depth` costs: ~80 kB a
-    # frame at 10 Hz against 3.7 MB at 17 Hz serialised out of the container.
     - Class: rviz_default_plugins/Image
       Enabled: true
       Max Value: 1
       Median window: 5
       Min Value: 0
       Name: Depth
-      # Off: the image arrives already mapped to a fixed scale, and normalising it
-      # again here would undo exactly the property the colour map was added for.
       Normalize Range: false
       Topic:
         Depth: 1
         Durability Policy: Volatile
         History Policy: Keep Last
-        # BEST_EFFORT, as in keypoints.rviz, and for the same reason: at ~80 kB a
-        # frame is ~56 fragments and a dropped preview frame costs nothing. A
-        # RELIABLE *writer* satisfies a BEST_EFFORT reader; only the reverse is
-        # incompatible. This is the exception the size rule scopes, not a
-        # contradiction of it — do not carry it to `/depth` itself, which at
-        # 3.7 MB is ~2600 fragments.
         Reliability Policy: Best Effort
+        Transport Override: ""
         Value: /depth/image/compressed
       Value: true
-
     - Class: rviz_default_plugins/TF
       Enabled: true
+      Filter (blacklist): ""
+      Filter (whitelist): ""
       Frame Timeout: 30
-      Marker Scale: 0.3
+      Frames:
+        All Enabled: true
+        base_link:
+          Value: true
+        camera_link:
+          Value: true
+        camera_optical_frame:
+          Value: true
+        map:
+          Value: true
+        odom:
+          Value: true
+      Marker Scale: 0.30000001192092896
       Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: true
+      Tree:
+        map:
+          odom:
+            base_link:
+              camera_link:
+                camera_optical_frame:
+                  {}
       Update Interval: 0
       Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    # odom, not camera_optical_frame: fixing the view to the frame the cloud is
-    # expressed in would hold the cloud still and move the world, which hides the
-    # one thing this view is for — whether the cloud sits in front of the camera.
     Fixed Frame: odom
     Frame Rate: 30
+  Name: root
   Tools:
     - Class: rviz_default_plugins/Interact
       Hide Inactive Objects: true
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/FocusCamera
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 4
-      Focal Point: {X: 0, Y: 0, Z: 0}
+      Distance: 3.079765558242798
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
       Name: Current View
-      Pitch: 0.3
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 0.24499984085559845
       Target Frame: <Fixed Frame>
-      Yaw: 3.6
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 3.099998950958252
     Saved: ~
 Window Geometry:
   Depth:
@@ -205,4 +162,11 @@ Window Geometry:
   Displays:
     collapsed: false
   Height: 800
+  Hide Left Dock: false
+  Hide Right Dock: false
+  QMainWindow State: 000000ff00000000fd0000000100000000000001c2000002c4fc0200000003fb0000000a00440065007000740068010000003e000000b80000001600fffffffb000000100044006900730070006c00610079007301000000fc00000136000000ca00fffffffb0000000a005600690065007700730100000238000000ca000000a600ffffff00000338000002c400000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Views:
+    collapsed: false
   Width: 1280
+  X: 4160
+  Y: 138
