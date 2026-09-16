@@ -561,3 +561,103 @@ ros2 run image_transport republish \
 `session` now asserts one message arrives on the raw topic before starting the
 calibrator, so this fails in three seconds with a message instead of looking like a
 board-detection problem.
+
+## `/world/mesh` is empty forever, and `mesh_node` is running
+
+**Symptom.** The container is up, `fusion_node` logs blocks climbing into the tens
+of thousands, and `mesh_node` logs nothing at all — or logs a warning about
+waiting for a volume. RViz's Marker panel stays blank.
+
+**Cause.** The two nodes share the TSDF through a **process-local registry**, not
+through a topic, and they find each other by the `volume_key` parameter and
+nothing else. Three ways for that to fail, and all three look identical from
+outside:
+
+- the keys disagree (`fusion_node` fills `world`, `mesh_node` meshes `worlds`) —
+  two separate volumes, one filled and never meshed;
+- `mesh_node` is in a **different process** — started with `ros2 run`, or loaded
+  into a second container. The registry is process-local by construction; see
+  `pimesh_world/shared_volume.hpp` for why the volume is shared by pointer rather
+  than published, and why this limitation is deliberate rather than an oversight;
+- `mesh_min_weight` is above `max_weight`, so no voxel can ever reach it.
+
+**Fix.** `mesh_node` names the key it is waiting for and lists every key the
+process has, so read its warning first:
+
+```
+no configured volume under key 'world' (registered: worlds (configured)) — waiting.
+```
+
+`test_transforms.py` asserts the two YAML keys match and that the meshing weight
+sits between the volume's floor and its ceiling, so a mismatch committed to
+`config/pimesh.yaml` fails `bash tools/test.sh` rather than a session.
+
+## A latched topic reads as empty, and the QoS is "compatible"
+
+**Symptom.** `ros2 topic echo --once /world/mesh` prints nothing and times out,
+over a run that has demonstrably published several surfaces. An RViz panel on the
+same topic is blank for up to ten seconds after startup and then fills in.
+
+**Cause.** `mesh_node` publishes `/world/mesh` **transient local** on purpose: the
+surface changes every ten seconds, and a viewer started between two extractions
+would otherwise show an empty 3D view that looks exactly like a dead topic. A
+**volatile** subscriber against a transient-local publisher is QoS-*compatible* —
+it connects, it is listed in `ros2 topic info -v`, and it simply does not receive
+the stored message. It then waits for the next one.
+
+**A mismatch that is legal is worse than one that is not**, because nothing
+anywhere reports it. Measured 2026-09-16: `tools/gates/mesh.sh` reported "nothing
+was published on /world/mesh" over a run that had published eight surfaces.
+
+**Fix.** Ask for the durability you need:
+
+```bash
+ros2 topic echo --once --qos-durability transient_local --qos-reliability reliable /world/mesh
+```
+
+In an `.rviz` config it is `Durability Policy: Transient Local` on the display's
+`Topic` block — `rviz/mesh.rviz` carries it, and `tools/gates/view-configs.sh`
+watches rviz2 actually subscribe.
+
+## The map stops growing, and the room is half-built
+
+**Symptom.** `fusion_node`'s stats line shows `blocks=300000` unchanged window
+after window and `refused=` climbing into the hundreds of thousands. New parts of
+the room never appear in the mesh; the parts already mapped keep refining.
+
+**Cause.** `max_blocks` is a hard ceiling — 300 000 blocks of 6 kB is about
+1.9 GB, and P6's mesher takes a copy. Past it, existing blocks keep updating and
+nothing new is taken on. The node warns, throttled.
+
+**This is a symptom and not a resolution set too fine.** `bags/desk1` reaches
+200 000 blocks, which is over 2000 m² of surface for a room with perhaps 60 m² in
+it — about thirty layers of the same wall, laid down by rotation-only odometry
+(P7) and an unpinned `depth_scale`. Raising the ceiling buys a longer session and
+fixes neither.
+
+**Fix.** Raise `max_blocks` if the box has the memory, or shorten the clip. The
+real fix is upstream, and `mesh_min_weight` is the lever that keeps the *mesh*
+sane in the meantime — the histogram `mesh_node` logs each extraction
+(`weights blocks=… >=1:… >=4:… >=8:… >=16:… >=32:…`) is the evidence to choose it
+from, rather than eyeing a picture.
+
+## A node segfaults immediately after doing something difficult correctly
+
+**Symptom.** `process has died … exit code -11`, right after a log line reporting
+a long, complicated piece of work that clearly succeeded. Replaying the same work
+offline — same input, same functions, under AddressSanitizer — shows nothing at
+all.
+
+**Cause, at least once here:** a **use-after-move** across a `publish`. `publish`
+takes the message `unique_ptr` by value and moves from it, leaving the caller's
+pointer null; reading a field off it afterwards to build a log string or a second
+message is a null dereference the compiler is perfectly happy with. Measured
+2026-09-16 in `mesh_node`, after an extraction that had done marching cubes,
+component pruning, hole filling and 400 000 edge collapses correctly.
+
+**The stage that crashes is not always the stage that is wrong**, and an offline
+harness that never publishes anything cannot see this class at all.
+
+**Fix.** Read what you need out of a message *before* you publish it. When
+bisecting a crash like this, log between stages rather than at the end — the
+missing log line is the bisection.

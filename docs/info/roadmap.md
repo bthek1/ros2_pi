@@ -41,7 +41,7 @@ prints the number it asserted on; the phase is then annotated with the date and
 what that recipe printed.
 
 Unit tests are a different instrument and do not close a milestone on their own.
-`bash tools/test.sh` runs **172 hermetic tests across twelve suites** on both
+`bash tools/test.sh` runs **267 hermetic tests across eighteen suites** on both
 machines — the stamp arithmetic, a matrix layout, the static-transform
 quaternions, the arithmetic either side of the depth model, and the percentile and
 hash every probe reports its numbers through — and they catch the things that are

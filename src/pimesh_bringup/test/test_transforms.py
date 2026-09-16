@@ -490,6 +490,118 @@ def test_depth_publishes_into_the_frame_the_static_tree_defines(config):
     assert config['/**/depth_node']['ros__parameters']['optical_frame'] == optical
 
 
+# --- The map's two nodes have to agree with each other and with depth ---------
+#
+# Every check below is a pair of YAML keys that must hold the same value, and
+# every way of getting one wrong produces a pipeline that runs. There is no
+# schema anywhere that relates them: they are two strings in a file, and the only
+# thing that notices they disagree is this.
+
+def test_fusion_subscribes_to_what_depth_publishes(config):
+    """`depth_node` publishes the depth map and the exact colour frame it was
+    inferred on; `fusion_node` pairs them **by stamp with no tolerance**.
+
+    If either topic name drifts, fusion subscribes to something nobody publishes
+    and integrates nothing at all — and an empty volume looks exactly like a
+    camera that was never swept round the room. There is no error anywhere: a
+    subscription to an unpublished topic is a perfectly ordinary thing to have.
+    """
+    depth = config['/**/depth_node']['ros__parameters']
+    fusion = config['/**/fusion_node']['ros__parameters']
+    assert fusion['depth_topic'] == depth['depth_topic']
+    assert fusion['rgb_topic'] == depth['rgb_topic']
+    assert depth['publish_rgb'] is True, (
+        'depth_node is configured not to publish the colour twin, so every frame '
+        'fusion integrates would be colourless and the mesh would come out grey')
+
+
+def test_fusion_and_depth_agree_on_where_the_far_clip_is(config):
+    """`max_range_m` is the model's "far away or no idea", and both nodes need the
+    same number for it.
+
+    Set fusion's higher than depth's and nothing happens, because no reading ever
+    arrives past depth's clip. Set it *lower* and the far part of every room is
+    silently discarded — a map that stops at four metres in a six-metre room, with
+    a clean edge that looks like the end of what the camera saw.
+    """
+    depth = config['/**/depth_node']['ros__parameters']
+    fusion = config['/**/fusion_node']['ros__parameters']
+    assert fusion['max_range_m'] == depth['max_range_m'], (
+        'fusion clips at {} m and depth at {} m'.format(
+            fusion['max_range_m'], depth['max_range_m']))
+
+
+def test_the_two_world_nodes_agree_on_the_volume_key(config):
+    """**The sharpest of these, because it fails completely and says nothing.**
+
+    `fusion_node` and `mesh_node` share the TSDF through a process-local registry
+    keyed by this string — see `pimesh_world/shared_volume.hpp` for why it is
+    shared memory rather than a topic. A mismatch is not a partial failure: it is
+    two separate volumes, one of which is filled and never meshed and one of which
+    is meshed and never filled. `/world/mesh` then stays empty for the life of the
+    session, which is indistinguishable from a room nobody has pointed a camera at.
+    """
+    fusion = config['/**/fusion_node']['ros__parameters']
+    mesh = config['/**/mesh_node']['ros__parameters']
+    assert fusion['volume_key'] == mesh['volume_key'], (
+        "fusion fills '{}' and mesh_node meshes '{}' — two volumes, and the "
+        'published surface would be empty forever'.format(
+            fusion['volume_key'], mesh['volume_key']))
+
+
+def test_the_two_world_nodes_agree_on_the_frame_the_map_lives_in(config):
+    """The volume is built in one frame and the Marker is stamped in another, and
+    they are set separately. Disagreeing puts a correct surface in the wrong place
+    — which in RViz is a room that has slid sideways, and looks like drift."""
+    fusion = config['/**/fusion_node']['ros__parameters']
+    mesh = config['/**/mesh_node']['ros__parameters']
+    assert fusion['world_frame'] == mesh['world_frame']
+
+
+def test_the_map_lives_in_a_frame_the_static_tree_publishes(config):
+    """`map` is the root of the tree `map_to_odom` publishes. Naming a frame
+    nothing publishes puts the mesh nowhere, which in RViz looks exactly like a
+    display that is switched off — the same failure `depth_node`'s frame check
+    above guards against, one stage on."""
+    root = config['/**/map_to_odom']['ros__parameters']['frame_id']
+    optical = config['/**/camera_to_optical']['ros__parameters']['child_frame_id']
+    fusion = config['/**/fusion_node']['ros__parameters']
+    assert fusion['world_frame'] == root
+    assert fusion['optical_frame'] == optical
+
+
+def test_the_mesher_does_not_mesh_below_the_volumes_own_noise_floor(config):
+    """`mesh_min_weight` and `min_weight` answer different questions, and the
+    mesher's has to be the stricter one.
+
+    The volume's threshold is the noise floor for *ray-casting*: below it a voxel
+    is "I have not confirmed this" and a ray passes through. Meshing asks
+    something else — a voxel seen three times is real enough to stop a ray and
+    thin enough to be one of the shingles a rotation-only sweep lays down. Set the
+    mesher's *below* the volume's and it has no effect at all, because
+    `march_cubes` takes the larger of the two; the knob would look configured and
+    do nothing, which is this file's recurring theme.
+    """
+    fusion = config['/**/fusion_node']['ros__parameters']
+    mesh = config['/**/mesh_node']['ros__parameters']
+    assert mesh['mesh_min_weight'] >= fusion['min_weight'], (
+        'mesh_min_weight {} is below the volume floor {}, so it changes '
+        'nothing'.format(mesh['mesh_min_weight'], fusion['min_weight']))
+    assert mesh['mesh_min_weight'] <= fusion['max_weight'], (
+        'mesh_min_weight {} is above max_weight {}, so no voxel can ever reach '
+        'it and the surface is empty forever'.format(
+            mesh['mesh_min_weight'], fusion['max_weight']))
+
+
+def test_the_marker_cap_is_a_cap_and_not_a_target(config):
+    """The Marker is rebuilt and re-serialised on every publish; the saved PLY is
+    not. A cap large enough to never bind would put tens of megabytes on the wire
+    every ten seconds, and one small enough to bind on an empty room would
+    decimate noise into fewer pieces of noise."""
+    mesh = config['/**/mesh_node']['ros__parameters']
+    assert 10000 <= mesh['max_triangles'] <= 1000000
+
+
 # --- Every parameter in the YAML is one a node actually declares --------------
 
 # Every package pimesh.launch.py composes a component from. A second package

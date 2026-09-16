@@ -38,6 +38,12 @@ if(BUILD_TESTING)
   # finished before the physical session and is what caught the transposed-grid
   # and near-vertical-line failures there.
   ament_add_pytest_test(test_straightness test/test_straightness.py)
+
+  # The mesh gate's instrument. tools/gates/mesh.sh closes P6 by pointing at three
+  # PNGs and asserting what fraction of each is surface; a renderer that ignored
+  # its azimuth would write three copies of one picture and satisfy that check
+  # three times over.
+  ament_add_pytest_test(test_mesh_render test/test_mesh_render.py)
 endif()
 
 ament_package()

@@ -14,8 +14,10 @@ where it pays.
 
 ## Status
 
-**The first four stages run. Fusion onwards does not.** As of **2026-09-15** the
-repository holds five packages and the camera reaches the GPU:
+**Six stages run: the camera reaches a triangle surface.** As of **2026-09-16**
+the repository holds six packages, and a webcam on a Pi becomes a mesh on the dev
+box. Only the dashboard is missing — and the surface does not look like a room
+yet, for a reason given below:
 
 - **Capture** (`pimesh_camera`, on the Pi) — 1280×720 MJPEG stamped with the
   kernel's capture time, **44–59 Hz received on the dev box**, serving real
@@ -35,21 +37,45 @@ repository holds five packages and the camera reaches the GPU:
   `/depth/rgb` — the exact frame each map was inferred on, **1048/1048 measured
   byte-identical**. The metres are the right *shape* and an arbitrary *size*:
   monocular depth is scale-ambiguous until something measures a known distance.
+- **Fusion** (`pimesh_world`, here) — a spatially hashed TSDF at 15 mm voxels,
+  **15.3 ms per integration** against a 20 ms budget and **17.1 Hz** sustained,
+  with every frame posed at its own capture stamp and paired with the exact colour
+  frame its depth was inferred on: 1030 of 1030 frames offered actually
+  integrated, 0.19% displaced, 0 without a pose, 0 without a colour twin.
+- **Surface** (`pimesh_world`, here) — marching cubes over a chunked snapshot of
+  the volume every ten seconds, on a niced thread: **790 668 triangles in 2.8 s**,
+  debris pruned, interior holes fanned shut with **every component's frontier left
+  open**, decimated to **120 000** for `/world/mesh` and written full-detail as a
+  **779 740-triangle** PLY. The worst gap between two integrations was **374.7 ms
+  with meshing running against 401.3 ms in a control with nothing meshing** — the
+  extraction costs the integrator nothing measurable.
 
-`just build` then `just view-depth` shows it running; `just --list` is the
+`just build` then `bash tools/view-mesh.sh` shows it running; `just --list` is the
 whole of what you type on a normal day. The tests are the `tools/gates/*.sh`
 scripts, run directly, and each milestone issue records what they printed —
 [#4](https://github.com/bthek1/ros2_pi/issues/4) for capture,
 [#5](https://github.com/bthek1/ros2_pi/issues/5) for decode and keypoints,
 [#6](https://github.com/bthek1/ros2_pi/issues/6) for depth,
+[#7](https://github.com/bthek1/ros2_pi/issues/7) for fusion and the mesh,
 [#9](https://github.com/bthek1/ros2_pi/issues/9) for the calibration.
 
-**No fusion, mesh or dashboard code exists yet** — that is
+**The mesh is not a room yet, and that is the honest state rather than a
+disclaimer.** `keypoint_node` publishes **rotation only** — the translation is
+identically zero — so a hand-held sweep's ~0.9 m of real arm arc is modelled as no
+motion at all, and the same wall is integrated at a different distance every time
+the camera turns. The volume fills with layers of it: 200 000 blocks is over
+2000 m² of surface for a room with perhaps 60 m² in it. **P7 is what fixes that.**
+And `depth_scale` is still arbitrary, so every distance the pipeline reports is
+plausibly shaped and the wrong size — pinning it needs a person, a tape measure
+and a recording of a surface at a known distance, which is the one thing in
+milestone D a script could not close.
+
+**No dashboard code exists yet** — that is
 [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md),
 and [docs/info/roadmap.md](docs/info/roadmap.md) tracks it. Numbers quoted in
-`docs/` for those stages are measured on the Python predecessor at
+`docs/` for that stage are measured on the Python predecessor at
 [`~/Documents/piros2`](../piros2), which implements the same pipeline on the same
-hardware; numbers for the four stages above are this project's own.
+hardware; numbers for the six stages above are this project's own.
 
 ## Why a rewrite
 

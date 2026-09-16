@@ -124,6 +124,15 @@ if(BUILD_TESTING)
   if(TARGET test_mesh_cleanup)
     target_link_libraries(test_mesh_cleanup world_components)
   endif()
+
+  # The rendezvous between the two nodes, and the chunked copy between them.
+  # Every failure available here produces a mesh: a registry that hands out a
+  # fresh volume per lookup leaves the mesher on an empty one forever, and an
+  # empty volume is what an unswept room looks like.
+  ament_add_gtest(test_shared_volume test/test_shared_volume.cpp)
+  if(TARGET test_shared_volume)
+    target_link_libraries(test_shared_volume world_components)
+  endif()
 endif()
 
 ament_export_include_directories(include)
