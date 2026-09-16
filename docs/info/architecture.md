@@ -252,6 +252,20 @@ single-slot mailbox where the newest frame overwrites the unprocessed one.
 - Callback groups: each node's subscription and its timer go in a
   `MutuallyExclusive` group, so a node is never re-entered while its own
   publisher is running.
-- The TSDF volume is owned by `fusion_node` and never handed out. `mesh_node`
-  gets a snapshot copy of the truncated distance field under a short lock, then
-  meshes without holding it — a 900 ms mesh must not stall a 13 Hz integrator.
+- The TSDF volume is owned by `fusion_node` and never handed out as a message.
+  `mesh_node` gets a snapshot copy of the truncated distance field and meshes
+  without holding the lock — a 3 s extraction must not stall a 17 Hz integrator.
+  **The two rendezvous through a process-local registry rather than a topic**
+  (`pimesh_world/shared_volume.hpp`): the volume is over a gigabyte and its only
+  consumer is in the same process, so publishing it would be a serialisation of
+  the whole map ten times a minute between two components that share an address
+  space. The consequence is stated rather than hidden — a `mesh_node` started
+  alone, or in another container, finds no volume and says so.
+- **The snapshot is taken in chunks**, releasing the lock between them, because
+  one lock over a 1.25 GB copy is not a short lock: it holds the integrator out
+  for over a hundred milliseconds. The copy therefore spans two instants, which
+  for a weighted average already in the tens is invisible and is the right trade
+  for not stalling the stage the whole pipeline feeds. **And the extraction
+  thread is niced**, because at equal priority it starves the pipeline of CPU
+  rather than of the lock — measured as `depth_node` dropping from 17.8 to
+  14.6 Hz with its per-frame cost unchanged.

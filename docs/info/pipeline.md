@@ -304,57 +304,116 @@ cost, coarsens thin structure), then TensorRT EP with a cached engine (a real
 speedup but a long build and a per-machine cache), then fp16 — which on Turing
 without tensor cores buys bandwidth only, so measure before believing.
 
-## Stage 5 — Fusion (`fusion_node`, dev box)
+## Stage 5 — Fusion (`fusion_node`, dev box) — **built 2026-09-16**
 
-**Job:** turn a stream of posed depth maps into one consistent volume.
+**Job:** turn a stream of posed depth maps into one consistent volume. This is
+where the pipeline stops being a stream and starts remembering.
+
+**Measured** with `bash tools/gates/fusion.sh` on `bags/desk1`: **15.3 ms per
+integration** against a 20 ms budget, **17.1 Hz** sustained, 1030 of 1030 frames
+offered actually integrated, **0.19%** displaced in the mailbox, **0** frames
+without a pose at their own stamp and **0** without their colour twin.
 
 - **A truncated signed distance field** in a spatially hashed voxel grid —
-  1.5 cm voxels, truncation ~4 voxels, per-voxel weight and colour. Hashing, not
-  a dense grid: a dense 6 m cube at 1.5 cm is 64 M voxels, and a room is mostly
-  empty.
-- Integrate every posed frame: for each voxel in the camera frustum, project,
-  read depth, update `(d, w, rgb)` with a weighted average and a weight cap so
-  late observations still move the surface.
-- **Per-frame scale alignment, and this is the load-bearing trick.** The depth
-  model wobbles ±4%, so before integrating, ray-cast the existing volume from the
-  frame's own pose and scale the frame by the median ratio against it. The first
-  frame defines the map's scale. Guards: skip alignment when valid overlap is
-  under 20% (a mostly-new view has nothing to conform to), and refuse a
-  correction beyond 15% (that is a bad pose or a depth failure, not a wobble —
-  do not fold the map around it) **(inherited, all three thresholds)**.
-- Voxels observed fewer than 3 times do not mesh — that is the noise floor.
-- Keep the last ~500 integrated frames at half depth resolution (~250 MB) so the
-  volume can be **rebuilt** when a pose-graph correction moves the trajectory.
-  Without that, a loop closure corrects the poses and leaves the surface wrong.
+  1.5 cm voxels, truncation 4 voxels, per-voxel weight and colour, 8³ blocks of
+  6 kB each. Hashing, not a dense grid: a dense 6 m cube at 1.5 cm is 64 M voxels
+  and 768 MB before a frame arrives, for a room that is almost entirely air.
+- Integrate every posed frame: allocate the blocks a band around each ray
+  touches (every 8th pixel, which at fx=953 and 6 m is 5 cm between samples and
+  so misses nothing inside a 12 cm block), then update every voxel of those
+  blocks against the full-resolution depth map. **The signed distance is
+  projective and uses z, not ray length** — the two agree at the principal point
+  and differ by 30% in the frame corners, which bends every wall into a bowl that
+  looks like lens distortion.
+- **Per-frame scale alignment** — ray-cast the volume from the frame's own pose,
+  take the median ratio against the incoming depth, and correct only the
+  *deviation* from a rolling median of recent ratios. The first frame defines the
+  map's scale. Guards: no alignment under 20% valid overlap, no correction beyond
+  15%. See `scale_aligner.hpp` for why it is a high-pass and what happened to the
+  predecessor when it was not.
 
-**Cost target:** ~15 ms per integration at 13 Hz, single-threaded CPU with the
-frustum loop tiled over voxel blocks. This is the stage most worth moving to
-CUDA later — it is embarrassingly parallel — but only after the CPU version is
-correct and measured, and only once a CUDA toolkit is actually installed.
+  **It makes no measurable difference on `bags/desk1`, and that is the phase's
+  most useful finding.** Aligned against unaligned, the median surface gap came
+  out 1.32 m against 1.30 m and the fraction of each frame the map already agreed
+  with to 5% came out 0.114 against 0.131 — a coin flip, window by window. The
+  aligner is not broken; `test_scale_aligner` pins its properties, including the
+  one that matters most (a constant bias produces corrections whose product is
+  exactly 1, so it never pushes the map). It is correcting the smaller error:
+  `keypoint_node` publishes **rotation only**, and a hand-held sweep's ~0.9 m of
+  unmodelled arm arc is a 30-45% geometric error at 2-3 m against a scale wobble
+  clamped at 15%. **P7 is the trigger** to turn the comparison back into an
+  assertion. What is measured today is that it does not make things worse:
+  203 300 blocks with it against 221 918 without.
+- Voxels observed fewer than 3 times do not ray-cast — that is the noise floor.
+- **The map is bounded at 300 000 blocks (~1.9 GB) and `bags/desk1` reaches
+  200 000 of them.** That is a symptom, not a resolution set too fine: 200 000
+  blocks is over 2000 m² of surface for a room with perhaps 60 m² in it, which is
+  thirty layers of the same wall, laid down by rotation-only odometry and an
+  unpinned `depth_scale`. The ceiling is what stops a session dying of memory
+  while those are outstanding; it fixes neither.
+- **A surface that moves further than one truncation leaves a ghost**, because
+  only the blocks this frame's band names are updated. That is how every
+  voxel-hashing integrator behaves and it is the price of not walking the whole
+  frustum every frame — `test_tsdf_volume` pins it as a test rather than leaving
+  it to be discovered.
 
-## Stage 6 — Surface (`mesh_node`, dev box)
+**Not built:** the frame memory for volume rebuild after a loop closure. Without
+it a pose-graph correction moves the poses and leaves the surface where it was.
+See [the milestone D future file](../plans/future/milestone-d-future.md).
 
-**Job:** extract a triangle mesh from the volume and hand it to the viewers.
+## Stage 6 — Surface (`mesh_node`, dev box) — **built 2026-09-16**
 
-- **Marching cubes** over the allocated voxel blocks, vertex colours interpolated
-  from the volume, every ~10 s on a snapshot copy — never holding the
-  integrator's lock.
-- **Clean up before publishing:** drop connected components under ~30 triangles
-  (the predecessor's census found ~370 noise flakes on one static scan,
-  masquerading as holes), then close interior boundary loops smaller than 0.25 m
-  by fan-filling from the ring. **Each component's largest loop is its frontier
-  and stays open — unseen space is never invented.**
+**Job:** extract a triangle mesh from the volume and hand it to the viewers,
+without stalling the integrator.
+
+**Measured** with `bash tools/gates/mesh.sh` on `bags/desk1`: **790 668 triangles
+marched in 2.8 s**, decimated to exactly **120 000** for the Marker, boundary
+loops **5119 → 448**, and the worst gap between two integrations **374.7 ms with
+meshing against 401.3 ms in a control run with nothing meshing** — no dip.
+
+- **Marching cubes** over the allocated blocks, vertex colours interpolated from
+  the volume, every 10 s. A cell whose eight corners are not *all* above the
+  meshing weight is skipped entirely rather than meshed with the missing corners
+  read as zero — zero is the iso-value, so believing it seals the room inside a
+  shell of invented walls.
+- **On a snapshot copy, taken in chunks.** One lock over the whole map is not a
+  short lock at 1.25 GB; chunked at 2048 blocks it is a few milliseconds at a
+  time and the integrator interleaves with it. The copy is also **filtered by the
+  meshing weight**, which changes nothing about the surface (a block nothing has
+  reached that weight in has no corner the mesher would believe) and cuts it from
+  200 000 blocks to 37 000.
+- **The extraction thread is niced.** At equal priority it starves the pipeline:
+  measured, while an extraction ran, `depth_node`'s rate fell from 17.8 to
+  14.6 Hz with its per-frame cost unchanged at 55.9 ms — not more work, just not
+  being scheduled.
+- **Clean up before publishing:** drop connected components under 30 triangles,
+  then close interior boundary loops smaller than 0.25 m by fan-filling from the
+  ring. **Each component's largest loop is its frontier and stays open — unseen
+  space is never invented**, and a sealed box looks *more* finished than a
+  correct scan, which is why it is a unit test rather than something anyone would
+  notice.
 - Two outputs with different rules:
-  - `/world/mesh` as a `Marker` **capped at ~120 k triangles by quadric
+  - `/world/mesh` as a latched `Marker` **capped at 120 k triangles by quadric
     decimation** — never by dropping triangles, which peppers the surface with
-    pinholes.
-  - `/world/save_mesh` writes the **full-detail PLY**, plus optionally a
-    Poisson-closed watertight companion for downstream tools. The honest,
-    hole-bearing mesh is always written; the closed one is clearly labelled as
-    containing assumed geometry.
+    pinholes. Latched because the surface changes every ten seconds and a viewer
+    started between two extractions would otherwise show an empty 3D view.
+  - `/world/save_mesh` writes the **full-detail PLY** — 779 740 triangles against
+    the Marker's 120 000 on the same extraction. A Marker is rebuilt and
+    re-serialised on every publish; a file is written once.
+- `bash tools/mesh-views.sh <mesh.ply>` renders three fixed angles offscreen, in
+  numpy, with no GL and no Open3D. **Those PNGs are the evidence; the RViz window
+  is not.**
 
-**Cost:** 300–900 ms per extraction depending on volume size. Off the hot path
-by construction.
+**Cost:** 0.7 s at 6000 blocks to 4.2 s at 200 000, off the integration path by
+construction. **`mesh_min_weight` is the honest lever** on a mesh that is mostly
+layers of the same wall — it is 24 rather than the volume's 3, chosen from the
+weight histogram `mesh_node` logs, and it is the difference between 15.7 M
+triangles and 800 k.
+
+**What the mesh does not look like yet:** a room. See stage 5 on rotation-only
+odometry; the surface is a shell at roughly constant radius rather than a desk
+with a wall behind it, and the scale is arbitrary until a tape measure pins
+`depth_scale`.
 
 ## Stage 7 — Dashboard (`dashboard_node`, dev box)
 

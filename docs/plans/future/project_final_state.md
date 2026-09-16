@@ -422,54 +422,111 @@ on: monocular depth is scale-ambiguous and P5 is what pins it.
 
 ---
 
-## ☐ P5 — Fusion
+## ✓ P5 — Fusion *(done 2026-09-16, [#7](https://github.com/bthek1/ros2_pi/issues/7))*
 
 **Goal:** a stream of posed depth maps becomes one consistent volume.
 
-**Work**
+**Done.** `pimesh_world` joins the workspace with a spatially hashed TSDF at
+15 mm voxels, 4 voxels of truncation and a weight threshold of 3, the
+predecessor's high-pass scale aligner ported to C++, and `fusion_node` composed
+into the same container as decode, keypoints and depth.
 
-- `fusion_node`: spatially hashed TSDF, 1.5 cm voxels, truncation ~4 voxels,
-  weighted colour, weight threshold 3.
-- Per-frame scale alignment against a ray-cast of the existing volume — skip
-  below 20% valid overlap, refuse corrections beyond 15%, first frame defines
-  the map's scale.
-- Single-slot mailbox with a drop counter published on `/pipeline/stats`.
-- **Pin `depth_scale` by tape measure.** *Needs a person:* measure one flat
-  surface at a known distance, read the depth at its centre, and set the scale so
-  they agree — the predecessor's room came out at 2.69. One recording of that
-  surface at a measured distance turns this into a replayable test later; make
-  the recording while you are there (`bags/scale1`).
+`bash tools/gates/fusion.sh` prints: **15.3 ms per integration** against a 20 ms
+budget, **17.1 Hz** sustained, 1030 of 1030 frames offered actually integrated,
+**0.19%** displaced in the mailbox, **0** without a pose at their own stamp, **0**
+without their colour twin, worst arrival-to-integration p95 **13.1 ms** against a
+57 ms frame interval, and `/pipeline/stats` carrying stage `fusion`.
 
-**Test:** `bash tools/gates/fusion.sh` — replays `bags/desk1` and asserts integrate cost
-≤ 20 ms at 13 Hz with **zero growth** in the mailbox backlog over the clip, then
-runs the paired-surface check: two views of the same wall, integrated, reporting
-the gap between the two surfaces with alignment **on and off**. Asserts the
-aligned gap is smaller. Prints both gaps (the predecessor's went 7.8 → 5.7 cm)
-and the integrate cost.
+**Four things were wrong before they were right and every one was invisible in
+the output**, which is the part worth carrying forward:
+
+1. **The ray-cast skipped the front of the truncation band.** A fixed coarse
+   stride of three quarters of a block over unallocated space lands past a
+   positive side only one truncation thick, so the first sample inside the band is
+   already *behind* the surface and there is no sign change left to find. A panned
+   camera reported no surface where a camera at the same place looking straight
+   ahead found the wall. A slab test to the block's exit cannot skip a band.
+2. **Two hash lookups per march step**, into a map big enough to miss cache on
+   every one: the alignment ray-cast cost 23.9 ms at 35 000 blocks and 36.0 ms at
+   145 000 — growing with the map rather than with the picture.
+3. **12% of frames integrated colourless with nothing upstream wrong.** A
+   single-threaded executor runs callbacks in subscription-*registration* order,
+   not publication order, so the depth callback ran before the colour twin
+   published immediately before it.
+4. **A surface that moves further than a truncation leaves a ghost**, because only
+   blocks this frame's band names are updated. Pinned as a test rather than left
+   to be discovered.
+
+**The paired-surface assertion does not hold as written, and the gate says so
+rather than asserting it.** P5 asks it to show that alignment makes two views of
+the same wall agree better. Measured: median surface gap 1.32 m aligned against
+1.30 m unaligned, agreement fraction 0.114 against 0.131 — a coin flip. The
+aligner is not broken (`test_scale_aligner` pins its properties, including that a
+constant bias produces corrections whose product is exactly 1); it is correcting
+the smaller error, because rotation-only odometry throws away ~0.9 m of real arm
+arc. **P7 is the trigger** to re-measure — see
+[milestone-d-future.md](milestone-d-future.md). What the control *does* assert is
+that alignment reaches the node and does not inflate the map: 203 300 blocks with
+it against 221 918 without.
+
+**Still outstanding and it needs a person:** `depth_scale` is arbitrary at 10.0
+until a tape measure pins it, and `bags/scale1` has not been recorded. Every
+distance the pipeline reports is plausibly shaped and the wrong size. In
+[milestone-d-future.md](milestone-d-future.md) with its trigger.
+
+**Test:** `bash tools/gates/fusion.sh` — replays `bags/desk1` twice, once with
+`align:=false` as the control.
 
 ---
 
-## ☐ P6 — Surface
+## ✓ P6 — Surface *(done 2026-09-16, [#7](https://github.com/bthek1/ros2_pi/issues/7))*
 
 **Goal:** a mesh out of the volume, without stalling the integrator.
 
-**Work**
+**Done.** `mesh_node` marches cubes over a snapshot of the volume on its own
+niced thread, prunes debris, fans interior holes shut while leaving every
+component's frontier open, decimates to the Marker's cap by quadric error, and
+writes the full-detail surface as a binary PLY.
 
-- `mesh_node`: marching cubes over allocated blocks on a **snapshot copy**, taken
-  under a short lock and meshed without holding it.
-- Cleanup: drop components under 30 triangles, fan-fill interior boundary loops
-  under 0.25 m, **leave each component's largest loop open** — unseen space is
-  never invented.
-- `/world/mesh` as a `Marker` capped at 120 k triangles by **quadric
-  decimation, never subsampling**; `/world/save_mesh` writes the full-detail PLY.
-- `tools/mesh-views.sh` — offscreen renders of a saved PLY from three fixed angles.
+`bash tools/gates/mesh.sh` prints: **790 668 triangles marched in 2.8 s**,
+7 788 debris components dropped, **4 671 of 5 119 boundary loops filled** leaving
+**448 open**, 340 595 edge collapses down to exactly **120 000** on `/world/mesh`,
+a **779 740-triangle** PLY from `/world/save_mesh`, and three offscreen renders
+whose emptiest is 9.4% surface.
 
-**Test:** `bash tools/gates/mesh.sh` — replays `bags/desk1` and asserts the integrate rate
-shows **no dip** at mesh time (max inter-integration gap ≤ 2× the median), the
-published triangle count is under the cap, and the mesh has **no pinholes**
-(boundary-loop count below the pre-decimation count). Then runs `tools/mesh-views.sh`
-and writes three PNGs. Prints the counts and the paths of the renders — those
-images are the evidence, not the RViz window.
+**The no-dip claim is measured against a control, because P6's own wording is not
+achievable.** It asks for `max inter-integration gap <= 2 x median`. The *input*
+does not meet that: `bags/desk1` stalls ~400 ms about 35 s in — the seventh
+five-second window of every run, at 13.6, 14.4 and 14.6 Hz — and it is there in
+runs recorded *before `mesh_node` existed at all*, with `depth_node`'s own
+per-frame cost unchanged at 55.9 ms throughout. A gate asserting the ratio would
+have failed on it and pointed at the wrong node. So the second run sets
+`remesh_period_s` past the clip length and nothing meshes: **374.7 ms worst gap
+with meshing against 401.3 ms without it.**
+
+**Three things this phase learned the hard way:**
+
+1. **A use-after-move that segfaulted the container**, immediately after a
+   re-mesh that had done every hard thing correctly — and the whole cleanup
+   replayed offline on the very same mesh without a murmur, because the offline
+   harness never published anything. `publish` moves from the `unique_ptr`; a
+   later `stats->triangles` is a null dereference the compiler is happy with.
+2. **A niced extraction thread is not optional.** At equal priority the mesher
+   starves the pipeline: `depth_node`'s rate fell from 17.8 to 14.6 Hz with its
+   per-frame cost unchanged — not more work, just not being scheduled.
+3. **A latched topic needs a latched reader.** A volatile subscriber against a
+   transient-local writer is *compatible*, gets nothing stored, and waits. The
+   gate reported "nothing was published on /world/mesh" over a run that had
+   published eight surfaces, and `rviz/mesh.rviz` needed the same fix.
+
+**Test:** `bash tools/gates/mesh.sh` — replays `bags/desk1` twice, the second with
+`remesh_period_s:=600.0` as the control, then runs `tools/mesh-views.sh` and
+asserts the renders have a surface in them.
+
+**What the renders do not show is a room.** Rotation-only odometry models a
+hand-held sweep's arm arc as zero, so the same wall lands at a different distance
+every time the camera moves and the surface comes out as a shell at roughly
+constant radius. That is P7's to fix, and the gate says so in its own output.
 
 ---
 
