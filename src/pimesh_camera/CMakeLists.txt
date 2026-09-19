@@ -19,6 +19,16 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
+# **The one dependency this package has on something the dev box also needs**, and
+# it is an interface package rather than a library, which is the whole distinction.
+# `pimesh_camera` deliberately keeps its own copy of small helpers rather than
+# depending on `pimesh_perception` — a code edge from the Pi's package to a
+# dev-box one points the wrong way down the pipeline. A `.msg` is different: it is
+# the *contract* the dashboard reads, the Pi already builds this package (a
+# generated typesupport .so is not portable across distros, which is why), and
+# duplicating a message definition is how two nodes end up disagreeing about a
+# field with nothing failing.
+find_package(pimesh_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 # yaml-cpp, and the spelling matters. ROS ships a `yaml_cpp_vendor` package on
 # both distros, but it does *different things*: Lyrical's appends a bare
@@ -45,6 +55,7 @@ target_link_libraries(camera_components PUBLIC
   rclcpp::rclcpp
   rclcpp_components::component
   ${sensor_msgs_TARGETS}
+  ${pimesh_msgs_TARGETS}
   ament_index_cpp::ament_index_cpp
   yaml-cpp::yaml-cpp
 )
@@ -123,6 +134,6 @@ endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(camera_components)
-ament_export_dependencies(rclcpp rclcpp_components sensor_msgs ament_index_cpp yaml-cpp)
+ament_export_dependencies(rclcpp rclcpp_components sensor_msgs pimesh_msgs ament_index_cpp yaml-cpp)
 
 ament_package()

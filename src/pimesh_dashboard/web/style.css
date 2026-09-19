@@ -1,0 +1,138 @@
+/* Dark by default: this gets watched next to a terminal, and a surface reads
+   better against a dark ground. */
+:root {
+  --bg: #14161a;
+  --panel: #1c1f25;
+  --line: #2b3038;
+  --text: #dfe3ea;
+  --dim: #8b93a1;
+  --ok: #56d364;
+  --warn: #e3b341;
+  --bad: #f85149;
+  --accent: #58a6ff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.brand { font-weight: 700; letter-spacing: 0.08em; }
+.spacer { flex: 1; }
+.metric { color: var(--dim); }
+.metric b { color: var(--text); font-weight: 600; }
+
+.pill {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pill.up { background: rgba(86, 211, 100, 0.15); color: var(--ok); }
+.pill.down { background: rgba(248, 81, 73, 0.15); color: var(--bad); }
+
+main {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  min-height: 0;
+}
+
+#scene { position: relative; min-width: 0; background: #0e1014; }
+#gl { width: 100%; height: 100%; display: block; }
+#scene-note, #scene-help {
+  position: absolute;
+  left: 12px;
+  color: var(--dim);
+  pointer-events: none;
+}
+#scene-note { top: 12px; }
+#scene-help { bottom: 12px; font-size: 11px; }
+
+aside {
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  overflow-y: auto;
+  padding: 12px;
+  min-width: 0;
+}
+
+figure { margin: 0 0 12px; }
+figcaption {
+  color: var(--dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+}
+img {
+  width: 100%;
+  display: block;
+  background: #0e1014;
+  border: 1px solid var(--line);
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+}
+
+/* STALE beats a last value that looks healthy. Hidden until it is true. */
+.stale { color: var(--warn); display: none; }
+.stale.on { display: inline; }
+
+table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+th, td {
+  text-align: right;
+  padding: 3px 5px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+th { color: var(--dim); font-weight: 500; font-size: 11px; }
+th:first-child, td:first-child, th:last-child, td:last-child { text-align: left; }
+td.detail { color: var(--dim); font-size: 11px; white-space: normal; word-break: break-word; }
+tr.stale td { color: var(--warn); }
+tr.empty td { color: var(--dim); text-align: center; }
+/* Dropped-by-design is dim on purpose: it is the design working, and colouring
+   it like a fault is the mistake this table exists to avoid. */
+td.by-design { color: var(--dim); }
+td.lost.some { color: var(--bad); }
+
+.actions { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+button {
+  background: #262b33;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 5px 11px;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.danger:hover { border-color: var(--bad); color: var(--bad); }
+#action-note { color: var(--dim); font-size: 11px; }
+
+footer { color: var(--dim); font-size: 11px; }
+.fineprint { margin: 8px 0 0; line-height: 1.5; }
+code { color: var(--text); }
+
+@media (max-width: 900px) {
+  main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 45vh auto; }
+  aside { border-left: none; border-top: 1px solid var(--line); }
+}

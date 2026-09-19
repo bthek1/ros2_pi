@@ -16,23 +16,11 @@ the next unused phase number, with a test. Moving work into the plan is the only
 way it gets built; moving it here is the only way it gets deferred. It never
 sits in both.
 
----
-
-
-## `camera_node` publishes `PipelineStats`
-
-`pimesh_msgs/PipelineStats` exists and is specified as "published by every
-node"; `camera_node` publishes none. It has the numbers already — it counts
-frames, and it counts the frames the kernel dropped before dequeue, which is a
-figure no other stage can see and which nothing currently reads.
-
-**Trigger: P7, the dashboard.** The message is the dashboard's data source and
-nothing else consumes it. Publishing it earlier would mean a topic with no
-subscriber and a rate chosen by guesswork; the dashboard's 10 Hz stats panel is
-what fixes the window and the cadence. P7 is also where "a high drop percentage
-is not a fault" has to be rendered as two columns rather than one, and
-`dropped_by_design` versus `dropped_in_transport` needs a consumer to be
-designed against.
+**One entry has left this file.** `camera_node publishes PipelineStats` named the
+dashboard as its trigger; the dashboard was built on 2026-09-19 and it is now
+**P10** in [#8](https://github.com/bthek1/ros2_pi/issues/8), done. The Pi
+publishes a `capture` row at 60.00 Hz carrying the frames the kernel dropped
+before dequeue — a figure no other stage in this pipeline can see.
 
 ---
 

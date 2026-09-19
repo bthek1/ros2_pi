@@ -116,6 +116,26 @@ COMPONENTS = [
     ('mesh_node', 'pimesh_world', 'pimesh_world::MeshNode'),
 ]
 
+# Nodes that run as their own process rather than in the container, as
+# (node name, package, executable).
+#
+# **There is exactly one and it is deliberate.** Everything else on the dev box
+# shares a process precisely so a 2.7 MB frame is handed on as a pointer, and
+# `pipeline:=false` is the only granularity offered — everything or nothing.
+# `dashboard_node` is the exception because its whole promise is the opposite
+# one: `docs/info/dashboard.md` says *it must be able to die*, and a component in
+# the container could not make that promise, since a crash there would take the
+# TSDF with it. It subscribes to five small topics and holds a socket open to
+# something outside this machine's control, and it has nothing to gain from the
+# pointer handover.
+#
+# A list rather than a literal for the same reason the other two are lists:
+# test_transforms.py checks it against the YAML and it can only check what it can
+# enumerate.
+STANDALONE_NODES = [
+    ('dashboard_node', 'pimesh_dashboard', 'dashboard_node'),
+]
+
 # The gates' instruments, none of which is part of the pipeline.
 #
 # **`probe` names one of these rather than being a boolean, and the change of
@@ -246,6 +266,36 @@ def generate_launch_description() -> LaunchDescription:
             )
         )
 
+    # **Off by default, and that is the same reasoning as `probe`.** A dashboard
+    # is a viewer, and a viewer attached to every run would be in every
+    # measurement this workspace takes — it subscribes to two JPEG streams and a
+    # 4 MB mesh across a process boundary. `bash tools/dashboard.sh` turns it on,
+    # and so does tools/gates/dashboard.sh, which exists to prove that turning it
+    # on costs the pipeline nothing.
+    dashboards = [
+        Node(
+            package=package,
+            executable=executable,
+            name=name,
+            parameters=[
+                params_path,
+                {
+                    # Note `value_type=int`. A LaunchConfiguration is a string,
+                    # and the raw substitution would set a *string* parameter
+                    # named `port`, which the node ignores while saying nothing —
+                    # it would then listen on 8080 whatever was asked for, and the
+                    # only symptom would be a page that does not load at the
+                    # address the script printed.
+                    'port': ParameterValue(
+                        LaunchConfiguration('dashboard_port'), value_type=int),
+                },
+            ],
+            condition=IfCondition(LaunchConfiguration('dashboard')),
+            output='screen',
+        )
+        for name, package, executable in STANDALONE_NODES
+    ]
+
     intra_process = LaunchConfiguration('intra_process')
 
     # The option, in the form the container actually reads. One dict, shared by
@@ -305,6 +355,21 @@ def generate_launch_description() -> LaunchDescription:
                         'measured.',
         ),
         DeclareLaunchArgument(
+            'dashboard',
+            default_value='false',
+            description='Also start dashboard_node, in its own process, serving '
+                        'http://localhost:8080. Off by default because a viewer '
+                        'attached to every run would be in every measurement '
+                        'this workspace takes.',
+        ),
+        DeclareLaunchArgument(
+            'dashboard_port',
+            default_value='8080',
+            description='Port the dashboard listens on. tools/gates/hello-clean.sh '
+                        'moves it off the default so a teardown test cannot '
+                        'collide with a dashboard somebody has open.',
+        ),
+        DeclareLaunchArgument(
             'odom_regime',
             default_value='sixdof',
             description="keypoint_node's estimator: sixdof fits a rigid "
@@ -322,6 +387,7 @@ def generate_launch_description() -> LaunchDescription:
                         'budget nobody has watched fail is not an assertion.',
         ),
         *transforms,
+        *dashboards,
         ComposableNodeContainer(
             name='pimesh_container',
             namespace='',

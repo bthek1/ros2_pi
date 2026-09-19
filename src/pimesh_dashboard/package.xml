@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pimesh_dashboard</name>
+  <version>0.1.0</version>
+  <description>
+    One browser tab that shows the pipeline: an HTTP and WebSocket server inside
+    a ROS 2 node, serving vendored assets and forwarding what every stage
+    published about itself. No Python, no rosbridge, no CDN — one node, one port.
+
+    It runs in its own process rather than in the component container, because
+    the promise it makes is that killing it changes nothing about the mesh.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Deliberately absent: any WebSocket or HTTP library. The server half of RFC
+       6455 is a SHA-1, a base64 and a frame header, and all three are pinned
+       against published vectors in test_websocket. A vendored single-header
+       library would be a third thing that has to exist and behave identically on
+       Ubuntu 24.04/Jazzy and 26.04/Lyrical, and this workspace has already lost
+       an afternoon to an API that existed at both ends and meant different
+       things. -->
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>pimesh_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

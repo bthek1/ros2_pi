@@ -14,10 +14,10 @@ where it pays.
 
 ## Status
 
-**Six stages run: the camera reaches a triangle surface.** As of **2026-09-16**
-the repository holds six packages, and a webcam on a Pi becomes a mesh on the dev
-box. Only the dashboard is missing — and the surface does not look like a room
-yet, for a reason given below:
+**The whole pipeline runs, end to end.** As of **2026-09-19** the repository holds
+seven packages, and a webcam on a Pi becomes a triangle surface on the dev box
+with a browser tab watching it. The surface does not look like a room yet, for a
+reason given below:
 
 - **Capture** (`pimesh_camera`, on the Pi) — 1280×720 MJPEG stamped with the
   kernel's capture time, **44–59 Hz received on the dev box**, serving real
@@ -59,23 +59,27 @@ scripts, run directly, and each milestone issue records what they printed —
 [#7](https://github.com/bthek1/ros2_pi/issues/7) for fusion and the mesh,
 [#9](https://github.com/bthek1/ros2_pi/issues/9) for the calibration.
 
-**The mesh is not a room yet, and that is the honest state rather than a
-disclaimer.** `keypoint_node` publishes **rotation only** — the translation is
-identically zero — so a hand-held sweep's ~0.9 m of real arm arc is modelled as no
-motion at all, and the same wall is integrated at a different distance every time
-the camera turns. The volume fills with layers of it: 200 000 blocks is over
-2000 m² of surface for a room with perhaps 60 m² in it. **P7 is what fixes that.**
-And `depth_scale` is still arbitrary, so every distance the pipeline reports is
-plausibly shaped and the wrong size — pinning it needs a person, a tape measure
-and a recording of a surface at a known distance, which is the one thing in
-milestone D a script could not close.
+**The mesh is still not a room, and the reason moved on 2026-09-19.** Two causes
+were named for it — rotation-only odometry and an unpinned `depth_scale` — and P7
+settled the first. It found that the rotation had been composed **inverted** since
+P3: a fit answers where the *points* went, and the camera composes with the
+inverse of that, so the published frame turned left when the camera panned right.
+Nothing failed; a frame that moves when you pan looks correct in RViz. Correcting
+it is worth **3× on the paired-surface gap** — 1.3440 m to 0.4456 m — and the
+first of those numbers reproduces exactly what milestone D recorded.
 
-**No dashboard code exists yet** — that is
-[docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md),
-and [docs/info/roadmap.md](docs/info/roadmap.md) tracks it. Numbers quoted in
-`docs/` for that stage are measured on the Python predecessor at
-[`~/Documents/piros2`](../piros2), which implements the same pipeline on the same
-hardware; numbers for the six stages above are this project's own.
+6-DoF translation is real now too, but on the reference clip it makes no
+measurable difference to the surface: `bags/desk1` is a *pan*, so rotation already
+explains most of the frame motion, and what is left is the depth network's own
+shape error rather than the pose's. What would settle it is a clip with deliberate
+translation, which needs a person and the camera —
+[docs/plans/future/milestone-e-future.md](docs/plans/future/milestone-e-future.md)
+says so, alongside the tape measure that pins `depth_scale`. Until that number
+exists every distance here is plausibly shaped and the wrong size.
+
+**Every number in `docs/` is now this project's own.** Nothing is quoted from the
+Python predecessor at [`~/Documents/piros2`](../piros2) as a stand-in any more; it
+remains the yardstick where a comparison is useful, not a source.
 
 ## Why a rewrite
 
@@ -133,7 +137,7 @@ queues.
 | [docs/plans/README.md](docs/plans/README.md) | How plans are written here: a GitHub issue of stable phases, a command for a test, executable phases only |
 | [Issue #2 — hello-world plan](https://github.com/bthek1/ros2_pi/issues/2) | Closed 2026-09-08: the scaffolding that exists, and what each gate measured |
 | [Issue #3 — justfile plan](https://github.com/bthek1/ros2_pi/issues/3) | Closed 2026-09-09: grouped recipes, gate bodies in `tools/`, and the first shellcheck run over this repo's shell |
-| [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this is going.** The build order P0–P8, each ending in a `tools/gates/*.sh` test — none started — followed by the deferred register, each entry with its trigger |
+| [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this went.** The build order P0–P8, each ending in a `tools/gates/*.sh` test and each annotated with what that test printed, followed by the deferred register — each entry with the trigger that would make it a phase |
 
 Plans live in the issue tracker, not in this tree: `gh issue list --label plan`.
 

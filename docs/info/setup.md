@@ -229,6 +229,7 @@ Available recipes:
     build *args                                    # Build the workspace
 
     [run]
+    dashboard seconds="600" bag="" port="8080"     # The whole pipeline in a browser tab: http://localhost:8080. Not evidence
     hello-compose seconds="30"                     # Hello world, here: both components in one container. seconds = how long to run
     hello-lan seconds="20"                         # Hello world, across the LAN: talker on the Pi, listener here
     replay bag seconds="600"                       # A recorded bag in RViz, looping. bag = a name under bags/, or a path to one

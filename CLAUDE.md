@@ -290,10 +290,54 @@ camera and is in
 `depth_scale` is still arbitrary at 10.0 and still needs a tape measure, which is
 the same visit.
 
-**The dashboard still does not exist.** That is P8,
-[docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md)
-and milestone issue [#8](https://github.com/bthek1/ros2_pi/issues/8),
-and everything the rest of `docs/` says about it is **design intent**,
+**The dashboard exists as of 2026-09-19** — P8 and P10,
+[gh issue #8](https://github.com/bthek1/ros2_pi/issues/8). `bash tools/dashboard.sh`
+starts it, `http://localhost:8080` is the page, and
+`bash tools/gates/dashboard.sh` closes the claim. `dashboard_node` is an HTTP and
+WebSocket server inside a ROS 2 node, **in its own process** — the one dev-box
+node outside the container, because the promise it makes is *it must be able to
+die* and a component there would take the TSDF with it. Measured: five channels
+at **10.01 Hz** stats, **9.16 Hz** rgb, **4.47 Hz** depth, **10.01 Hz** pose and
+~2.1 MB of mesh per extraction; the STALE flag **2.10 s** after `/odom` stops
+against a 2.0 s threshold; and every stage reporting itself on `/pipeline/stats`,
+including `capture` from the Pi at **60.00 Hz** with the frames the kernel dropped
+before dequeue — a figure no other stage can see, which is P10.
+
+**No WebSocket library and no three.js, and both are deviations from what
+`docs/info/dashboard.md` specified.** The server half of RFC 6455 is a SHA-1, a
+base64 and a frame header, all three pinned against published vectors; a vendored
+single-header library would be a third thing that has to exist and behave
+identically on Jazzy and Lyrical, which is the failure mode this workspace keeps
+paying for. The 3D view is ~200 lines of raw WebGL rather than 600 kB of
+third-party minified JavaScript nobody here can read, to draw one triangle soup
+and a line.
+
+**P8's gate needed two corrections and the second one is about this project's own
+rule.** It asks that every stage's rate be within 2% of a no-client run.
+
+The first version compared a run's second half against its own **first** half to
+judge what killing the client cost, and reported every stage **8-18% slower**
+afterwards. That is backwards and it was entirely the clip: `mesh_node`'s
+extraction grows from 0.7 s to 3.2 s as the volume fills and takes CPU from
+everything above it, so the late seconds of any run are slower than the early
+ones. It now compares the same seconds of clip across runs.
+
+The second: that gate once measured **15% on `fusion` and 9% on `keypoints`
+between two runs with nothing attached**, which looked like a pipeline far too
+noisy for a 2% bound. It was not the pipeline — it was a `colcon build` and a
+`colcon test` running on the same box, started by the person writing the gate.
+**Do not build, test or run anything else on this machine while a gate is
+measuring on it**; that rule is already in this file for sessions and it applies
+to your own terminal just as hard. Re-measured on a quiet box: the worst stage
+moved **0.77%** with a client attached, against a **0.29%** floor between two
+control runs.
+
+The gate keeps the floor-plus-slack form rather than a flat 2% anyway, because
+the floor is a property of the *machine*: on a quiet box the bound collapses to
+P8's 2%, and on a loaded one it widens with the load instead of failing and
+blaming the dashboard.
+
+Everything the rest of `docs/` says about work not yet built is **design intent**,
 not a description of running code. When you build something, change the doc that
 describes it from future tense to a measured statement, and say what you
 measured it with.
@@ -417,7 +461,7 @@ message types and rates: [docs/info/pipeline.md](docs/info/pipeline.md).
 | Depth | `depth_node` | dev box, **GPU** | Depth Anything V2 Small, 518², **55.1 ms/frame, 17.4 Hz measured in the container** |
 | Fusion | `fusion_node` | dev box | TSDF, 1.5 cm voxels, **15.3 ms/integration at 17.1 Hz measured** |
 | Surface | `mesh_node` | dev box | marching cubes every 10 s, **2.8 s per extraction, off the integration path** |
-| View | `dashboard_node` | dev box | web UI, 10 Hz stats, ~10 fps preview |
+| View | `dashboard_node` | dev box, **own process** | **10.01 Hz stats, 9.16 fps preview measured**; nothing it does may slow the pipeline |
 
 Both halves of that are measured, 2026-09-15. Inference alone is **51.08 ms**
 (`bash tools/gates/gpu-stack.sh`); the whole per-frame cost inside `depth_node`, on
@@ -780,6 +824,43 @@ strong priors, re-verify before quoting a number as this project's own.
   stub version of cublas` on *stdout*, and segfaulted on the first inference. The
   `ldd`-says-no-unresolved-dependencies check passed over it throughout, which is
   why `fetch-gpu-stack.sh` also asserts a size floor on `libcublas.so.13`.
+- **A mutex held across a client loop is a backpressure path, and it is the one
+  thing a monitoring tool must not have.** `dashboard_node`'s web server holds one
+  mutex while it walks its client list, and the first version of the two page
+  buttons called a ROS service from inside that walk. It **deadlocked instantly**
+  — the handler took the same non-recursive mutex to read itself — and every later
+  HTTP request timed out with nothing in any log. Removing the second lock would
+  have fixed the deadlock and left something far worse: a service call waits up to
+  ten seconds, and holding the mutex across it blocks `broadcast()`, which is
+  called from the ROS callbacks. **A button press would have slowed the
+  pipeline**, which is precisely what P8 exists to make impossible. A deadlock is
+  a loud bug; that would have been a silent one. Actions are parked by the handler
+  and run outside the lock.
+- **Two rate caps in series beat against each other, and every number involved
+  looks right.** `keypoint_node` caps its preview at 10 Hz; the dashboard capped
+  the same stream at 10 Hz on the way out, and rejected every frame that arrived a
+  hair early — which, with two independent clocks, is about half of them. Measured
+  2026-09-19: the page received **5.48 Hz** of a 10 Hz stream and **2.80 Hz** of a
+  5 Hz cap on a 10 Hz stream. Nothing was wrong at either end. A cap is a ceiling
+  on a *faster* source, so it has to admit one running at exactly its own rate:
+  compare against 90% of the period, not 100%.
+- **A run's second half is slower than its first, and a gate that compares them
+  is measuring the clip.** `mesh_node`'s extraction grows from 0.7 s to 3.2 s as
+  the volume fills and takes CPU from everything above it, so every stage is
+  genuinely slower late in a replay. `gates/dashboard.sh` compared a run's halves
+  to judge what killing a client cost and reported every stage **8-18% slower
+  after** — precisely backwards, and entirely that. Compare the same seconds of
+  clip across runs, never two parts of one.
+- **A gate measures the machine as well as the pipeline, so do not build on the
+  box while one is running — and that means you, Claude.** `gates/dashboard.sh`
+  measured **15% on `fusion` and 9% on `keypoints`** between two runs with
+  *nothing* attached, which reads as a pipeline far too noisy to hold to P8's 2%
+  bound. It was a `colcon build` and a `colcon test` on the same box, started by
+  the person writing the gate. Re-measured quiet: **0.10%**. This file already
+  says to check the machine is yours before measuring; a build of your own counts.
+  It is also why that gate's bound is the *measured floor plus slack* rather than
+  a constant — on a quiet box it collapses to 2%, and on a loaded one it widens
+  with the load instead of failing and blaming the thing under test.
 - **A fit that explains its measurements is not a fit that is right, and no
   residual can tell you the difference.** `cv::solvePnPRansac` answers how well a
   pose explains the pixels it was handed; it has no opinion whatever about whether
@@ -1356,9 +1437,10 @@ somebody once.
 | [docs/plans/README.md](docs/plans/README.md) | How a plan is written here: a GitHub issue of stable phases, a command for a test, executable-only, and the future file |
 | [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this is going.** The whole pipeline as phases P0–P8, none started, each ending in a `tools/gates/*.sh` test, followed by the deferred register |
 | [#9](https://github.com/bthek1/ros2_pi/issues/9) **(closed 2026-09-12)** — camera calibration | **P9, done.** The C922's real intrinsics at 720p: fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection 0.4955 px. `camera_node` loads them from `pimesh_bringup/config/camera_info/c922_720p.yaml` and the NOMINAL warning is gone. Read the closed issue before touching calibration — three of its assumptions turned out to be false, including that this camera has barrel distortion |
-| [#4](https://github.com/bthek1/ros2_pi/issues/4) [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) **(all closed)** [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A–D are closed: the cross-distro workspace and capture (P0, P1), one reader and one decode with keypoints (P2, P3), depth on the GPU at 55.10 ms/frame in the container (P4), and **D as of 2026-09-16 — a TSDF at 15.3 ms per integration and a triangle surface out of it every ten seconds (P5, P6).** E is next. Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
+| [#4](https://github.com/bthek1/ros2_pi/issues/4) [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) **(all closed)** [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, built.** All five closed: the cross-distro workspace and capture (P0, P1), one reader and one decode with keypoints (P2, P3), depth on the GPU at 55.10 ms/frame in the container (P4), a TSDF at 15.3 ms per integration and a triangle surface out of it every ten seconds (P5, P6), and **E as of 2026-09-19 — 6-DoF odometry, the rotation that had been composed inverted since P3, and a browser tab that costs the pipeline 0.77% (P7, P8, P10).** Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8 plus P10, promoted out of milestone A's future file when the dashboard gave it a consumer. No issue renumbers from zero. Each also has a `just view-*` recipe — a viewer for a person, never a gate. **What comes next is the deferred register** at the foot of `project_final_state.md`, starting with loop closure, and the two entries that need a person: a clip with real translation, and a tape measure |
 | `bash tools/gates/ipc.sh` / `bash tools/gates/keypoints.sh` | **P2 and P3's gates.** `ipc.sh` runs the real container twice against the Pi's live camera and compares published buffer addresses with intra-process comms on and off — and asserts the decoded topic has at least two subscribers, because one consumer is the configuration that cannot fail. `keypoints.sh` replays `bags/desk1` and measures three things three ways: the rate from a C++ subscriber's steady clock, the per-frame cost from the node's own log line, and the matched-keypoint fraction against `tools/orb_reference.py` — the predecessor's algorithm reimplemented in Python over the same clip, which is the only part of the gate with an outside opinion about whether the corners mean anything |
 | `bash tools/gates/depth.sh` | **P4's gate.** Replays `bags/desk1` through the real container — `decode_node`, `keypoint_node` and `depth_node` in one process — and measures four things. The provider, off `depth_node`'s own startup line. The per-frame cost on the node's own clock, against 80 ms. Whether `/depth/rgb` is **byte-identical** to the `/image_raw` frame with the same stamp, by hashing every source frame as it goes past and comparing — with "could not check" counted separately from "checked and differed", because a run that checked nothing would otherwise report zero mismatches and look perfect. And a **control**: the same binary with `use_cuda:=false`, which has to *fail* the same budget. `depth_probe` is its instrument, loaded into the container with `probe:=depth_probe` — out of process it would be subscribing to ~255 MB/s of images and would be the dominant load on the thing it is measuring |
+| `bash tools/gates/dashboard.sh` / `bash tools/dashboard.sh` | **P8's gate and the page itself.** The gate replays `bags/desk1` **three** times — with a client, without one, and without one again — because the third run is what makes the first assertion possible: two identical runs differ by up to 15% on `fusion`, so the bound is the measured noise floor plus slack rather than P8's flat 2%, which would be a gate that fails on the weather. It also kills the client at the halfway mark and compares the seconds after against a *control's* same seconds, since a run's second half is systematically slower than its first; verifies the WebSocket handshake against the probe's own key; asserts both image strips arrive near their caps (two caps in series halve a stream while every number looks right); and asserts the pose says STALE 2.10 s after `/odom` stops. `dashboard_probe` is its instrument — a C++ WebSocket client and **not a headless browser**, which would add a 200 MB process and a GPU context to the thing being measured |
 | `bash tools/gates/odom.sh` | **P7's gate, and it runs the clip twice — `odom_regime:=sixdof` and the `rotation_only` control — with `odom_probe` loaded into the container.** It asserts the control publishes translation *identically zero* (anything else means translation is leaking into the run everything is measured against); that the 6-DoF run reports a trajectory whose **fastest published motion** is bounded — a speed and not a displacement, because a step taken after a run of holds spans several depth intervals and bounding the step alone compares it against the wrong clock; that the solve reaches ≤ 2 px over ≥ 55% of depth frames; and that **both** regimes' median paired-surface gap is under a ceiling the *pre-P7 composition fails*, which is what makes it an assertion rather than a number nobody has seen excluded. It **prints rather than asserts** the comparison P7 asked for — the two regimes are a dead heat on this clip, 0.4456 m against 0.4471 m — and names the trigger in its own output. `odom_probe` measures off `/odom` rather than off `keypoint_node`'s own counters, because the failure P7 fixed was a pose that every internal number described correctly |
 | `bash tools/gates/fusion.sh` / `bash tools/gates/mesh.sh` | **P5 and P6's gates, and both of them run a control.** `fusion.sh` replays `bags/desk1` twice, once with `align:=false`, and measures the integration cost on the node's own clock, the rate, the mailbox drop fraction, the arrival-to-integration lag against one depth frame interval, and whether every frame found a pose at its own stamp and its exact colour twin. It **prints rather than asserts** the paired-surface comparison P5 asks for, because measurement said the two runs were a coin flip — and says so in its own output. **P7 was named there as the trigger, it fired, and the comparison moved**: re-measured 2026-09-19 with the corrected pose, 0.4805 m aligned against 0.5330 m unaligned and agreement 0.2191 against 0.1606, the aligner ahead on both for the first time. It stays printed rather than asserted because that is one run of a number which has already flipped once. `mesh.sh` replays it twice again, the second with `remesh_period_s` past the clip so nothing meshes, because P6's `max ≤ 2× median` is not achievable against a clip that stalls 400 ms on its own. It asserts the worst integration gap is no worse with meshing than without, the published Marker is under the cap **read off the topic**, the boundary-loop count *falls* across the fill and stays **above zero** (pinholes closed, frontier open — a sealed box is the most seductive false positive in this project), the saved PLY has *more* triangles than the Marker, and three offscreen renders have a surface in them |
 | `just view-odom` | **P7's viewer, and the only one here meant to be run twice.** `bash tools/view-odom.sh 600 desk1` and `bash tools/view-odom.sh 600 desk1 rotation_only` put the two regimes side by side: rotation-only piles every arrow at the origin and spins in place, 6-DoF draws an arc through space. An RViz **Odometry** display with `Keep: 500` draws the trail straight off `/odom`, so no `nav_msgs/Path` publisher exists anywhere in this project. A viewer, not evidence — `gates/odom.sh` is what passes or fails P7 |

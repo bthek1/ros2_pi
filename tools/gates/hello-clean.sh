@@ -84,7 +84,7 @@ fi
 # something. The camera path is covered by view-camera in the row above.
 
 # recipe -> the argv to run it with, and what "it is up" means for it.
-RECIPES=(lan compose view-camera replay view-keypoints view-depth view-mesh view-odom)
+RECIPES=(lan compose view-camera replay view-keypoints view-depth view-mesh view-odom dashboard)
 
 # `replay` is the only recipe here that takes an argument, and the bag it takes
 # has to be *this gate's own*. bags/ is git-ignored, so on a fresh clone there
@@ -188,6 +188,10 @@ argv_for() {                # $1 = recipe, $2 = seconds; prints one argv word pe
         view-keypoints) printf '%s\n' "$PIMESH_WS/tools/view-keypoints.sh" "$2" "$GATE_BAG" ;;
         view-depth)  printf '%s\n' "$PIMESH_WS/tools/view-depth.sh" "$2" "$GATE_BAG" ;;
         view-mesh)   printf '%s\n' "$PIMESH_WS/tools/view-mesh.sh" "$2" "$GATE_BAG" ;;
+        view-odom)   printf '%s\n' "$PIMESH_WS/tools/view-odom.sh" "$2" "$GATE_BAG" ;;
+        # A port, not a window. The third argument keeps it off 8080 so a gate run
+        # cannot collide with a dashboard somebody has open.
+        dashboard)   printf '%s\n' "$PIMESH_WS/tools/dashboard.sh" "$2" "$GATE_BAG" 18080 ;;
         *)           printf '%s\n' "$PIMESH_WS/tools/hello-$1.sh" "$2" ;;
     esac
 }
@@ -229,6 +233,20 @@ session_up() {              # $1 = recipe
         view-mesh)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
                     pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
                     pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
+        # The same three once more. view-odom is view-mesh with an extra display
+        # in the config; nothing about how it starts or ends differs.
+        view-odom)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
+                    pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
+                    pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
+        # **The one recipe here with no window at all**, which is why it is worth
+        # having in this list rather than assuming it behaves like the viewers: it
+        # starts a player, the container, *and* a node holding a listening socket
+        # in its own process. A dashboard_node left behind would keep port 8080
+        # bound and the next session would refuse to start — the same failure
+        # shape as a camera_node holding /dev/video0, one machine over.
+        dashboard)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
+                    pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
+                    pgrep -f '/lib/[p]imesh_dashboard/' >/dev/null 2>&1 ;;
     esac
 }
 
@@ -273,7 +291,11 @@ session_up() {              # $1 = recipe
 # with no far end to reach cannot exhibit the bug.
 hows_for() {                # $1 = recipe
     case $1 in
-        lan|compose) echo "INT HUP" ;;
+        # No viewer window to close, so the CLOSE case does not apply: `dashboard`
+        # ends by a signal or by its own timer, exactly like the two hello
+        # recipes. Listing CLOSE for it would emulate closing an rviz2 that was
+        # never started, which is a case that passes for the wrong reason.
+        lan|compose|dashboard) echo "INT HUP" ;;
         view-camera) echo "INT INT-TWICE HUP CLOSE CLOSE-EARLY" ;;
         *)           echo "INT HUP CLOSE" ;;
     esac

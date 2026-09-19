@@ -24,6 +24,7 @@
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
   <depend>sensor_msgs</depend>
+  <depend>pimesh_msgs</depend>
 
   <!-- P9's two additions, and they were chosen to be the ones that need
        installing on *neither* machine. The obvious candidate was

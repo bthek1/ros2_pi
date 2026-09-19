@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
@@ -17,6 +18,7 @@
 #include "pimesh_camera/calibration.hpp"
 #include "pimesh_camera/camera_info.hpp"
 #include "pimesh_camera/stamp.hpp"
+#include "rcl_interfaces/msg/floating_point_range.hpp"
 #include "rcl_interfaces/msg/integer_range.hpp"
 #include "rcl_interfaces/msg/parameter_descriptor.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
@@ -41,6 +43,17 @@ rcl_interfaces::msg::ParameterDescriptor describe_range(
   range.from_value = low;
   range.to_value = high;
   descriptor.integer_range.push_back(range);
+  return descriptor;
+}
+
+rcl_interfaces::msg::ParameterDescriptor describe_range_double(
+  const std::string & text, double low, double high)
+{
+  auto descriptor = describe(text);
+  rcl_interfaces::msg::FloatingPointRange range;
+  range.from_value = low;
+  range.to_value = high;
+  descriptor.floating_point_range.push_back(range);
   return descriptor;
 }
 
@@ -93,6 +106,16 @@ CameraNode::CameraNode(const rclcpp::NodeOptions & options)
       "grab_timeout_ms", 2000,
       describe_range(
         "How long a single frame may take before the device is declared dead.", 50, 10000)));
+
+  // 0.1 s, the dashboard's 10 Hz stats cadence, and the only number in this node
+  // chosen by a downstream consumer rather than by the hardware. It crosses the
+  // Wi-Fi hop: at a few hundred bytes a message that is ~3 kB/s against the
+  // camera's 3.2 MB/s, which is why it can afford to be the fastest thing here.
+  const double stats_period_s = declare_parameter(
+    "stats_period_s", 0.1,
+    describe_range_double(
+      "How often to publish /pipeline/stats. The dashboard's panel runs at 10 Hz "
+      "and this is what feeds it.", 0.02, 60.0));
 
   camera_info_ = build_camera_info();
 
@@ -168,6 +191,19 @@ CameraNode::CameraNode(const rclcpp::NodeOptions & options)
   // interval and stall every other callback in the process. This is the same
   // rule as "no work in a subscription callback beyond a bounded copy", seen
   // from the producing end.
+  // --- P10: the stats row only this node can supply ---------------------------
+  //
+  // On the executor thread, not on the capture thread: the capture loop blocks in
+  // VIDIOC_DQBUF and has no cadence of its own to hang a timer on, and putting a
+  // publish inside it would tie the stats rate to the frame rate — which is the
+  // one number the stats are there to report, so it could never show a stall.
+  stats_pub_ = create_publisher<pimesh_msgs::msg::PipelineStats>("/pipeline/stats", 10);
+  last_stats_ = now();
+  stats_timer_ = create_wall_timer(
+    std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(stats_period_s)),
+    [this] {this->publish_stats();});
+
   worker_ = std::thread([this, timeout_ms]() {this->capture_loop(timeout_ms);});
 }
 
@@ -332,11 +368,11 @@ void CameraNode::publish(const Frame & frame)
   // Sequence gaps are frames the kernel dropped before userspace ever saw them
   // — a different fault from frames lost on the wire, and only visible here.
   if (have_sequence_ && frame.sequence > last_sequence_ + 1) {
-    kernel_drops_ += frame.sequence - last_sequence_ - 1;
+    kernel_drops_.fetch_add(frame.sequence - last_sequence_ - 1, std::memory_order_relaxed);
   }
   last_sequence_ = frame.sequence;
   have_sequence_ = true;
-  ++frames_;
+  frames_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void CameraNode::capture_loop(int timeout_ms)
@@ -374,13 +410,62 @@ void CameraNode::capture_loop(int timeout_ms)
     // The device went away mid-stream: unplugged, or its USB link reset. There
     // is no recovering from it inside this process, and pretending otherwise
     // would mean an idle node again.
-    fail(std::string("capture failed after ") + std::to_string(frames_) + " frames: " + e.what());
+    fail(
+      std::string("capture failed after ") + std::to_string(frames_.load()) +
+      " frames: " + e.what());
     return;
   }
 
   RCLCPP_INFO(
     get_logger(), "captured %lu frames, %lu dropped inside the kernel before dequeue",
-    static_cast<unsigned long>(frames_), static_cast<unsigned long>(kernel_drops_));
+    static_cast<unsigned long>(frames_.load()), static_cast<unsigned long>(kernel_drops_.load()));
+}
+
+void CameraNode::publish_stats()
+{
+  const rclcpp::Time stamp = now();
+  const double span_s = (stamp - last_stats_).seconds();
+  if (span_s <= 0.0) {return;}
+
+  const std::uint64_t frames = frames_.load(std::memory_order_relaxed);
+  const std::uint64_t window = frames - last_stats_frames_;
+  last_stats_frames_ = frames;
+  last_stats_ = stamp;
+
+  auto stats = std::make_unique<pimesh_msgs::msg::PipelineStats>();
+  // **This node's own clock, and it is the one stamp in this message that is
+  // safe.** The dashboard measures staleness on *receipt*, never on a stamp, for
+  // exactly the reason this field is written on the Pi and read on the dev box:
+  // the gap between the two machines' clocks is NTP's business and measured +8 ms
+  // and -19 ms an hour apart with nothing changed. See CLAUDE.md.
+  stats->header.stamp = stamp;
+  stats->header.frame_id = frame_id_;
+  stats->stage = "capture";
+  stats->rate_hz = static_cast<float>(static_cast<double>(window) / span_s);
+  // No per-frame cost: there is no work here to time. The capture loop blocks in
+  // the driver and copies a JPEG, and a number invented for the column would be a
+  // number nobody measured — which is the one thing PipelineStats forbids.
+  stats->latency_ms = 0.0F;
+  stats->latency_p95_ms = 0.0F;
+  // `frames_in` counts what the sensor produced: what reached userspace plus what
+  // the kernel dropped before it. Without that addition the two would be equal by
+  // construction and the ratio would always read 100%.
+  const std::uint64_t kernel = kernel_drops_.load(std::memory_order_relaxed);
+  stats->frames_in = frames + kernel;
+  stats->frames_out = frames;
+  // **Nothing is dropped by design here** — this node publishes every frame it
+  // dequeues, which is what makes it the pipeline's honest denominator. A kernel
+  // drop is a frame lost before userspace ever saw it: transport, in the only
+  // sense this stage has one, and a figure no other node in the pipeline can see.
+  stats->dropped_by_design = 0;
+  stats->dropped_in_transport = kernel;
+  char detail[128];
+  std::snprintf(
+    detail, sizeof(detail), "%s kernel_drops=%lu",
+    calibrated_ ? "calibrated" : (info_from_file_ ? "file, no distortion" : "NOMINAL"),
+    static_cast<unsigned long>(kernel));
+  stats->detail = detail;
+  stats_pub_->publish(std::move(stats));
 }
 
 void CameraNode::fail(const std::string & why)

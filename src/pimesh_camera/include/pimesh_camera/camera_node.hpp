@@ -9,6 +9,7 @@
 
 #include "pimesh_camera/v4l2_capture.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "pimesh_msgs/msg/pipeline_stats.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 
@@ -43,6 +44,7 @@ private:
   rclcpp::Time stamp_for(const Frame & frame);
   sensor_msgs::msg::CameraInfo build_camera_info();
   void fail(const std::string & why);
+  void publish_stats();
 
   std::unique_ptr<V4l2Capture> capture_;
   std::thread worker_;
@@ -51,6 +53,19 @@ private:
 
   rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr image_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr info_pub_;
+  /// `/pipeline/stats`, the dashboard's data source — and **the only stage that
+  /// can report the frames the kernel dropped before dequeue**, which is a
+  /// different fault from a frame lost on the wire and is invisible everywhere
+  /// else in this pipeline. This is the one row no other node could supply.
+  ///
+  /// It crosses the Wi-Fi hop, which is why it is small and infrequent: one
+  /// message every `stats_period_s`, a few hundred bytes. The rule in CLAUDE.md
+  /// is about never streaming *raw images* over that link; a stats message is
+  /// four orders of magnitude under it.
+  rclcpp::Publisher<pimesh_msgs::msg::PipelineStats>::SharedPtr stats_pub_;
+  rclcpp::TimerBase::SharedPtr stats_timer_;
+  rclcpp::Time last_stats_;
+  std::uint64_t last_stats_frames_ {0};
 
   std::string frame_id_;
   sensor_msgs::msg::CameraInfo camera_info_;
@@ -81,10 +96,16 @@ private:
   bool warned_no_monotonic_ {false};
   bool warned_implausible_age_ {false};
 
-  std::uint64_t frames_ {0};
+  /// **Atomic since P10, and the reason is a second reader.** These were plain
+  /// members for as long as the capture thread was the only thing that touched
+  /// them. The stats timer runs on the executor thread, so reading them there
+  /// without this is a data race — one whose symptom would be a torn 64-bit
+  /// count on a 32-bit Pi userspace, i.e. a frame rate that is occasionally
+  /// absurd and never reproducible.
+  std::atomic<std::uint64_t> frames_ {0};
   std::uint32_t last_sequence_ {0};
   bool have_sequence_ {false};
-  std::uint64_t kernel_drops_ {0};
+  std::atomic<std::uint64_t> kernel_drops_ {0};
 };
 
 }  // namespace pimesh_camera

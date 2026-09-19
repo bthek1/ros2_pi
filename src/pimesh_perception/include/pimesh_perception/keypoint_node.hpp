@@ -14,6 +14,7 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "opencv2/core.hpp"
 #include "pimesh_msgs/msg/keypoints.hpp"
+#include "pimesh_msgs/msg/pipeline_stats.hpp"
 #include "pimesh_perception/keyframe_store.hpp"
 #include "pimesh_perception/mailbox.hpp"
 #include "pimesh_perception/orb_tracker.hpp"
@@ -173,6 +174,11 @@ private:
   rclcpp::Publisher<pimesh_msgs::msg::Keypoints>::SharedPtr keypoints_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr preview_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
+  /// `/pipeline/stats`, the contract P8's dashboard reads. **Two rows, not one**:
+  /// this node runs two estimators on two threads at two rates, and averaging
+  /// them into a single row would report the ORB path's 58 Hz beside the pose
+  /// solve's cost — a line in which no two numbers describe the same thing.
+  rclcpp::Publisher<pimesh_msgs::msg::PipelineStats>::SharedPtr stats_pub_;
   rclcpp::TimerBase::SharedPtr stats_timer_;
 
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -402,6 +408,11 @@ private:
   std::atomic<double> trajectory_m_ {0.0};
 
   std::uint64_t last_frames_ {0};
+  /// Windowed denominators for the two `/pipeline/stats` rows. A rate is always a
+  /// delta over a span here, never a total over an uptime: an average since
+  /// startup only ever moves slowly, so a stage that stopped an instant ago still
+  /// reads healthy — which is precisely what a dashboard is for noticing.
+  std::uint64_t last_depth_frames_ {0};
   std::size_t last_dropped_ {0};
   rclcpp::Time last_log_;
   rclcpp::Time last_preview_;

@@ -417,3 +417,48 @@
     # Empty means the directory the container was started in. tools/gates/mesh.sh
     # sets it to a temp directory of its own.
     save_dir: ""
+
+# --- The view ------------------------------------------------------------------
+
+/**/dashboard_node:
+  ros__parameters:
+    # One browser tab at http://localhost:8080, in its own process. Started with
+    # `dashboard:=true` — off by default, because a viewer attached to every run
+    # would be in every measurement this workspace takes.
+    port: 8080
+    # Empty means the package's own share/web, where the vendored assets are
+    # installed. There is no CDN here on purpose: the LAN may have no internet,
+    # and a monitoring tool that breaks when DNS does is not one.
+    web_root: ''
+    # **The pacing rule, in one number.** A backgrounded browser stops reading and
+    # its socket buffer fills; without a ceiling the server's queue would grow
+    # until the process died, with the pipeline slowing down first. Past this,
+    # frames are dropped and counted, and the count is on the page. Nothing the
+    # dashboard does may slow the mesh down.
+    send_limit_bytes: 8388608
+    max_clients: 8
+    # The panel's cadence, and the two image strips'. The strips are pictures for
+    # a person; the sources already cap themselves near these rates and this caps
+    # them again on the way out.
+    stats_rate_hz: 10.0
+    rgb_rate_hz: 10.0
+    depth_rate_hz: 5.0
+    # Seconds without a message before a row reads STALE. **Measured on receipt,
+    # never on header.stamp**: the capture row is stamped on the Pi and read here,
+    # and that difference is NTP's business — it measured +8 ms and -19 ms an hour
+    # apart with nothing changed.
+    stale_after_s: 2.0
+    trail_points: 600
+    # What it draws, all of it published by somebody else. The dashboard computes
+    # nothing: every number on the page is a number some node measured about
+    # itself, so the page and `ros2 topic echo` cannot disagree.
+    stats_topic: /pipeline/stats
+    rgb_topic: /keypoints/image/compressed
+    depth_topic: /depth/image/compressed
+    odom_topic: /odom
+    mesh_topic: /world/mesh
+    # The save button's directory. The service takes a path and this node supplies
+    # the directory, because a browser must not get to choose where a process
+    # writes a file.
+    save_dir: /tmp
+    action_timeout_s: 10.0

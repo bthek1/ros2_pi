@@ -102,6 +102,7 @@ def test_config_has_no_keys_the_launch_file_ignores(config, launch_module):
     expected = set(launch_module.STATIC_TRANSFORMS)
     expected |= {name for name, _, _plugin in launch_module.COMPONENTS}
     expected |= {name for name, _, _plugin in launch_module.PROBE_COMPONENTS}
+    expected |= {name for name, _, _exe in launch_module.STANDALONE_NODES}
     assert keyed == expected
 
 
@@ -111,6 +112,8 @@ def test_every_composed_component_has_a_config_key(launch_module, config):
     defaults, which is a node that works and is not configured."""
     for name, _, _plugin in launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS:
         assert f'/**/{name}' in config, f'{name} is composed but has no key in pimesh.yaml'
+    for name, _, _exe in launch_module.STANDALONE_NODES:
+        assert f'/**/{name}' in config, f'{name} is launched but has no key in pimesh.yaml'
 
 
 def test_every_plugin_string_is_registered_in_the_ament_index(launch_module):
@@ -273,13 +276,19 @@ def test_the_launch_description_actually_builds(launch_module):
     for action in actions:
         kinds[type(action)] = kinds.get(type(action), 0) + 1
 
-    assert kinds.get(Node) == len(launch_module.STATIC_TRANSFORMS)
+    # The three static transform publishers plus the standalone nodes. The latter
+    # are conditional — `dashboard:=false` by default — but a conditional action
+    # is still built into the description; the condition decides at launch time,
+    # which is what test_the_dashboard_is_opt_in checks.
+    assert kinds.get(Node) == (
+        len(launch_module.STATIC_TRANSFORMS) + len(launch_module.STANDALONE_NODES))
     assert kinds.get(ComposableNodeContainer) == 1, 'there is one container, always'
     # intra_process, log_payloads, probe, probe_duration_s, align,
-    # remesh_period_s, odom_regime, use_cuda, pipeline — each of which exists
-    # because something outside this file has to be able to set it: the first
-    # eight for gates, the last for tools/replay.sh.
-    assert kinds.get(DeclareLaunchArgument) == 9
+    # remesh_period_s, dashboard, dashboard_port, odom_regime, use_cuda,
+    # pipeline — each exists because something outside this file has to be able
+    # to set it: the first ten for gates and viewers, the last for
+    # tools/replay.sh.
+    assert kinds.get(DeclareLaunchArgument) == 11
     # One per probe, loaded into the running container rather than listed in it,
     # because `composable_node_descriptions` is built when this file is evaluated
     # and cannot be made conditional on an argument. One action each rather than
@@ -322,6 +331,89 @@ def test_at_most_one_probe_loads_and_none_by_default(launch_module):
             f'probe:={value} loads {fired} probe(s), expected {expected} — '
             'two probes measuring at once is the thing this argument prevents'
         )
+
+
+def test_the_dashboard_is_opt_in_and_runs_outside_the_container(launch_module):
+    """Two claims, and both matter for a different reason.
+
+    **Opt-in**, because a dashboard is a viewer: it subscribes to two JPEG
+    streams and a 4 MB mesh across a process boundary, and one attached to every
+    run would be inside every measurement this workspace takes — including the
+    gate whose whole assertion is what attaching one costs.
+
+    **Outside the container**, because `docs/info/dashboard.md` makes a promise
+    the container cannot keep: *it must be able to die*. A component there would
+    take the TSDF with it. Everything else on the dev box is composed precisely
+    so a frame is handed on as a pointer; this node has nothing to gain from that
+    and a crash to cost, so it is the one exception and the test is what stops it
+    quietly becoming the rule.
+    """
+    from launch import LaunchContext
+    from launch_ros.actions import ComposableNodeContainer, Node
+
+    description = launch_module.generate_launch_description()
+    names = {name for name, _, _exe in launch_module.STANDALONE_NODES}
+    assert names, 'there is at least one standalone node; this test is about it'
+
+    composed = {name for name, _, _plugin in launch_module.COMPONENTS}
+    assert not (names & composed), (
+        'a node cannot be both composed into the container and launched beside it')
+
+    # Identified by *having a condition*, which the three static transform
+    # publishers do not: a launch_ros Node does not expose its name before it has
+    # been executed in a context, so reaching for a private attribute here would
+    # be a test coupled to launch_ros internals rather than to this file.
+    plain = [
+        a for a in description.entities
+        if isinstance(a, Node) and not isinstance(a, ComposableNodeContainer)
+    ]
+    unconditional = [a for a in plain if a.condition is None]
+    standalone = [a for a in plain if a.condition is not None]
+    assert len(unconditional) == len(launch_module.STATIC_TRANSFORMS), (
+        'the frame tree is not optional')
+    assert len(standalone) == len(names), (
+        f'expected {len(names)} conditional standalone node action(s), got {len(standalone)}')
+
+    for action in standalone:
+        off = LaunchContext()
+        off.launch_configurations['dashboard'] = 'false'
+        assert not action.condition.evaluate(off), 'the default must not start a viewer'
+        on = LaunchContext()
+        on.launch_configurations['dashboard'] = 'true'
+        assert action.condition.evaluate(on), 'dashboard:=true has to start it'
+
+
+def test_the_dashboard_reads_the_topics_the_pipeline_publishes(config):
+    """The panel draws what other nodes published, so the names have to match.
+
+    **The failure is a page that loads.** A wrong topic name here is not an error
+    anywhere: the dashboard subscribes to something nobody publishes, the row
+    goes STALE after two seconds, and it looks exactly like the stage having
+    stopped. That is the same shape as every other cross-key pair in this file,
+    with the added sting that the dashboard is *where somebody would go to find
+    out what stopped*.
+    """
+    dash = config['/**/dashboard_node']['ros__parameters']
+    keypoints = config['/**/keypoint_node']['ros__parameters']
+    depth = config['/**/depth_node']['ros__parameters']
+    mesh = config['/**/mesh_node']['ros__parameters']
+
+    assert dash['rgb_topic'] == '/keypoints/image/compressed'
+    assert dash['depth_topic'] == depth['preview_topic']
+    assert dash['mesh_topic'] == mesh['mesh_topic']
+    assert dash['stats_topic'] == '/pipeline/stats'
+    assert dash['odom_topic'] == '/odom'
+    # The two image strips are the colour-mapped previews, not the raw topics: a
+    # browser cannot map a 3.7 MB float depth image, and a fixed [0, max_range]
+    # scale is what makes a colour mean a distance across frames.
+    assert keypoints['preview_rate_hz'] > 0
+    assert depth['preview_rate_hz'] > 0, (
+        'depth_node is configured not to publish a preview, so the dashboard would '
+        'show an empty panel that looks like a stalled GPU')
+    # The dashboard may not ask for frames faster than they are produced, or the
+    # cap it applies is not a cap at all.
+    assert dash['rgb_rate_hz'] <= keypoints['preview_rate_hz']
+    assert dash['depth_rate_hz'] <= depth['preview_rate_hz']
 
 
 def test_the_container_can_be_left_out_but_is_there_by_default(launch_module):
@@ -411,6 +503,42 @@ def test_every_launch_argument_override_declares_a_value_type(launch_module):
             f'parameter and ignored by any node expecting another type')
         assert value.value_type is not None, (
             f'{name} has no value_type, so it resolves to a string')
+
+
+def test_the_standalone_nodes_type_their_overrides_too(launch_module):
+    """The same trap as the component overrides, one action type over.
+
+    `dashboard_port` is threaded into the dashboard's `port` parameter, and a raw
+    `LaunchConfiguration` there would set a *string* parameter of that name —
+    which the node ignores in silence. It would then listen on 8080 whatever was
+    asked for, and the only symptom would be a page that does not load at the
+    address the script just printed.
+
+    Written separately from the component test because the two build their
+    overrides in different places, and a check that only covered one of them
+    would have looked like it covered both.
+    """
+    from launch_ros.actions import ComposableNodeContainer, Node
+    from launch_ros.descriptions import ParameterValue
+
+    description = launch_module.generate_launch_description()
+    standalone = [
+        a for a in description.entities
+        if isinstance(a, Node) and not isinstance(a, ComposableNodeContainer) and
+        a.condition is not None
+    ]
+    assert standalone, 'there is at least one standalone node'
+
+    found = 0
+    for action in standalone:
+        for entry in action._Node__parameters or []:
+            if not isinstance(entry, dict):
+                continue
+            for name, value in entry.items():
+                found += 1
+                assert isinstance(value, ParameterValue), (
+                    f'{name} is a raw substitution, so it would be set as a string')
+    assert found >= 1, 'no typed overrides on any standalone node'
 
 
 def test_the_overrides_are_the_ones_the_gates_actually_pass(launch_module):

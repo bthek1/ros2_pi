@@ -1,0 +1,98 @@
+<!doctype html>
+<!--
+  The whole page. Served from this package's share/web by dashboard_node — no
+  CDN, no npm, no build step: the LAN may have no internet, and a monitoring tool
+  that breaks when DNS does is not one.
+
+  **No three.js, and that is a deviation from docs/info/dashboard.md worth
+  stating.** That document names it, and the reason it does is that a 3D view is
+  work. The reason it is not here: vendoring means ~600 kB of third-party
+  minified JavaScript committed to this repo, which nobody in it can read, review
+  or fix, to draw one non-indexed triangle soup and a line. The raw WebGL that
+  does that is ~200 lines in app.js, has no version to track, and is the same
+  trade this project already made twice — writing the TSDF and marching cubes
+  rather than taking Open3D, to avoid a dependency and a process boundary.
+
+  If the 3D view ever needs materials, lighting models or loaders, that trade
+  flips and three.js is the right answer. Drawing vertex-coloured triangles is
+  not that.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pimesh</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <span class="brand">pimesh</span>
+    <span id="link" class="pill down">connecting</span>
+    <span class="spacer"></span>
+    <span class="metric"><b id="hz-depth">—</b> depth</span>
+    <span class="metric"><b id="hz-capture">—</b> capture</span>
+    <span class="metric"><b id="tris">—</b> triangles</span>
+    <span class="metric"><b id="uptime">—</b></span>
+  </header>
+
+  <main>
+    <section id="scene">
+      <canvas id="gl"></canvas>
+      <div id="scene-note">waiting for a surface — mesh_node extracts every ten seconds</div>
+      <div id="scene-help">drag to orbit · wheel to zoom · shift-drag to pan</div>
+    </section>
+
+    <aside>
+      <figure>
+        <figcaption>camera + keypoints <span class="stale" id="rgb-stale">STALE</span></figcaption>
+        <img id="rgb" alt="the camera frame with ORB corners drawn on it">
+      </figure>
+      <figure>
+        <figcaption>depth <span class="stale" id="depth-stale">STALE</span></figcaption>
+        <img id="depth" alt="the depth map, colour-mapped against a fixed range">
+      </figure>
+
+      <table id="stages">
+        <thead>
+          <tr>
+            <th>stage</th><th>rate</th><th>ms</th>
+            <!--
+              Two drop columns, never one. depth_node dropping ~72% of the frames
+              offered to it is its single-slot mailbox working exactly as
+              designed; a frame lost to QoS is a fault. Summed into one column,
+              the healthy pipeline and the broken one look identical — which is
+              why pimesh_msgs/PipelineStats carries them apart and why this table
+              must not put them back together.
+            -->
+            <th title="mailbox overwrites: the newest frame won. Not a fault.">by design</th>
+            <th title="QoS loss, deserialisation failure, malformed. A fault.">lost</th>
+            <th>detail</th>
+          </tr>
+        </thead>
+        <tbody id="stage-rows">
+          <tr class="empty"><td colspan="6">nothing on /pipeline/stats yet</td></tr>
+        </tbody>
+      </table>
+
+      <div class="actions">
+        <button id="save">save mesh</button>
+        <button id="reset" class="danger">reset volume</button>
+        <span id="action-note"></span>
+      </div>
+
+      <footer>
+        <span id="clients">0 viewers</span> ·
+        <span id="ws-dropped">0 frames dropped to slow clients</span>
+        <p class="fineprint">
+          Every number here was measured by the node it describes. This page
+          computes nothing, so it and <code>ros2 topic echo</code> cannot
+          disagree — and it is a viewer, never evidence: a gate is closed by a
+          script that names its numbers.
+        </p>
+      </footer>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

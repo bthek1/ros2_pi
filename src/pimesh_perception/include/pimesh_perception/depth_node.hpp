@@ -14,6 +14,7 @@
 #include "pimesh_perception/mailbox.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
+#include "pimesh_msgs/msg/pipeline_stats.hpp"
 #include "sensor_msgs/msg/image.hpp"
 
 namespace pimesh_perception
@@ -87,6 +88,11 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr depth_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr rgb_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr preview_pub_;
+  /// `/pipeline/stats`. **This row is the one that teaches people to read the
+  /// panel**: depth drops roughly two frames in three by design, and a column
+  /// that conflated that with a transport loss would make the healthy pipeline
+  /// and the broken one look identical. See PipelineStats.msg.
+  rclcpp::Publisher<pimesh_msgs::msg::PipelineStats>::SharedPtr stats_pub_;
   rclcpp::TimerBase::SharedPtr stats_timer_;
 
   std::unique_ptr<DepthEngine> engine_;

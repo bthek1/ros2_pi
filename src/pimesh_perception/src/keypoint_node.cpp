@@ -404,6 +404,8 @@ KeypointNode::KeypointNode(const rclcpp::NodeOptions & options)
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
   }
 
+  stats_pub_ = create_publisher<pimesh_msgs::msg::PipelineStats>("/pipeline/stats", 10);
+
   worker_ = std::thread([this] {this->work();});
   pose_worker_ = std::thread([this] {this->pose_work();});
 
@@ -1338,6 +1340,76 @@ void KeypointNode::log_stats()
     static_cast<unsigned long>(keyframes_on_loss_.load()),
     static_cast<unsigned long>(keyframes_on_stall_.load()),
     static_cast<unsigned long>(implausible_.load()));
+
+  // --- The same numbers, on a topic, for P8's dashboard ------------------------
+  //
+  // **Two rows from this one node**, because it is two stages wearing one name:
+  // `keypoints` is ORB at the camera's rate on the ORB worker, and `odometry` is
+  // the pose solve at the depth rate on the other thread. One row would have to
+  // pick a rate, and whichever it picked the other numbers beside it would belong
+  // to something else. The dashboard shows an unknown stage as its own row rather
+  // than as UNKNOWN, which is exactly what makes this cheap — see
+  // PipelineStats.msg on why `stage` is a string.
+  {
+    auto ks = std::make_unique<pimesh_msgs::msg::PipelineStats>();
+    ks->header.stamp = stamp;
+    ks->stage = "keypoints";
+    ks->rate_hz = static_cast<float>(static_cast<double>(delta) / span_s);
+    ks->latency_ms = static_cast<float>(cost_sum_ms_.load() / frames_total);
+    ks->latency_p95_ms = static_cast<float>(cost_max_ms_.load());
+    ks->frames_in = frames_now + mailbox_.dropped();
+    ks->frames_out = frames_now;
+    ks->dropped_by_design = mailbox_.dropped();
+    ks->dropped_in_transport = 0;
+    char detail[160];
+    std::snprintf(
+      detail, sizeof(detail), "kp=%.0f matched=%.3f empty=%lu preview=%.2fms",
+      keypoints_sum_.load() / frames_total,
+      (measured > 0.0) ? matched_sum_.load() / measured : 0.0,
+      static_cast<unsigned long>(empty_frames_.load()),
+      (previews_.load() > 0) ?
+      preview_cost_sum_ms_.load() / static_cast<double>(previews_.load()) : 0.0);
+    ks->detail = detail;
+    stats_pub_->publish(std::move(ks));
+  }
+  {
+    auto os = std::make_unique<pimesh_msgs::msg::PipelineStats>();
+    os->header.stamp = stamp;
+    os->stage = "odometry";
+    const std::uint64_t posed = (regime_ == OdometryRegime::SixDof) ? shifted : ok;
+    const std::uint64_t refused = (regime_ == OdometryRegime::SixDof) ? shift_held : held;
+    // Poses published per second over *this window*. In sixdof that is one per
+    // depth frame, in rotation_only one per image frame.
+    const std::uint64_t depth_now = depth_frames_.load();
+    os->rate_hz = static_cast<float>(
+      (regime_ == OdometryRegime::SixDof) ?
+      static_cast<double>(depth_now - last_depth_frames_) / span_s :
+      static_cast<double>(delta) / span_s);
+    last_depth_frames_ = depth_now;
+    os->latency_ms = static_cast<float>(
+      (depth_total > 0.0) ? pose_cost_sum_ms_.load() / depth_total : 0.0);
+    os->latency_p95_ms = 0.0F;
+    os->frames_in = posed + refused;
+    os->frames_out = posed;
+    // **Neither counter, and that is the honest answer.** A held pose is not a
+    // frame dropped by design and it is not one lost in transport: the frame
+    // arrived, was read, and the estimator declined to answer. `detail` carries it
+    // rather than either column, because a refusal counted as a drop would make a
+    // node that is working correctly on a blank wall look like one losing data.
+    os->dropped_by_design = 0;
+    os->dropped_in_transport = depth_unmatched_.load();
+    char detail[192];
+    std::snprintf(
+      detail, sizeof(detail),
+      "%s held=%lu traj=%.2fm net=%.2fm reproj=%.2fpx shared=%.0f keyframes=%zu",
+      regime_name(regime_), static_cast<unsigned long>(refused),
+      trajectory_m_.load(), net_displacement(),
+      (shifted > 0) ? reprojection_sum_px_.load() / shifted_d : 0.0,
+      (depth_total > 0.0) ? pair_sum_.load() / depth_total : 0.0,
+      keyframes_.size());
+    os->detail = detail;
+    stats_pub_->publish(std::move(os));
+  }
 
   // A sixdof run with no depth is a session that will publish no pose at all, and
   // the symptom — a TF tree with a missing edge — sends people to look at the

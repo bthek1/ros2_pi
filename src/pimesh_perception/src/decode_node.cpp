@@ -5,6 +5,7 @@
 #include "pimesh_perception/decode_node.hpp"
 
 #include <chrono>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <utility>
@@ -126,6 +127,12 @@ DecodeNode::DecodeNode(const rclcpp::NodeOptions & options)
     [this](std::unique_ptr<sensor_msgs::msg::CompressedImage> msg) {
       this->on_frame(std::move(msg));
     });
+
+  // Depth 10 and volatile, like fusion_node's. A dashboard that connects late
+  // wants the *next* window, not a stale one: these are measurements of a window
+  // that has closed, and a transient-local replay of one would draw a rate the
+  // pipeline had ten seconds ago as though it were live.
+  stats_pub_ = create_publisher<pimesh_msgs::msg::PipelineStats>("/pipeline/stats", 10);
 
   worker_ = std::thread([this] {this->work();});
 
@@ -264,6 +271,36 @@ void DecodeNode::log_stats()
     static_cast<unsigned long>(gaps_.load()),
     (out_now > 0) ? cost_sum_ms_.load() / static_cast<double>(out_now) : 0.0,
     cost_max_ms_.load());
+
+  // **The same numbers, on a topic, for P8's dashboard.** `PipelineStats` is the
+  // contract and the rule attached to it is that the dashboard *computes nothing*:
+  // every figure on that page is a figure some node measured about itself, so
+  // there is exactly one place to go when one of them looks wrong. Publishing here
+  // rather than letting the dashboard parse this log line is the whole of that
+  // rule — a log line is a format, not an interface.
+  auto stats = std::make_unique<pimesh_msgs::msg::PipelineStats>();
+  stats->header.stamp = stamp;
+  stats->stage = "decode";
+  stats->rate_hz = static_cast<float>(static_cast<double>(out_delta) / span_s);
+  stats->latency_ms = static_cast<float>(
+    (out_now > 0) ? cost_sum_ms_.load() / static_cast<double>(out_now) : 0.0);
+  // No p95 kept here: this node's cost is a JPEG decode with almost no spread, and
+  // a percentile invented from a mean would be a number nobody measured. The max
+  // is what it has, and it goes in `detail` where it cannot be mistaken for one.
+  stats->latency_p95_ms = 0.0F;
+  stats->frames_in = in_now;
+  stats->frames_out = out_now;
+  // A mailbox overwrite is this node choosing the newest frame, which is the
+  // design. A decode failure is a frame that arrived malformed — transport, in the
+  // sense PipelineStats means: something was lost between there and here.
+  stats->dropped_by_design = dropped_now;
+  stats->dropped_in_transport = failures_.load();
+  char detail[128];
+  std::snprintf(
+    detail, sizeof(detail), "cost_max=%.2fms gaps=%lu",
+    cost_max_ms_.load(), static_cast<unsigned long>(gaps_.load()));
+  stats->detail = detail;
+  stats_pub_->publish(std::move(stats));
 }
 
 }  // namespace pimesh_perception

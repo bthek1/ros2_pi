@@ -13,6 +13,7 @@
 #include "pimesh_perception/mailbox.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
+#include "pimesh_msgs/msg/pipeline_stats.hpp"
 #include "sensor_msgs/msg/image.hpp"
 
 namespace pimesh_perception
@@ -54,6 +55,9 @@ private:
 
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr sub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_;
+  /// `/pipeline/stats`, the contract P8's dashboard reads. See the publish in
+  /// log_stats(): the dashboard draws numbers, it does not compute them.
+  rclcpp::Publisher<pimesh_msgs::msg::PipelineStats>::SharedPtr stats_pub_;
   rclcpp::TimerBase::SharedPtr stats_timer_;
 
   /// A `unique_ptr` slot, which is right here for a reason that does not apply to

@@ -500,7 +500,38 @@ arbitrary until a tape measure pins `depth_scale`.
 
 ## Stage 7 — Dashboard (`dashboard_node`, dev box)
 
-See [dashboard.md](dashboard.md).
+**Built 2026-09-19** — P8, [#8](https://github.com/bthek1/ros2_pi/issues/8). Full
+design, channels and layout in [dashboard.md](dashboard.md); what matters to this
+document is the shape.
+
+**It is the only dev-box node outside the container**, and that is a requirement
+rather than an oversight. Everything else shares a process so a 2.7 MB frame is
+handed on as a pointer; this one subscribes to five small topics and holds a
+socket open to something outside the machine's control, and the promise it makes
+is *it must be able to die*. A component in the container could not make that
+promise — a crash there would take the TSDF with it.
+
+**It computes nothing.** Every number on the page is a number some node measured
+about itself and published on `/pipeline/stats`, so the page and `ros2 topic
+echo` cannot disagree. That is also what makes the gate's instrument honest: a
+transport carrying `rate_hz` values another node already computed cannot
+influence them, which is why `ros2 topic echo` is an acceptable reader here where
+`ros2 topic hz` would not be.
+
+**Nothing it does may slow the pipeline down**, and that is the whole of what P8
+asserts. A client's queued bytes past 8 MB are dropped and counted rather than
+queued, so a backgrounded browser cannot apply backpressure; the count is on the
+page. `bash tools/gates/dashboard.sh` replays the clip with a client attached,
+without one, and without one *again* — the third run measuring the noise floor
+the first two are compared against. On a quiet box that floor is **0.10%** and
+the client costs **0.77%**, which meets P8's 2%; the gate states the bound as
+floor-plus-slack anyway, because an earlier run of it measured 15% between two
+identical no-client runs and that was a `colcon build` sharing the machine.
+
+**Measured** (`bash tools/gates/dashboard.sh`): the five channels at 10.01 Hz
+stats, 9.16 Hz rgb, 4.47 Hz depth, 10.01 Hz pose and ~2.1 MB of mesh per
+extraction; the pose STALE flag 2.10 s after `/odom` stops, against a 2.0 s
+threshold.
 
 ## Data flow summary
 

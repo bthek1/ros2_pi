@@ -1,8 +1,9 @@
 # Project final state — one webcam to a live mesh, in C++
 
-**Everything this project is meant to become, in one file.** Two halves: the
-**build order** (P0–P8, the phases that get there) and the **deferred register**
-(work that is not executable yet, each entry with its trigger).
+**Everything this project set out to become, in one file.** Two halves: the
+**build order** (P0–P8, all done as of 2026-09-19, plus P9 and P10 promoted out of
+future files when their triggers fired) and the **deferred register** (work that is
+not executable yet, each entry with its trigger).
 
 This replaces the bootstrap plan issue and its companion future file, which were
 combined here on 2026-09-09. Nothing was dropped in the merge — the phases below
@@ -39,7 +40,7 @@ doc, commit and conversation.
 | B | [#5](https://github.com/bthek1/ros2_pi/issues/5) | P2–P3 | One reader, one decode, corners on it, and `bags/desk1` exists — ✓ **done 2026-09-13** |
 | C | [#6](https://github.com/bthek1/ros2_pi/issues/6) | P4 | Depth on the GPU at ≤ 80 ms, CUDA provider named in the log — ✓ **done 2026-09-15**, 55.10 ms mean |
 | D | [#7](https://github.com/bthek1/ros2_pi/issues/7) | P5–P6 | A triangle mesh you can recognise your room in — ✓ **closed 2026-09-16** |
-| E | [#8](https://github.com/bthek1/ros2_pi/issues/8) | P7–P8 | Translation is visible — ✓ **P7 done 2026-09-19** — and one tab shows the pipeline |
+| E | [#8](https://github.com/bthek1/ros2_pi/issues/8) | P7–P8 (+P10) | ✓ **done 2026-09-19** — translation is visible and one tab shows the pipeline |
 
 Each issue also carries a **`just view-*` RViz recipe** — a viewer for a person,
 never the evidence. The gates below are what pass or fail a phase. The view
@@ -631,23 +632,59 @@ agreement over 0.15. Prints both trajectory lengths and both surface gaps.
 
 ---
 
-## ☐ P8 — Dashboard
+## ✓ P8 — Dashboard *(done 2026-09-19, [#8](https://github.com/bthek1/ros2_pi/issues/8))*
 
 **Goal:** one browser tab that shows the pipeline, and cannot slow it down.
 
-**Work**
+**Done 2026-09-19.** `bash tools/dashboard.sh` starts it, `http://localhost:8080`
+is the page, `bash tools/gates/dashboard.sh` closes the claim. Five channels
+measured at **10.01 Hz** stats, **9.16 Hz** rgb, **4.47 Hz** depth, **10.01 Hz**
+pose and ~2.1 MB of mesh per extraction; the pose STALE flag **2.10 s** after
+`/odom` stops against a 2.0 s threshold; and every stage reporting itself on
+`/pipeline/stats`.
 
-- `dashboard_node`: HTTP + WebSocket in one C++ node, vendored assets, the
-  channels and layout in [../../info/dashboard.md](../../info/dashboard.md).
-- Server-side pacing with a send-buffer threshold and a drop counter; the panel
-  separates *dropped by design* from *dropped in transport*.
-- Staleness measured on **receipt time**, never `header.stamp`.
+`dashboard_node` is the one dev-box node **outside the container**, because the
+promise it makes is *it must be able to die* and a component there would take the
+TSDF with it. It computes nothing: every number on the page is a number some node
+measured about itself.
 
-**Test:** `bash tools/gates/dashboard.sh` — replays `bags/desk1` twice, once with a
-headless browser client attached, and asserts every pipeline rate is within 2% of
-the no-client run; kills the client mid-clip and asserts no rate change; stops a
-publisher and asserts the STALE flag appears within 2 s. Prints the two rate
-tables side by side.
+**Two deviations from what the design named**, both the same trade this project
+has made before: no vendored WebSocket library (the server half of RFC 6455 is a
+SHA-1, a base64 and a frame header, all pinned against published vectors) and no
+three.js (~200 lines of raw WebGL rather than 600 kB of minified JavaScript
+nobody here can read, to draw one triangle soup and a line).
+
+**The bug worth keeping is the one this phase exists to prevent, arriving through
+the dashboard's own code.** The two page buttons first called their ROS service
+inline in the HTTP handler, which runs with the web server's broadcast mutex held.
+It deadlocked immediately. Removing the second lock would have fixed that and left
+something worse: a service call waits up to ten seconds, and holding the mutex
+across it blocks `broadcast()`, which the ROS callbacks call — **a button press
+would have applied backpressure to the pipeline**. A deadlock is loud; that would
+have been silent.
+
+**And the gate needed three corrections**, each of which is a measurement
+overruling this phase's own text:
+
+1. *"Within 2% of the no-client run."* An early run measured 15% on `fusion` and
+   9% on `keypoints` between two runs with **nothing** attached — which was a
+   `colcon build` and a `colcon test` sharing the box, not the pipeline. Quiet, the
+   floor is **0.10%** and a client costs **0.77%**. The bound is stated as measured
+   floor plus slack anyway, because the floor belongs to the machine.
+2. *"Kills the client mid-clip and asserts no rate change."* Comparing a run's
+   second half against its own first half reported every stage **8-18% slower**
+   after the client died — backwards, and entirely `mesh_node`'s extraction growing
+   as the volume fills. It compares the same seconds of clip across runs now.
+3. *"STALE within 2 s."* A stage **row** cannot: nodes publish `/pipeline/stats`
+   once per 5 s, so a stopped stage is undetectable for that long before the 2 s
+   window starts. The tight bound belongs to the pose channel, where `/odom` runs
+   at 17 Hz.
+
+**Test:** `bash tools/gates/dashboard.sh` — replays `bags/desk1` three times (a
+client attached and killed at the halfway mark, a control, and a second control
+for the noise floor) plus a short run where the bag stops. `dashboard_probe` is
+its instrument: a C++ WebSocket client, not a headless browser, which would add a
+200 MB process and a GPU context to the thing being measured.
 
 ---
 
@@ -766,6 +803,31 @@ unused phase number, with a test — see [../README.md](../README.md).
 
 "Later" is not a trigger. If an entry's trigger is not something that can be
 observed happening, it is not written down properly yet.
+
+---
+
+## ✓ P10 — `camera_node` publishes `PipelineStats` *(promoted 2026-09-19, **done 2026-09-19**, [#8](https://github.com/bthek1/ros2_pi/issues/8))*
+
+Promoted out of [milestone-a-future.md](milestone-a-future.md) when its trigger —
+the dashboard — fired, and deleted from there.
+
+**Done 2026-09-19.** The Pi publishes a `capture` row at **60.00 Hz** carrying the
+frames the kernel dropped before dequeue, which is a figure no other stage in this
+pipeline can see and which nothing read until there was a panel to put it on.
+Nothing is `dropped_by_design` there — this node publishes every frame it dequeues,
+which is what makes it the pipeline's honest denominator — and `latency_ms` stays
+0, because there is no work here to time and a number invented for the column
+would be a number nobody measured.
+
+`frames_` and `kernel_drops_` became atomic with it: they were plain members for as
+long as the capture thread was the only thing touching them, and the stats timer
+runs on the executor thread.
+
+**Test:** the `capture` row appears in `bash tools/gates/dashboard.sh`'s stage
+table with the Pi as the source, and `bash tools/gates/test.sh` asserts
+`pimesh_camera` still builds and tests identically on both machines now that it
+depends on `pimesh_msgs` — an interface package, which is a different thing from a
+code dependency pointing the wrong way down the pipeline.
 
 ---
 

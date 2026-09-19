@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -239,6 +240,8 @@ DepthNode::DepthNode(const rclcpp::NodeOptions & options)
     input_topic, qos,
     [this](sensor_msgs::msg::Image::ConstSharedPtr msg) {on_image(std::move(msg));});
 
+  stats_pub_ = create_publisher<pimesh_msgs::msg::PipelineStats>("/pipeline/stats", 10);
+
   stats_timer_ = create_wall_timer(
     std::chrono::duration<double>(stats_period_s), [this] {log_stats();});
 
@@ -468,6 +471,30 @@ void DepthNode::log_stats()
     total_mean, cost_p95, infer_mean, total_max_ms_.load(std::memory_order_relaxed),
     preview_mean, dropped - last_logged_dropped_,
     static_cast<unsigned long>(failures_.load(std::memory_order_relaxed)));
+
+  auto stats = std::make_unique<pimesh_msgs::msg::PipelineStats>();
+  stats->header.stamp = now;
+  stats->header.frame_id = optical_frame_;
+  stats->stage = "depth";
+  stats->rate_hz = static_cast<float>(static_cast<double>(window_out) / elapsed);
+  stats->latency_ms = static_cast<float>(total_mean);
+  stats->latency_p95_ms = static_cast<float>(cost_p95);
+  stats->frames_in = frames_in_.load(std::memory_order_relaxed);
+  stats->frames_out = out;
+  // **The mailbox overwrite is the design working**, and this is the row that
+  // says so: inference costs ~55 ms against a ~17 ms frame interval, so this node
+  // keeps roughly one frame in three and drops the rest on purpose. A dashboard
+  // that put that in the same column as a QoS loss would show a healthy pipeline
+  // as 72% broken.
+  stats->dropped_by_design = dropped;
+  stats->dropped_in_transport = failures_.load(std::memory_order_relaxed);
+  char detail[160];
+  std::snprintf(
+    detail, sizeof(detail), "%s infer=%.1fms preview=%.1fms max=%.1fms",
+    engine_->provider().c_str(), infer_mean, preview_mean,
+    total_max_ms_.load(std::memory_order_relaxed));
+  stats->detail = detail;
+  stats_pub_->publish(std::move(stats));
 
   last_log_ = now;
   last_logged_out_ = out;
