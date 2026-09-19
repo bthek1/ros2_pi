@@ -180,8 +180,19 @@ run_for $(( MEASURE_S + 30 )) ros2 run pimesh_perception keypoint_probe --ros-ar
 # covers the seconds after the bag ended and its mean is 0.00 over nothing — and
 # the cost is asserted to be **greater than zero** below, because a per-frame cost
 # of exactly zero is not a measurement of anything.
-stats=$(grep -h 'keypoint_node.*stats rate=' "$work/launch.log" |
+#
+# **And the prefix it matches on is `stats regime=`, not `stats rate=`, because
+# P7 put a field in front of the rate.** That is the same lesson from the other
+# side: the first grep was keyed on the *shape* of a log line that a later phase
+# was free to change, and changing it made this gate exit with four lines of
+# output and no verdict at all. `regime=` is first in that line precisely so a
+# reader never has to infer which estimator produced the numbers after it — which
+# makes it a stable thing to key on, but the general point stands: a gate that
+# parses another component's log is coupled to its format, and the coupling is
+# only visible when it breaks.
+stats=$(grep -h 'keypoint_node.*stats regime=' "$work/launch.log" |
         grep -v 'rate=0\.0Hz' | tail -1 | sed 's/.*keypoint_node]: //')
+regime=$(sed -n 's/.*regime=\([a-z_]*\).*/\1/p' <<<"$stats")
 
 kill_local
 sleep 1
@@ -294,7 +305,15 @@ echo "frames dropped      : ${dropped} in the last stats window  (by design: new
 echo "matched fraction    : ${matched}  (p05 ${matched_p05}; over frames that had corners)"
 echo "  ... reference     : ${ref_matched:-none} over ${ref_frames:-0} frames, ${ref_keypoints:-?} kp, ${ref_seconds}s to run"
 echo "  ... difference    : ${delta_pct:-not measured} points  (assert <= ${MAX_MATCH_DELTA_PCT})"
-echo "pose gate           : reject rate ${reject_rate}, mean residual ${residual} rad"
+echo "odometry regime     : ${regime:-unknown}"
+if [[ ${regime:-} == rotation_only ]]; then
+    echo "pose gate           : reject rate ${reject_rate}, mean residual ${residual} rad"
+else
+    echo "pose gate           : not measured here — the bearing-ray chain does not run in"
+    echo "                      '${regime:-?}'. P3's reject rate and residual are a property of"
+    echo "                      the rotation_only regime; bash tools/gates/odom.sh measures"
+    echo "                      both regimes and prints them side by side."
+fi
 echo "descriptor bytes    : ${descriptor_bytes}  (assert 32)"
 
 (( fail == 0 )) || { echo "FAIL gate-keypoints"; exit 1; }

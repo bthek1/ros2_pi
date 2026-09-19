@@ -65,9 +65,11 @@ from — **529/529** with intra-process comms on against **0/387** with it off
 (`bash tools/gates/ipc.sh`). ORB then runs at **57.9 Hz sustained, 5.99 ms/frame**
 on the node's own clock against an 8 ms budget, with a matched-keypoint fraction of
 **0.9063** against the predecessor's algorithm at **0.9065** over the same 3489
-frames (`bash tools/gates/keypoints.sh`), and publishes a rotation-only
-`odom -> base_link` that holds its last pose rather than guessing when its gates
-fail (8.2% of frames on the reference clip).
+frames (`bash tools/gates/keypoints.sh`), and publishes an `odom -> base_link`
+that holds its last pose rather than guessing when its gates fail (8.2% of frames
+on the reference clip). That pose was rotation-only until P7 and turned the
+**wrong way** throughout — see the P7 section below, which is where the three-fold
+improvement in the surface came from.
 
 **`bags/desk1` is the reference clip** — 59.7 s, 3489 frames at 58.5 Hz, 220 MB,
 sha256 `1333c5bd…`. `bags/` is git-ignored, so that hash is its only identity, and
@@ -208,21 +210,90 @@ in the output:**
    starves the pipeline rather than blocking on its lock: `depth_node`'s rate fell
    from 17.8 to 14.6 Hz with its per-frame cost unchanged at 55.9 ms.
 
-**The mesh does not look like a room yet, and the reason is written down rather
-than hoped away.** Rotation-only odometry models the sweep's arm arc as zero, so
-the same wall is integrated at a different distance every time the camera moves:
-200 000 blocks is over 2000 m² of surface for a room with perhaps 60 m² in it,
-about thirty layers. **P7 is what fixes it.** And `depth_scale` is still arbitrary
-at 10.0 — pinning it needs a person, a tape measure and a recording of a surface
-at a known distance, which is the one thing in P5 a script cannot close and is in
-[docs/plans/future/milestone-d-future.md](docs/plans/future/milestone-d-future.md)
-with its trigger.
+**The mesh did not look like a room, and two causes were named: rotation-only
+odometry and an unpinned `depth_scale`. P7 settled the first and it was not the
+one anybody expected.**
 
-**Everything downstream of the mesh still does not exist.** No 6-DoF odometry,
-no dashboard — that is
+**The pose is 6-DoF as of 2026-09-19** — P7,
+[gh issue #8](https://github.com/bthek1/ros2_pi/issues/8). `keypoint_node` pairs
+each depth frame's corners with the **newest keyframe's** 3D landmarks by track id
+and solves with `cv::solvePnPRansac`; `odometry: rotation_only` is P3's estimator,
+kept as the control. `bash tools/gates/odom.sh` replays `bags/desk1` through both
+and reports **1.421 px** mean inlier reprojection over **97 inliers**, **79.9%** of
+depth frames posed rather than held, **1043 poses at 17.47 Hz**, a **31.1 m** path
+and **4.87 m** of net displacement against the control's identical zero, and a
+fastest published motion of **1.9986 m/s** against the 2.0 ceiling the node
+enforces on itself.
+
+**The valuable finding is a bug that had been running since P3 and that nothing
+could see.** A fit answers `P_cur = M · P_prev` for a point seen twice; the camera
+composes with `M⁻¹`, because the point did not move. `update_pose()` composed `M`
+itself, so the published `odom -> base_link` turned **left** when the camera panned
+right. *Nothing failed.* A frame that moves when you pan looks correct in RViz, the
+residual gate is indifferent to the sign, `test_rotation_fit` asserted the fit was a
+rotation of the right size about the right axis and that a change of basis moved the
+axis correctly — every property except the direction of the one inverse between them
+— and a TSDF built from consistently mirrored poses still produces a surface.
+Measured with the old composition restored, same binary otherwise: median
+paired-surface gap **1.3440 m** against **0.4456 m**, agreement **0.1057** against
+**0.2087**. The first of those reproduces what milestone D recorded (1.32–1.37 m at
+0.115), which is what ties the number to the bug rather than to the afternoon.
+**3× on the surface, for one transpose.** `camera_step()` is that inverse, named,
+and `test_rgbd_odometry` closes the loop `test_rotation_fit` left open: simulate a
+camera with a known trajectory, show it what it would have seen, run the whole
+estimator, and assert the pose that comes out is the trajectory that went in.
+
+**Three more findings from that phase, and every one is a measurement overruling
+the obvious design:**
+
+1. **Do not difference two monocular depth maps.** The phase asked for a 3D–3D fit
+   between two unprojected clouds. Both carry the depth network's error, and it is
+   *structured* — a smooth warp, not per-pixel noise — so it does not average down
+   over three hundred landmarks; and the network's scale breathes a few percent a
+   frame, which a rigid fit can only absorb as translation along the view axis.
+   Measured in order: rigid frame-to-frame reported an **89.5 m** path over a 45 s
+   desk sweep, dividing the scale out left it at 117 m, measuring against a keyframe
+   brought it to 44 m, a low-pass brought it to 8.4 m — and every one of those was
+   still worse than publishing no translation at all. **PnP** works because it
+   changes the *measurement*: the keyframe's landmarks against this frame's
+   **pixels**, so one depth map instead of two, no scale ratio between them, and a
+   residual in pixels rather than in the arbitrary unit everything else here is in.
+2. **A confident fit is not a correct one, and a residual cannot tell you.** PnP
+   reports how well its pose explains the pixels it was given and has no opinion
+   about whether the 3D points behind them are where the depth network said.
+   Measured: a single step of **9.4 m** between two depth frames at **1.23 px** mean
+   inlier reprojection, which then became the reference every later frame was posed
+   against, while the mean step stayed at 2.7 cm and looked healthy. A plausibility
+   bound on the *motion* is a separate question and gets a separate refusal.
+3. **A guard armed only when an unrelated feature is on is worse than no guard**,
+   because its counter reads as evidence. That plausibility bound's bookkeeping
+   started life inside the `translation_tau_s > 0` branch, so with the low-pass off
+   it reported `implausible=0` over a trajectory containing that 9.4 m step.
+
+**The keyframe store is built as P7 specifies and is consumed, which the phase said
+it would not be.** Frame-to-frame chaining is a random walk; measuring each frame
+against a keyframe and **setting** the pose from it rather than accumulating gives a
+simulated final position error of **0.106 m** against **2.70 m**. What is still
+unbuilt is the other reader — matching against *every* keyframe to recognise a place
+seen minutes ago — which is the deferred loop-closure work. It costs **~37 kB** per
+keyframe, not the ~16 kB the phase budgeted: the descriptors alone are 16 kB.
+
+**And the 6-DoF translation itself makes no measurable difference on `bags/desk1`
+— 0.4456 m against the control's 0.4471 m — so `gates/odom.sh` prints that
+comparison rather than asserting it**, the same call `gates/fusion.sh` made about
+the scale aligner. `desk1` is a *pan*: ~0.9 m of arm arc against 2–3 m of scene, so
+rotation already explains most of the frame motion, and what is left is the depth
+network's own shape error rather than the pose's. The trigger is a clip with
+deliberate translation — a slow walk around the room — which needs a person and the
+camera and is in
+[docs/plans/future/milestone-e-future.md](docs/plans/future/milestone-e-future.md).
+`depth_scale` is still arbitrary at 10.0 and still needs a tape measure, which is
+the same visit.
+
+**The dashboard still does not exist.** That is P8,
 [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md)
 and milestone issue [#8](https://github.com/bthek1/ros2_pi/issues/8),
-and everything the rest of `docs/` says about those stages is **design intent**,
+and everything the rest of `docs/` says about it is **design intent**,
 not a description of running code. When you build something, change the doc that
 describes it from future tense to a measured statement, and say what you
 measured it with.
@@ -341,7 +412,8 @@ message types and rates: [docs/info/pipeline.md](docs/info/pipeline.md).
 | Stage | Node | Where | Budget |
 | --- | --- | --- | --- |
 | Capture | `camera_node` | Pi | 1280×720 MJPEG, up to 60 fps, stamped at `VIDIOC_DQBUF`, calibrated intrinsics on `/camera_info` |
-| Keypoints | `keypoint_node` | dev box | ORB, 500 features, ~5 ms/frame target |
+| Keypoints | `keypoint_node` | dev box | ORB, 500 features, **6.54 ms/frame measured** against an 8 ms budget, with depth and the pose worker beside it |
+| Odometry | `keypoint_node` | dev box | PnP against the newest keyframe, **1.42 px over 97 inliers, 17.5 Hz measured**; `rotation_only` is the control |
 | Depth | `depth_node` | dev box, **GPU** | Depth Anything V2 Small, 518², **55.1 ms/frame, 17.4 Hz measured in the container** |
 | Fusion | `fusion_node` | dev box | TSDF, 1.5 cm voxels, **15.3 ms/integration at 17.1 Hz measured** |
 | Surface | `mesh_node` | dev box | marching cubes every 10 s, **2.8 s per extraction, off the integration path** |
@@ -708,6 +780,44 @@ strong priors, re-verify before quoting a number as this project's own.
   stub version of cublas` on *stdout*, and segfaulted on the first inference. The
   `ldd`-says-no-unresolved-dependencies check passed over it throughout, which is
   why `fetch-gpu-stack.sh` also asserts a size floor on `libcublas.so.13`.
+- **A fit that explains its measurements is not a fit that is right, and no
+  residual can tell you the difference.** `cv::solvePnPRansac` answers how well a
+  pose explains the pixels it was handed; it has no opinion whatever about whether
+  the 3D points those pixels were matched against are where they were claimed to
+  be. Measured 2026-09-19 on `bags/desk1`: a single step of **9.4 m between two
+  depth frames** at a mean inlier reprojection of **1.23 px** over ~90 inliers —
+  as confident as any accepted frame in the run — which then became the reference
+  every later frame was posed against. The mean step over the run stayed at 2.7 cm
+  and every summary number looked healthy. The plausibility of the *motion* is a
+  different question from the quality of the *fit*, and it needs its own refusal:
+  `max_speed_m_s` in `keypoint_node`, and `gates/odom.sh` asserts on the fastest
+  published motion rather than on the residual.
+- **A guard that is only armed when an unrelated feature is enabled is worse than
+  no guard, because its counter reads as evidence.** That plausibility bound's
+  bookkeeping — the stamp of the last accepted pose — started life inside the
+  `if (translation_tau_s_ > 0.0)` branch that also does the low-pass. With the
+  filter switched off the guard never ran, and the node reported **`implausible=0`
+  over a trajectory containing a 6.95 m step**. A zero from a check that did not
+  execute and a zero from a check that found nothing have the same spelling. It is
+  the `cost_mean=0.00` lesson from `gates/keypoints.sh` arriving through a third
+  door.
+- **Do not difference two monocular depth maps to get a camera motion.** The
+  obvious RGB-D odometry is to unproject both frames and fit a rigid transform
+  between the clouds. Measured 2026-09-19 it does not work here, and not because
+  of the estimator: Depth Anything V2 estimates *relative* depth, so (a) both
+  clouds carry an error that is a smooth **warp** rather than per-pixel noise and
+  therefore does not average down over three hundred landmarks, and (b) the
+  overall scale breathes a few percent a frame — `fusion_node`'s aligner hits its
+  own 15% clamp on one frame in seven of `bags/desk1` — which a rigid fit can only
+  absorb as translation along the view axis. In order: rigid frame-to-frame
+  reported an **89.5 m** path over a 45 s desk sweep; dividing the scale out left
+  it at 117 m; measuring against a keyframe brought it to 44 m; a low-pass brought
+  it to 8.4 m. All four were worse than publishing no translation at all. **PnP**
+  works because it changes what is measured rather than how it is filtered: the
+  keyframe's 3D landmarks against *this* frame's **pixels**, so one depth map is
+  involved instead of two, there is no scale ratio between them, and the residual
+  comes out in pixels — a unit this project has a calibration for, unlike the
+  metres everything else is in.
 - **A constant that is wrong but works is invisible, and only an outside
   reference finds it.** The FNV-1a offset basis in this project was
   `1469598103934665603` — the real one, `14695981039346656037`, with its last
@@ -868,7 +978,7 @@ strong priors, re-verify before quoting a number as this project's own.
 
 - **This repo is the colcon workspace.** Packages go in `src/`, named
   `pimesh_<thing>` — `pimesh_hello`, `pimesh_msgs`, `pimesh_bringup`,
-  `pimesh_camera` and `pimesh_perception` exist; planned: `pimesh_world`,
+  `pimesh_camera`, `pimesh_perception` and `pimesh_world` exist; planned:
   `pimesh_dashboard`. **`pimesh_perception` builds on the Pi too, and the GPU code
   inside it is why that took arranging**: `depth_node`, its registration and its
   parameters are identical on both machines, and only the inference engine behind
@@ -1249,14 +1359,16 @@ somebody once.
 | [#4](https://github.com/bthek1/ros2_pi/issues/4) [#5](https://github.com/bthek1/ros2_pi/issues/5) [#6](https://github.com/bthek1/ros2_pi/issues/6) [#7](https://github.com/bthek1/ros2_pi/issues/7) **(all closed)** [#8](https://github.com/bthek1/ros2_pi/issues/8) — milestones A–E | **The pipeline, being built.** A–D are closed: the cross-distro workspace and capture (P0, P1), one reader and one decode with keypoints (P2, P3), depth on the GPU at 55.10 ms/frame in the container (P4), and **D as of 2026-09-16 — a TSDF at 15.3 ms per integration and a triangle surface out of it every ten seconds (P5, P6).** E is next. Five issues over the *one* phase list in `project_final_state.md`, a contiguous slice each: A = P0–P1, B = P2–P3, C = P4, D = P5–P6, E = P7–P8. No issue renumbers from zero. Each also has a `just view-*` RViz recipe — a viewer for a person, never a gate |
 | `bash tools/gates/ipc.sh` / `bash tools/gates/keypoints.sh` | **P2 and P3's gates.** `ipc.sh` runs the real container twice against the Pi's live camera and compares published buffer addresses with intra-process comms on and off — and asserts the decoded topic has at least two subscribers, because one consumer is the configuration that cannot fail. `keypoints.sh` replays `bags/desk1` and measures three things three ways: the rate from a C++ subscriber's steady clock, the per-frame cost from the node's own log line, and the matched-keypoint fraction against `tools/orb_reference.py` — the predecessor's algorithm reimplemented in Python over the same clip, which is the only part of the gate with an outside opinion about whether the corners mean anything |
 | `bash tools/gates/depth.sh` | **P4's gate.** Replays `bags/desk1` through the real container — `decode_node`, `keypoint_node` and `depth_node` in one process — and measures four things. The provider, off `depth_node`'s own startup line. The per-frame cost on the node's own clock, against 80 ms. Whether `/depth/rgb` is **byte-identical** to the `/image_raw` frame with the same stamp, by hashing every source frame as it goes past and comparing — with "could not check" counted separately from "checked and differed", because a run that checked nothing would otherwise report zero mismatches and look perfect. And a **control**: the same binary with `use_cuda:=false`, which has to *fail* the same budget. `depth_probe` is its instrument, loaded into the container with `probe:=depth_probe` — out of process it would be subscribing to ~255 MB/s of images and would be the dominant load on the thing it is measuring |
-| `bash tools/gates/fusion.sh` / `bash tools/gates/mesh.sh` | **P5 and P6's gates, and both of them run a control.** `fusion.sh` replays `bags/desk1` twice, once with `align:=false`, and measures the integration cost on the node's own clock, the rate, the mailbox drop fraction, the arrival-to-integration lag against one depth frame interval, and whether every frame found a pose at its own stamp and its exact colour twin. It **prints rather than asserts** the paired-surface comparison P5 asks for, because measurement says the two runs are a coin flip under rotation-only odometry — and says so in its own output, with P7 named as the trigger. `mesh.sh` replays it twice again, the second with `remesh_period_s` past the clip so nothing meshes, because P6's `max ≤ 2× median` is not achievable against a clip that stalls 400 ms on its own. It asserts the worst integration gap is no worse with meshing than without, the published Marker is under the cap **read off the topic**, the boundary-loop count *falls* across the fill and stays **above zero** (pinholes closed, frontier open — a sealed box is the most seductive false positive in this project), the saved PLY has *more* triangles than the Marker, and three offscreen renders have a surface in them |
+| `bash tools/gates/odom.sh` | **P7's gate, and it runs the clip twice — `odom_regime:=sixdof` and the `rotation_only` control — with `odom_probe` loaded into the container.** It asserts the control publishes translation *identically zero* (anything else means translation is leaking into the run everything is measured against); that the 6-DoF run reports a trajectory whose **fastest published motion** is bounded — a speed and not a displacement, because a step taken after a run of holds spans several depth intervals and bounding the step alone compares it against the wrong clock; that the solve reaches ≤ 2 px over ≥ 55% of depth frames; and that **both** regimes' median paired-surface gap is under a ceiling the *pre-P7 composition fails*, which is what makes it an assertion rather than a number nobody has seen excluded. It **prints rather than asserts** the comparison P7 asked for — the two regimes are a dead heat on this clip, 0.4456 m against 0.4471 m — and names the trigger in its own output. `odom_probe` measures off `/odom` rather than off `keypoint_node`'s own counters, because the failure P7 fixed was a pose that every internal number described correctly |
+| `bash tools/gates/fusion.sh` / `bash tools/gates/mesh.sh` | **P5 and P6's gates, and both of them run a control.** `fusion.sh` replays `bags/desk1` twice, once with `align:=false`, and measures the integration cost on the node's own clock, the rate, the mailbox drop fraction, the arrival-to-integration lag against one depth frame interval, and whether every frame found a pose at its own stamp and its exact colour twin. It **prints rather than asserts** the paired-surface comparison P5 asks for, because measurement said the two runs were a coin flip — and says so in its own output. **P7 was named there as the trigger, it fired, and the comparison moved**: re-measured 2026-09-19 with the corrected pose, 0.4805 m aligned against 0.5330 m unaligned and agreement 0.2191 against 0.1606, the aligner ahead on both for the first time. It stays printed rather than asserted because that is one run of a number which has already flipped once. `mesh.sh` replays it twice again, the second with `remesh_period_s` past the clip so nothing meshes, because P6's `max ≤ 2× median` is not achievable against a clip that stalls 400 ms on its own. It asserts the worst integration gap is no worse with meshing than without, the published Marker is under the cap **read off the topic**, the boundary-loop count *falls* across the fill and stays **above zero** (pinholes closed, frontier open — a sealed box is the most seductive false positive in this project), the saved PLY has *more* triangles than the Marker, and three offscreen renders have a surface in them |
+| `just view-odom` | **P7's viewer, and the only one here meant to be run twice.** `bash tools/view-odom.sh 600 desk1` and `bash tools/view-odom.sh 600 desk1 rotation_only` put the two regimes side by side: rotation-only piles every arrow at the origin and spins in place, 6-DoF draws an arc through space. An RViz **Odometry** display with `Keep: 500` draws the trail straight off `/odom`, so no `nav_msgs/Path` publisher exists anywhere in this project. A viewer, not evidence — `gates/odom.sh` is what passes or fails P7 |
 | `bash tools/mesh-views.sh <mesh.ply>` / `just view-mesh` | **The evidence and the viewer, and they are not the same thing.** `mesh-views.sh` renders three fixed angles offscreen through a numpy software rasteriser — no GL, no display, no Open3D — and reports what fraction of each frame is surface, which is what tells a real mesh from the black rectangle that an empty volume, a camera inside the geometry and a sign error in the projection all produce. Those PNGs are what closes P6. `view-mesh.sh` is for a person, and its checklist says plainly that the surface will not look like a room until P7 gives odometry a translation |
 | `bash tools/fetch-gpu-stack.sh` / `bash tools/fetch-model.sh` / `bash tools/gates/gpu-stack.sh` | **P4's toolchain, which is as far as milestone C has got.** The first installs ONNX Runtime 1.30 + CUDA 13.1 runtime + cuDNN 9.26 into `~/.local/opt/pimesh-gpu` with no sudo, every component version-pinned and sha256-verified; the second does the weights. The gate is four runs and three of them are controls — CUDA at 51.20 ms, the CPU provider at 213.18 ms (so the 80 ms budget is shown to *discriminate* rather than merely be met), a build with CMake's default linker flags that reaches only the CPU (so `-Wl,--disable-new-dtags` cannot quietly stop being load-bearing), and `nvidia-smi` sampled while the first runs, which is the only witness here that does not go through ONNX Runtime. `tools/gpu_probe.cpp` is its instrument: no ROS, no colcon, compiled by the gate with `g++` so that what is being tested is the toolchain and not four things at once |
 | `bash tools/record-clip.sh desk1 60` | **The reference clip.** A 60 s hand-held sweep, recorded once, that every phase from P3 on replays so the numbers compare like for like. `bags/` is git-ignored, so a fresh clone has none and `gates/keypoints.sh` says so rather than pretending. The script resets the camera's V4L2 controls first and records `/camera_info` alongside the frames, because a clip recorded at 20 fps under a stale manual exposure cannot be un-recorded |
 | `bash tools/replay.sh` / `view-camera.sh` / `view-keypoints.sh` / `view-depth.sh` | **The four viewers, and none of them is evidence.** `replay` loops a bag with `pipeline:=false` — the static frame tree and no components, because a pose published over a looping bag freezes and floods every TF listener; `view-camera` is the Pi's live camera; `view-keypoints` is the pipeline, on the camera or on a bag **played once** for the same reason; `view-depth` is the same again with the room as a colour-mapped depth cloud, and it waits longer before starting RViz because `depth_node` loads a 99 MB model and warms a CUDA session first. All four call `assert_no_session` before `arm_cleanup`, as does every gate: two sessions on one domain put two publishers on `/image_raw/compressed` and make both of them look broken |
-| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 300 of them across twenty suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+| `bash tools/test.sh` / `bash tools/gates/test.sh` | **The unit tests.** 341 of them across twenty-two suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
 evaluates the launch file's `pipeline` condition both ways, so `pipeline:=false`
-cannot quietly stop removing the container —  the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on — plus milestone B's four: `test_mailbox` (newest-wins and its drop accounting), `test_image_buffer` (the bgr8 layout arithmetic, that a `cv::Mat` over a message shares its memory, and since 2026-09-19 the same over a 32FC1 depth map — `depth_mat_over` had lived in an anonymous namespace inside `fusion_node.cpp` where no test could call it, and every distance the TSDF integrates comes through it), `test_rotation_fit` (Kabsch against known rotations, the reflection guard, the reject-worst refits, and the optical-to-body change of basis) and `test_orb_tracker` (synthetic frames with a known displacement: that the window forgives detection churn, that unrelated scenes do not match, and that a track id is never claimed twice in one frame); milestone D's five — `test_tsdf_volume` (a plane comes back out at the distance it went in; a corner ray reports **z and not ray length**, which agrees perfectly at the principal point and is 30% wrong in the corners; the signed distance is positive in *front* of the surface, because inverting it finds the identical zero crossing and winds every triangle the other way; nothing is written more than a truncation behind a wall; and a surface that jumps further than the band **leaves a ghost**, pinned as behaviour rather than left to be discovered), `test_scale_aligner` (that a constant bias produces corrections whose product is exactly 1 — the property that separates a high-pass from a feedback loop that walks the map away at 1% a frame, and the one thing no running system can show you), `test_marching_cubes` (a sphere comes out **closed**, which is how 256 entries of copied lookup table get checked at all: one wrong case leaves one edge used once) and `test_mesh_cleanup` (a hole is filled and the *rim is not*), `test_mesh_io` (the saved PLY, read back **both** ways: through `read_ply`, and byte by byte against the layout the header promises — because writer and reader being wrong *together* round-trips perfectly, and P6's evidence is a triangle count taken off that file through `read_ply`. Measured 2026-09-19: with colour written before position in both halves, the round-trip test passes and only the byte-level one fails. It also covers the refusals a gate instrument has to make rather than guess at — an ASCII PLY, a truncated file, a quad, and a failed read leaving the caller's mesh empty instead of the previous surface), `test_shared_volume` (the rendezvous the two world nodes find each other through, and the chunked copy between them: the same key is the same object, a chunked snapshot equals an unchunked one whatever the chunk size, the snapshot is a *copy* and does not move when the volume does, and the weight filter changes the memory and **not the mesh** — all of which fail by producing a surface) and `test_mesh_render` (the instrument P6's evidence comes out of: that the three fixed views are **three different pictures**, which a renderer ignoring its azimuth would fail while satisfying every check the gate makes, and that colour survives the trip to cv2's channel order) — and milestone C's one, `test_depth_model` — the arithmetic either side of the network, which is the whole of P4 that can be got wrong in silence: a channel order swapped, planes interleaved instead of planar, or a reciprocal taken before the clamp each produce a depth map that renders as a plausible room and is numerically nonsense. It needs no ONNX Runtime, no GPU and no camera, which is *why* `depth_model.hpp` is a header separate from the engine behind it — so this suite runs identically on the Pi. It also covers the colour preview's mapping, where a single sign decides whether near is bright or the 6 m clip is: flip it and the picture is still a perfectly plausible depth image of exactly the wrong thing. `test_orb_reference` — P3's outside opinion, which decides `gates/keypoints.sh` and had no tests of its own until 2026-09-19: the one-to-one track claim, the Hamming threshold in bits, the pooled window forgiving churn and forgetting past its length, and that a featureless frame is *excluded* rather than scored zero. Two of those fail **upwards** — a reference that matches many-to-one agrees with the node more readily — so the failure is a gate that passes for the wrong reason. It runs on synthetic descriptors with no bag and no camera. And `test_stats` — the percentile and the FNV-1a hash every probe reports its numbers through, which had no tests because they had no *home*: four copies of one and two of the other, each in an anonymous namespace inside a translation unit with a node in it. The first run of that suite found the FNV-1a offset basis had been wrong since milestone A |
+cannot quietly stop removing the container —  the calibration loader's refusals in `test_calibration`, and the calibration gate's own instrument in `test_straightness` — which measures a chessboard projected through a *known* K and D and is what makes `gates/calibration.sh`'s pixel figure worth asserting on — plus milestone B's four: `test_mailbox` (newest-wins and its drop accounting), `test_image_buffer` (the bgr8 layout arithmetic, that a `cv::Mat` over a message shares its memory, and since 2026-09-19 the same over a 32FC1 depth map — `depth_mat_over` had lived in an anonymous namespace inside `fusion_node.cpp` where no test could call it, and every distance the TSDF integrates comes through it), `test_rotation_fit` (Kabsch against known rotations, the reflection guard, the reject-worst refits, and the optical-to-body change of basis) and `test_orb_tracker` (synthetic frames with a known displacement: that the window forgives detection churn, that unrelated scenes do not match, and that a track id is never claimed twice in one frame); milestone D's five — `test_tsdf_volume` (a plane comes back out at the distance it went in; a corner ray reports **z and not ray length**, which agrees perfectly at the principal point and is 30% wrong in the corners; the signed distance is positive in *front* of the surface, because inverting it finds the identical zero crossing and winds every triangle the other way; nothing is written more than a truncation behind a wall; and a surface that jumps further than the band **leaves a ghost**, pinned as behaviour rather than left to be discovered), `test_scale_aligner` (that a constant bias produces corrections whose product is exactly 1 — the property that separates a high-pass from a feedback loop that walks the map away at 1% a frame, and the one thing no running system can show you), `test_marching_cubes` (a sphere comes out **closed**, which is how 256 entries of copied lookup table get checked at all: one wrong case leaves one edge used once) and `test_mesh_cleanup` (a hole is filled and the *rim is not*), `test_mesh_io` (the saved PLY, read back **both** ways: through `read_ply`, and byte by byte against the layout the header promises — because writer and reader being wrong *together* round-trips perfectly, and P6's evidence is a triangle count taken off that file through `read_ply`. Measured 2026-09-19: with colour written before position in both halves, the round-trip test passes and only the byte-level one fails. It also covers the refusals a gate instrument has to make rather than guess at — an ASCII PLY, a truncated file, a quad, and a failed read leaving the caller's mesh empty instead of the previous surface), `test_shared_volume` (the rendezvous the two world nodes find each other through, and the chunked copy between them: the same key is the same object, a chunked snapshot equals an unchunked one whatever the chunk size, the snapshot is a *copy* and does not move when the volume does, and the weight filter changes the memory and **not the mesh** — all of which fail by producing a surface) and `test_mesh_render` (the instrument P6's evidence comes out of: that the three fixed views are **three different pictures**, which a renderer ignoring its azimuth would fail while satisfying every check the gate makes, and that colour survives the trip to cv2's channel order) — and P7's two — `test_rgbd_odometry`, whose **CameraStep** suite is the one that closes the loop `test_rotation_fit` left open (simulate a camera with a known trajectory, show it what it would have seen, run the whole estimator, and assert the pose that comes out is the trajectory that went in — the check whose absence let the rotation be composed inverted for six days while every other property of that pose was right), plus the depth-reading refusals that keep a corner on an occlusion edge out of the fit, the reflection guard, and the scale story: that dividing the network's per-frame scale out removes 4% of breathing without eating a real translation, that a flat wall is **not** the degeneracy it looks like (a camera moving forward leaves a landmark's x and y untouched where a scaling shrinks them, so the two separate on any patch that subtends an angle), and that the one geometry where they *do* come apart — a 5° cone at a single distance — is milder with the robust refits than an unrobust fit suggests, 0.961 rather than 0.75; and `test_keyframe_store`, which exists precisely because nothing downstream would notice it being wrong — a threshold that never fires and one that fires every frame both produce a pipeline that runs, one keyframe a session against eight thousand, with only a memory figure to tell them apart; and milestone C's one, `test_depth_model` — the arithmetic either side of the network, which is the whole of P4 that can be got wrong in silence: a channel order swapped, planes interleaved instead of planar, or a reciprocal taken before the clamp each produce a depth map that renders as a plausible room and is numerically nonsense. It needs no ONNX Runtime, no GPU and no camera, which is *why* `depth_model.hpp` is a header separate from the engine behind it — so this suite runs identically on the Pi. It also covers the colour preview's mapping, where a single sign decides whether near is bright or the 6 m clip is: flip it and the picture is still a perfectly plausible depth image of exactly the wrong thing. `test_orb_reference` — P3's outside opinion, which decides `gates/keypoints.sh` and had no tests of its own until 2026-09-19: the one-to-one track claim, the Hamming threshold in bits, the pooled window forgiving churn and forgetting past its length, and that a featureless frame is *excluded* rather than scored zero. Two of those fail **upwards** — a reference that matches many-to-one agrees with the node more readily — so the failure is a gate that passes for the wrong reason. It runs on synthetic descriptors with no bag and no camera. And `test_stats` — the percentile and the FNV-1a hash every probe reports its numbers through, which had no tests because they had no *home*: four copies of one and two of the other, each in an anonymous namespace inside a translation unit with a node in it. The first run of that suite found the FNV-1a offset basis had been wrong since milestone A |
 | `gh issue list --label plan --state all` | **The plans themselves.** [#2 hello-world](https://github.com/bthek1/ros2_pi/issues/2) — closed 2026-09-08, the build log for the scaffolding that exists; [#3 justfile](https://github.com/bthek1/ros2_pi/issues/3) — closed 2026-09-09, why the shell lives in `tools/`; the justfile was trimmed further the same day to `build` + `run` only, so that issue's `just gate-*` spelling is history, not instruction |
 | [docs/plans/future/milestone-d-future.md](docs/plans/future/milestone-d-future.md) | Work deferred out of milestone D, each entry with its trigger. **The one that needs a person is first**: pinning `depth_scale` with a tape measure and recording `bags/scale1` while you are at the wall, without which every distance this pipeline reports is plausibly shaped and the wrong size. Then re-measuring whether scale alignment helps once P7 gives odometry a translation; keeping the integrated frames so a loop closure can rebuild the volume; free-space carving; a smaller voxel record; and a watertight companion mesh |
 | [docs/plans/future/milestone-a-future.md](docs/plans/future/milestone-a-future.md) | Work deferred out of milestone A, each entry with its trigger: the checkerboard calibration (waiting on P5's tape-measure visit), `PipelineStats` from `camera_node` (waiting on the dashboard), the dev-box rate margin, and device reconnection |

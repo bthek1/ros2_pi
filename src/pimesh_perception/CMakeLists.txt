@@ -18,6 +18,10 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+# P7's pose stream. nav_msgs/Odometry is a *sequence* where TF is a tree queried
+# by time, and it is what an RViz Odometry display draws a trail from — so the
+# trajectory is viewable without a nav_msgs/Path publisher existing anywhere.
+find_package(nav_msgs REQUIRED)
 find_package(pimesh_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -26,7 +30,7 @@ find_package(tf2_ros REQUIRED)
 # it. The components are named rather than taking the whole of OpenCV: it makes
 # the dependency legible, and `features2d` appearing in this list is the line that
 # says where ORB comes from.
-find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs features2d)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs features2d calib3d)
 
 # --- ONNX Runtime, and the whole cross-machine story in one if() -------------
 #
@@ -68,8 +72,11 @@ add_library(perception_components SHARED
   src/depth_node.cpp
   src/depth_probe.cpp
   src/ipc_probe.cpp
+  src/keyframe_store.cpp
   src/keypoint_node.cpp
+  src/odom_probe.cpp
   src/orb_tracker.cpp
+  src/rgbd_odometry.cpp
   src/rotation_fit.cpp
   # Exactly one of these two is compiled, and the choice is the only thing the
   # GPU stack's presence changes about this library.
@@ -88,6 +95,7 @@ target_link_libraries(perception_components PUBLIC
   rclcpp_components::component
   ${sensor_msgs_TARGETS}
   ${geometry_msgs_TARGETS}
+  ${nav_msgs_TARGETS}
   ${pimesh_msgs_TARGETS}
   tf2::tf2
   tf2_ros::tf2_ros
@@ -95,6 +103,7 @@ target_link_libraries(perception_components PUBLIC
   opencv_imgproc
   opencv_imgcodecs
   opencv_features2d
+  opencv_calib3d
 )
 
 # --- The depth build, and the linker flag that decides whether it uses the GPU --
@@ -154,6 +163,7 @@ rclcpp_components_register_nodes(perception_components
   "pimesh_perception::DepthNode"
   "pimesh_perception::DepthProbe"
   "pimesh_perception::IpcProbe"
+  "pimesh_perception::OdomProbe"
   "pimesh_perception::KeypointNode"
 )
 
@@ -244,11 +254,31 @@ if(BUILD_TESTING)
   if(TARGET test_orb_tracker)
     target_link_libraries(test_orb_tracker perception_components opencv_imgproc)
   endif()
+
+  # P7's geometry, and the suite that closes the loop test_rotation_fit left open.
+  # It simulates a camera with a *known* motion, generates what it would have seen,
+  # runs the fit, and asserts the composed pose is that motion — which is the check
+  # that was missing while the rotation-only path composed the inverse of it for six
+  # days, publishing a frame that turned left when the camera panned right. Nothing
+  # failed then and nothing would now: every other property of that pose was right.
+  ament_add_gtest(test_rgbd_odometry test/test_rgbd_odometry.cpp)
+  if(TARGET test_rgbd_odometry)
+    target_link_libraries(test_rgbd_odometry perception_components)
+  endif()
+
+  # The keyframe store's admission rule. Nothing consumes the store yet, which is
+  # exactly why it needs a test: a threshold that never fires and one that fires on
+  # every frame both produce a running pipeline, and only the memory figure would
+  # ever say which.
+  ament_add_gtest(test_keyframe_store test/test_keyframe_store.cpp)
+  if(TARGET test_keyframe_store)
+    target_link_libraries(test_keyframe_store perception_components)
+  endif()
 endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(perception_components)
 ament_export_dependencies(
-  rclcpp rclcpp_components sensor_msgs geometry_msgs pimesh_msgs tf2 tf2_ros OpenCV)
+  rclcpp rclcpp_components sensor_msgs geometry_msgs nav_msgs pimesh_msgs tf2 tf2_ros OpenCV)
 
 ament_package()

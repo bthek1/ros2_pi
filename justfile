@@ -1,11 +1,11 @@
 # ros2_pi — the commands you actually type. `just` with no arguments lists them.
 #
-# Deliberately short, and meant to stay that way: this file is the *user-facing*
-# surface of the workspace and nothing else. Everything that is not a day-to-day
+# Deliberately short and meant to stay that way: this file is the *user-facing*
+# surface of the workspace and nothing else. Anything that is not a day-to-day
 # action is a script in tools/, run as one — no recipe, no wrapper:
 #
 # The phase gates, each exiting non-zero and printing the number it asserted on:
-#   bash tools/gates/{build,capture,ipc,keypoints,depth,fusion,mesh}.sh    P0-P6
+#   bash tools/gates/{build,capture,ipc,keypoints,depth,fusion,mesh,odom}.sh P0-P7
 #   bash tools/gates/{gpu-stack,calibration}.sh  the GPU toolchain; P9's intrinsics
 #   bash tools/gates/{test,view-configs,justfile}.sh          the workspace's own
 #   bash tools/gates/hello-{build,talk,ipc,lan,clean}.sh      the scaffolding's own
@@ -14,16 +14,12 @@
 #   bash tools/fetch-{gpu-stack,model}.sh   the GPU stack and the depth weights
 #   bash tools/mesh-views.sh <mesh.ply>     three offscreen renders — P6's evidence
 #   bash tools/{calibrate,camera-reset}.sh  P9's intrinsics; the V4L2 controls
-#   bash tools/test.sh                the unit tests, here (tools/test-pi.sh there)
-#   bash tools/stragglers.sh          assert nothing outlived its session
+#   bash tools/test.sh   the unit tests here; tools/stragglers.sh sweeps both hosts
 #   bash tools/{sync,build,clean}-pi.sh and tools/clean.sh   the Pi's trees, ours
-#
 # Recipe bodies stay one line each. `just` gives a body no way to share code with
-# another, so inlined bash drifts between copies and shellcheck cannot parse
-# {{ }} to catch it; tools/just-lib.sh holds the prelude, the Pi's ssh
-# invocation and the kill patterns. tools/ is rsynced to the Pi, so everything in
-# it works on both distros — tools/ros-env.sh discovers which rather than naming
-# one.
+# another, so inlined bash drifts and shellcheck cannot parse {{ }} to catch it;
+# tools/just-lib.sh holds the prelude, the Pi's ssh invocation and the kill
+# patterns, and tools/ is rsynced so it works on both distros.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -62,7 +58,7 @@ view-camera seconds="600":
 replay bag seconds="600":
     @bash "{{ ws }}/tools/replay.sh" {{ bag }} {{ seconds }}
 
-# ORB corners and the rotation-only pose, in RViz. bag = optional, else the camera
+# ORB corners and the pose, in RViz. bag = optional, else the camera
 [group('run')]
 view-keypoints seconds="600" bag="":
     @bash "{{ ws }}/tools/view-keypoints.sh" {{ seconds }} {{ bag }}
@@ -76,3 +72,8 @@ view-depth seconds="600" bag="":
 [group('run')]
 view-mesh seconds="600" bag="":
     @bash "{{ ws }}/tools/view-mesh.sh" {{ seconds }} {{ bag }}
+
+# The camera's trajectory, in RViz. regime = sixdof (default) or rotation_only
+[group('run')]
+view-odom seconds="600" bag="" regime="sixdof":
+    @bash "{{ ws }}/tools/view-odom.sh" {{ seconds }} {{ bag }} {{ regime }}

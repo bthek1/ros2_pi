@@ -223,19 +223,20 @@ scaffolding only:
 
 ```text
 Available recipes:
-    default                             # List the recipes
+    default                                        # List the recipes
 
     [build]
-    build *args                         # Build the workspace
+    build *args                                    # Build the workspace
 
     [run]
-    hello-compose seconds="30"          # Hello world, here: both components in one container. seconds = how long to run
-    hello-lan seconds="20"              # Hello world, across the LAN: talker on the Pi, listener here
-    replay bag seconds="600"            # A recorded bag in RViz, looping. bag = a name under bags/, or a path to one
-    view-camera seconds="600"           # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
-    view-depth seconds="600" bag=""     # The room as a depth cloud, in RViz. bag = optional, else the camera
-    view-keypoints seconds="600" bag="" # ORB corners and the rotation-only pose, in RViz. bag = optional, else the camera
-    view-mesh seconds="600" bag=""      # The room as a triangle surface, in RViz. bag = optional, else the camera
+    hello-compose seconds="30"                     # Hello world, here: both components in one container. seconds = how long to run
+    hello-lan seconds="20"                         # Hello world, across the LAN: talker on the Pi, listener here
+    replay bag seconds="600"                       # A recorded bag in RViz, looping. bag = a name under bags/, or a path to one
+    view-camera seconds="600"                      # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
+    view-depth seconds="600" bag=""                # The room as a depth cloud, in RViz. bag = optional, else the camera
+    view-keypoints seconds="600" bag=""            # ORB corners and the pose, in RViz. bag = optional, else the camera
+    view-mesh seconds="600" bag=""                 # The room as a triangle surface, in RViz. bag = optional, else the camera
+    view-odom seconds="600" bag="" regime="sixdof" # The camera's trajectory, in RViz. regime = sixdof (default) or rotation_only
 ```
 
 That is the whole list, and the shortness is the point: `build` is how you

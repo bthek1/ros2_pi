@@ -276,10 +276,10 @@ def test_the_launch_description_actually_builds(launch_module):
     assert kinds.get(Node) == len(launch_module.STATIC_TRANSFORMS)
     assert kinds.get(ComposableNodeContainer) == 1, 'there is one container, always'
     # intra_process, log_payloads, probe, probe_duration_s, align,
-    # remesh_period_s, use_cuda, pipeline — each of which exists because something
-    # outside this file has to be able to set it: the first seven for gates, the
-    # last for tools/replay.sh.
-    assert kinds.get(DeclareLaunchArgument) == 8
+    # remesh_period_s, odom_regime, use_cuda, pipeline — each of which exists
+    # because something outside this file has to be able to set it: the first
+    # eight for gates, the last for tools/replay.sh.
+    assert kinds.get(DeclareLaunchArgument) == 9
     # One per probe, loaded into the running container rather than listed in it,
     # because `composable_node_descriptions` is built when this file is evaluated
     # and cannot be made conditional on an argument. One action each rather than
@@ -418,19 +418,19 @@ def test_the_overrides_are_the_ones_the_gates_actually_pass(launch_module):
 
     `use_cuda` is a bool in depth_node, `duration_s` a double in depth_probe,
     `log_payloads` a bool in decode_node, `align` a bool in fusion_node,
-    `remesh_period_s` a double in mesh_node. A
-    `value_type` that disagrees with the declaration is the same silent no-op as
+    `remesh_period_s` a double in mesh_node, `odometry` a string in keypoint_node.
+    A `value_type` that disagrees with the declaration is the same silent no-op as
     having none.
     """
     expected = {
         'log_payloads': bool, 'use_cuda': bool, 'duration_s': float, 'align': bool,
-        'remesh_period_s': float}
+        'remesh_period_s': float, 'odometry': str}
     overrides = _override_values(launch_module)
 
     assert set(overrides) == set(expected), (
         'the override set changed; update the gates that depend on it '
         '(tools/gates/ipc.sh, tools/gates/depth.sh, tools/gates/fusion.sh, '
-        'tools/gates/mesh.sh) and this test together')
+        'tools/gates/mesh.sh, tools/gates/odom.sh) and this test together')
     for name, want in expected.items():
         assert overrides[name].value_type is want, (
             f'{name} is declared {want.__name__} by its node')
@@ -529,6 +529,81 @@ def test_fusion_and_depth_agree_on_where_the_far_clip_is(config):
     assert fusion['max_range_m'] == depth['max_range_m'], (
         'fusion clips at {} m and depth at {} m'.format(
             fusion['max_range_m'], depth['max_range_m']))
+
+
+def test_keypoints_reads_the_depth_topic_depth_publishes(config):
+    """P7's estimator needs a depth map, and it finds one by name.
+
+    **The failure is a pipeline that runs.** A mismatch here does not error, does
+    not warn at startup and does not stop a single other stage: `keypoint_node`
+    simply never sees a depth frame, holds its pose for the whole session, and
+    publishes an `odom -> base_link` that never moves. That is indistinguishable
+    from a camera sitting still — and the mesh it produces is exactly the
+    rotation-only mesh milestone D already had, so even the surface looks
+    unsurprising.
+
+    The node does log a warning once per stats window when it is in `sixdof` and
+    nothing has arrived, which is the runtime half of this; this is the half that
+    runs with no hardware.
+    """
+    depth = config['/**/depth_node']['ros__parameters']
+    keypoints = config['/**/keypoint_node']['ros__parameters']
+    assert keypoints['depth_topic'] == depth['depth_topic'], (
+        'keypoint_node reads {} and depth_node publishes {}'.format(
+            keypoints['depth_topic'], depth['depth_topic']))
+
+
+def test_keypoints_and_depth_agree_on_where_the_far_clip_is(config):
+    """The same pair as fusion's `max_range_m`, one stage over.
+
+    Past the clip a reading is the model's "far away or no idea". A landmark
+    placed there is a landmark on a surface that does not exist, and unlike a
+    voxel it is not merely wrong in the map — it goes into the rigid fit and drags
+    the *trajectory* with it. Set this higher than depth's clip and every frame
+    contributes a cluster of landmarks at exactly 6 m that appear not to move.
+    """
+    depth = config['/**/depth_node']['ros__parameters']
+    keypoints = config['/**/keypoint_node']['ros__parameters']
+    assert keypoints['max_depth_m'] == depth['max_range_m'], (
+        'keypoint_node accepts landmarks to {} m and depth clips at {} m'.format(
+            keypoints['max_depth_m'], depth['max_range_m']))
+    assert keypoints['min_depth_m'] < keypoints['max_depth_m']
+
+
+def test_the_matching_window_spans_the_gap_between_two_depth_frames(config):
+    """`sixdof` correspondences come from the tracker's pooled track ids, so the
+    window has to reach from one depth-backed frame to the next.
+
+    Depth runs at ~17 Hz against a ~59 Hz camera, so consecutive depth maps are
+    about three frames apart. A `match_window` under that leaves the 6-DoF
+    estimator with no correspondences at all — and the symptom is the one this
+    whole file is about: a node that holds its pose, forever, with nothing in any
+    log saying which knob did it.
+
+    Four rather than three, because "about three" is a ratio that moves with the
+    room's lighting: the camera drops to ~45 Hz under a manual exposure and depth
+    does not, which makes the gap smaller, but a slower GPU or a bigger model
+    makes it larger.
+    """
+    keypoints = config['/**/keypoint_node']['ros__parameters']
+    if keypoints['odometry'] != 'sixdof':
+        return
+    assert keypoints['match_window'] >= 4, (
+        'match_window is {} — two depth frames are ~3 camera frames apart'.format(
+            keypoints['match_window']))
+    assert keypoints['history_frames'] > keypoints['match_window']
+
+
+def test_the_odometry_regime_is_one_of_the_two_that_exist(config):
+    """A typo here is refused at startup by the node — it throws rather than
+    defaulting — so this is the hermetic half of the same check.
+
+    Worth having twice because the loud version only fires on a machine with the
+    container running, and the committed default is what every gate and every
+    viewer picks up.
+    """
+    keypoints = config['/**/keypoint_node']['ros__parameters']
+    assert keypoints['odometry'] in ('sixdof', 'rotation_only')
 
 
 def test_the_two_world_nodes_agree_on_the_volume_key(config):

@@ -84,7 +84,7 @@ fi
 # something. The camera path is covered by view-camera in the row above.
 
 # recipe -> the argv to run it with, and what "it is up" means for it.
-RECIPES=(lan compose view-camera replay view-keypoints view-depth view-mesh)
+RECIPES=(lan compose view-camera replay view-keypoints view-depth view-mesh view-odom)
 
 # `replay` is the only recipe here that takes an argument, and the bag it takes
 # has to be *this gate's own*. bags/ is git-ignored, so on a fresh clone there

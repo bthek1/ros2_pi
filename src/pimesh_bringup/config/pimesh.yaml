@@ -84,6 +84,14 @@
   ros__parameters:
     input_topic: /image_raw
 
+/**/odom_probe:
+  ros__parameters:
+    # tools/gates/odom.sh's instrument, loaded with probe:=odom_probe. Measures the
+    # trajectory off the topic rather than off keypoint_node's own counters,
+    # because the failure P7 fixed was a pose every internal number described
+    # correctly and that left the node inverted.
+    odom_topic: /odom
+
 /**/keypoint_node:
   ros__parameters:
     # P3's numbers. 500 features is enough that churn at the cap does not dominate
@@ -110,8 +118,120 @@
     # why its cost is reported separately in the stats line.
     preview_rate_hz: 10.0
     preview_quality: 80
-    # odom -> base_link, rotation only, translation identically zero. P7 is what
-    # makes the translation real.
+    # --- P7: which estimator drives the pose -----------------------------------
+    #
+    # sixdof pairs each frame's corners with its own depth map and fits a rigid
+    # transform to the landmarks; rotation_only is P3's bearing-ray fit, which
+    # publishes translation identically zero. The second is a *control*, not a
+    # fallback — tools/gates/odom.sh runs the clip through both, because a claim
+    # that translation improves the surface needs a run without it. Reached
+    # through the `odom_regime:=` launch argument rather than by editing this file.
+    odometry: sixdof
+    # **Must name depth_node's own depth_topic below.** A mismatch is not a
+    # partial failure: this node would never see a depth map, hold its pose for
+    # the whole session, and look exactly like a camera that is not moving.
+    # test_transforms asserts the pair.
+    depth_topic: /depth
+    # The 6-DoF gates, and they are the point-cloud versions of the three above.
+    # 12 pairs rather than 8 because three points already determine a rigid
+    # transform exactly, so a handful of them fits its own noise perfectly and
+    # reports a residual of zero. The reject fraction is higher for the same
+    # reason the residual is measured in metres: a ray can be at most 180 degrees
+    # wrong, while a depth reading off the far side of an occlusion edge is metres
+    # out and drags the translation with it.
+    # Estimate the scale difference between two frames' landmarks and throw it
+    # away. **Measured, not reasoned**: with it off the estimator reported an
+    # 89.5 m path over a 45 s desk sweep and a surface *worse* than rotation-only
+    # odometry, because a rigid fit has nowhere to put the depth network's
+    # frame-to-frame scale wobble except into translation along the view axis.
+    # fusion_node's aligner exists for the same wobble and hits its 15% clamp on
+    # one frame in seven of this clip.
+    divide_out_depth_scale: true
+    # Fit the rotation from bearing rays and the translation from the landmarks,
+    # rather than both from the landmarks at once. A pixel is exact to a fraction
+    # of one and a monocular depth reading is not, and solving them together lets
+    # the depth noise into the rotation as well as letting the fit trade one
+    # against the other: measured over a simulated sweep, 0.051 m of per-step
+    # translation error together against 0.016 m apart.
+    # pnp | points. pnp poses each frame from the keyframe's 3D landmarks and this
+    # frame's *pixels*, so only one depth map is involved and the translation comes
+    # from reprojection geometry rather than from differencing two noisy depth maps.
+    # points is the obvious alternative — a rigid fit between two unprojected
+    # clouds — and it is the control: see PnpFit in rgbd_odometry.hpp for the four
+    # measurements that ended with it.
+    pose_solver: pnp
+    # RANSAC inlier threshold and the refusal ceiling, both in pixels. Generous
+    # beside the 0.4955 px this camera's calibration reprojects at, because the 3D
+    # points being fitted come from a monocular depth network and carry its error,
+    # not the lens's. **In pixels on purpose**: the metres this pipeline works in
+    # are arbitrary until depth_scale is pinned with a tape measure, so a gate in
+    # metres is a gate on an unknown unit.
+    pnp_inlier_px: 3.0
+    max_reprojection_px: 2.0
+    # A new reference keyframe when fewer than this many of its landmarks are
+    # still tracked, whatever the angle and distance thresholds below say. A
+    # keyframe the camera has turned away from satisfies both of those right up
+    # until it does not, and its last surviving correspondences sit in one corner
+    # of the frame — the one geometry a translation fit is genuinely bad on.
+    keyframe_min_shared: 60
+    # Consecutive depth frames without a usable fit before the reference view is
+    # replaced at the held pose. Without it, losing track once loses it for the
+    # rest of the session: the first version only replaced the reference on a
+    # *successful* fit, and measured on bags/desk1 that froze pose_ok at 188 while
+    # held climbed past 560. Replacing it bakes in the drift of the lost stretch,
+    # which is the better of the two.
+    # **The gate a reprojection error cannot supply.** PnP reports how well its
+    # pose explains the pixels it was given and has no opinion about whether the
+    # 3D points behind them are where the depth network said. Measured on
+    # bags/desk1: a single step of 9.4 m between two depth frames at a mean inlier
+    # reprojection of 1.23 px, which then became the reference every later frame
+    # was measured from. In the map's arbitrary units — landmarks are clipped at
+    # max_depth_m, so 2.0 m/s is about a third of the visible depth per second.
+    max_speed_m_s: 2.0
+    max_turn_rad_s: 6.0
+    max_hold_frames: 5
+    # A low-pass on the measured position, in seconds. The one filter in this
+    # pipeline, and it is here because the signal and the noise sit in different
+    # bands: a hand sweeping a room moves centimetres a second, while the
+    # translation estimate's error is white at the depth rate and measured ~0.09 m
+    # per sample against ~0.003 m of real motion per sample. A better estimator
+    # does not change that ratio — a monocular depth network's error is structured
+    # and three hundred landmarks share most of it — but refusing to believe the
+    # camera moved 9 cm and back in 57 ms does. 0 disables it.
+    translation_tau_s: 0.0
+    min_landmark_pairs: 12
+    max_point_residual_m: 0.05
+    point_reject_fraction: 0.3
+    # A keypoint's depth is the median of a 3x3 patch, refused when the patch
+    # spreads more than 10%. ORB puts corners on edges by construction and an edge
+    # is where a depth map steps between foreground and background, so a
+    # single-pixel read at a corner lands on either side of the step at random.
+    depth_patch: 3
+    depth_patch_spread: 0.1
+    min_depth_m: 0.2
+    # **Must match depth_node's max_range_m below**, for the same reason
+    # fusion_node's does: past it a reading is the model's "far away or no idea",
+    # and a landmark on the clip plane is a landmark on a surface that does not
+    # exist. test_transforms asserts the pair.
+    max_depth_m: 6.0
+    # Frames of ORB output kept waiting for their depth map. depth_node costs
+    # ~55 ms, so a depth map arrives ~3 frames after its image; 90 is ~1.5 s at
+    # 59 Hz, which is headroom of a different order rather than a tight fit.
+    history_frames: 90
+    # The keyframe store. **Every frame's pose is measured against the newest
+    # keyframe rather than against the previous frame**, and that is a change P7's
+    # plan did not call for: frame-to-frame chaining is a random walk whose error
+    # per step is the size of one step's real motion, and on bags/desk1 it reported
+    # a 117 m path, 6.9 m of net drift, and a surface worse than rotation-only
+    # odometry. Measuring from a keyframe sets the pose absolutely instead of
+    # accumulating it. Either threshold alone admits a new one: a camera panning on
+    # the spot travels no distance and still sees a different room.
+    keyframe_angle_deg: 18.0
+    keyframe_distance_m: 0.3
+    max_keyframes: 500
+    # odom -> base_link. Rotation only in the rotation_only regime; a real
+    # translation in sixdof, published at the depth rate at each depth map's own
+    # stamp, which is exactly the set of stamps fusion_node looks up.
     publish_tf: true
     odom_frame: odom
     base_frame: base_link

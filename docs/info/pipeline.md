@@ -150,16 +150,19 @@ the mesh never sees. `decode_node`'s stats line counts inter-arrival gaps over
 
 ## Stage 3 — Keypoints (`keypoint_node`, dev box)
 
-**Built 2026-09-12** — P3, [#5](https://github.com/bthek1/ros2_pi/issues/5). The
-rotation-only regime is built; the RGB-D regime below is P7.
+**Built 2026-09-12** — P3, [#5](https://github.com/bthek1/ros2_pi/issues/5).
+**6-DoF added 2026-09-19** — P7, [#8](https://github.com/bthek1/ros2_pi/issues/8).
+Both regimes are built and `odometry: sixdof` is the default; `rotation_only` is
+P3's estimator, kept as the control `tools/gates/odom.sh` measures against.
 
 **Job:** find repeatable corners, match them across frames, and turn the matches
 into camera motion.
 
 **Measured** (`bash tools/gates/keypoints.sh`, over all 3489 frames of
-`bags/desk1`): **5.99 ms/frame** mean against an 8 ms budget, on the node's own
-clock — **4.04 ms** of detection and **1.77 ms** of matching — sustaining
-**57.9 Hz**, with a matched-keypoint fraction of **0.9063** against the
+`bags/desk1`): **6.54 ms/frame** mean against an 8 ms budget, on the node's own
+clock — **4.02 ms** of detection and **2.39 ms** of matching — sustaining
+**57.8 Hz**, re-measured 2026-09-19 with P7's pose worker in the same process
+(P3 measured 5.99 ms with nothing but decode beside it), with a matched-keypoint fraction of **0.9063** against the
 predecessor's algorithm at **0.9065** on the same frames. The annotated preview
 costs a further **2.2 ms** and is capped at ~10 Hz, which is why it is accounted
 separately: it is an output for a person, and folding it into the pipeline's cost
@@ -189,12 +192,63 @@ the budget that was really 13%. Every C++ cost in this document now assumes
   one: strict frame-to-frame matching loses ~25% of keypoints to detection
   flicker at the feature cap **(inherited)**. Reject matches whose Hamming
   distance exceeds 64 of 256 bits — a lookalike corner is worse than no corner.
-- **Two odometry regimes, and be honest about which is running:**
-  - *Rotation only* (bearing rays, no depth): robust, cheap, and **wrong the
-    moment the camera translates**. A hand pan carries ~0.9 m of arm arc, which
-    smears the mesh. Fine for a compass, not for a surface.
-  - *RGB-D* (keypoints backed by `/depth`, 3D–3D fit): 6-DoF and what the mesh
-    actually needs. This is the default for meshing.
+- **Two odometry regimes, and the node states which is running at startup.**
+  - *Rotation only* (bearing rays, no depth): robust, cheap, and **silent about
+    translation** — it publishes zero, which is the honest scope of what rays can
+    support. Published at the camera's rate, ~58 Hz, at each frame's own stamp.
+  - *`sixdof`* (the default): each depth frame's corners are paired with the
+    **newest keyframe's** 3D landmarks by track id, and the pose is solved with
+    `cv::solvePnPRansac` — the keyframe's landmarks against *this* frame's pixels.
+    Published at the depth rate, ~17.5 Hz, at each depth frame's own stamp, which
+    is exactly the set of stamps `fusion_node` looks up.
+
+    **Measured** (`bash tools/gates/odom.sh`, whole clip, 2026-09-19): **1.421 px**
+    mean inlier reprojection over **97 inliers**, **79.9%** of depth frames posed
+    rather than holding, 1043 poses at **17.47 Hz**, a **31.1 m** path with
+    **4.87 m** of net displacement in the map's arbitrary units, and 22 keyframes
+    at 837 kB.
+
+  **Three things about that design were arrived at by measurement and each is a
+  correction of the obvious answer**, which is why they are written down rather
+  than left in the code:
+
+  1. **Not a rigid fit between two unprojected clouds**, which is what P7's plan
+     described. Both clouds carry the depth network's error, and it is
+     *structured* — a smooth warp, not per-pixel noise — so it does not average
+     down over three hundred landmarks; and the network's overall scale breathes a
+     few percent a frame, which a rigid fit can only absorb as translation along
+     the view axis. Measured in order on `bags/desk1`: rigid frame-to-frame
+     reported an **89.5 m** path over a 45 s desk sweep; dividing the scale out
+     left it at 117 m; measuring against a keyframe brought it to 44 m; a low-pass
+     brought it to 8.4 m. PnP changes the *measurement* rather than the filtering
+     — the current frame contributes only pixels, so one depth map is involved
+     instead of two and there is no scale ratio between them.
+  2. **Not against the previous frame.** The pose is set **absolutely** from the
+     keyframe's rather than accumulated onto the last one, so nothing chains and
+     per-step error does not integrate. Simulated over a 35 s sweep: final
+     position error **0.106 m** against **2.70 m** frame-to-frame, same noise and
+     same estimator.
+  3. **A plausibility gate on the motion, which a residual cannot supply.** PnP
+     reports how well its pose explains the pixels it was given and has no opinion
+     about whether the 3D points behind them are where the depth network said.
+     Measured: a single step of **9.4 m** between two depth frames at a mean inlier
+     reprojection of **1.23 px** — confident and wrong — which then became the
+     reference every later frame was measured from. `max_speed_m_s` refuses it; on
+     the reference clip it fires on 96 of 1043 poses and the fastest published
+     motion comes out at 1.9986 m/s against its 2.0 ceiling.
+
+  **`camera_step()` is the other half of P7 and is worth more than the 6-DoF work
+  on this clip.** A fit answers `P_cur = M * P_prev` for a point seen twice; the
+  camera composes with `M⁻¹`, because the point did not move. From P3 until
+  2026-09-19 `update_pose()` composed `M` itself, so the published `odom → base_link`
+  turned **left** when the camera panned right. Nothing failed: a frame that moves
+  when you pan looks correct in RViz, the residual gate is indifferent to the sign,
+  and a TSDF built from consistently mirrored poses still produces a surface.
+  Measured on `bags/desk1` with the old composition restored, same binary
+  otherwise — median paired-surface gap **1.3440 m** against **0.4456 m**, agreement
+  **0.1057** against **0.2087** — and the first of those reproduces what milestone D
+  recorded, 1.32–1.37 m at 0.115, which is what ties the number to the bug rather
+  than to the afternoon. **3× on the surface, for one transpose.**
 - Gates before a pose is trusted: at least 8 matched pairs, and a mean ray
   residual under 0.03 rad (~1.7°, ~28 px at fx=953) after reject-worst refits.
   Failing the gate means *hold the last pose*, not publish a guess — and the node
@@ -210,9 +264,18 @@ the budget that was really 13%. Every C++ cost in this document now assumes
   roll (measured in `test_rotation_fit`). A rolled hand-held sweep is exactly where
   the gate is least sharp.
 - Keep a **keyframe store** — descriptors, bearing rays and 3D landmarks, a new
-  keyframe whenever the view direction is ~18° from every stored one or the
-  camera has moved 0.3 m. It is what makes relocalisation and loop closure
-  possible later, and it costs ~16 kB per keyframe.
+  keyframe at ~18° of view change or 0.3 m of motion. P7's plan said nothing would
+  read it yet; the odometry above reads the newest entry as the view each frame is
+  posed against, because frame-to-frame chaining measured as a random walk. What
+  is still unbuilt is the *other* reader — matching against **every** keyframe to
+  recognise a place seen minutes ago — which is the deferred loop-closure work.
+
+  **It costs ~37 kB each, not the ~16 kB P7 budgeted**, and the difference is
+  recorded rather than designed away: 500 32-byte descriptors *are* 16 kB, and the
+  three geometric arrays beside them — a bearing ray per feature, a landmark for
+  the half with a usable depth reading, and the row index tying them together —
+  are the rest. At the 500-keyframe ceiling that is ~18 MB. Measured on the
+  reference clip: 22 keyframes, 837 kB.
 
 `/keypoints` carries positions, descriptors and per-feature match ids so the
 dashboard can draw tracks without recomputing anything.
@@ -339,18 +402,34 @@ without a pose at their own stamp and **0** without their colour twin.
   aligner is not broken; `test_scale_aligner` pins its properties, including the
   one that matters most (a constant bias produces corrections whose product is
   exactly 1, so it never pushes the map). It is correcting the smaller error:
-  `keypoint_node` publishes **rotation only**, and a hand-held sweep's ~0.9 m of
+  `keypoint_node` published **rotation only** until P7, and a hand-held sweep's ~0.9 m of
   unmodelled arm arc is a 30-45% geometric error at 2-3 m against a scale wobble
-  clamped at 15%. **P7 is the trigger** to turn the comparison back into an
-  assertion. What is measured today is that it does not make things worse:
+  clamped at 15%. What is measured is that it does not make things worse:
   203 300 blocks with it against 221 918 without.
+
+  **P7 was named as the trigger, it fired, and the comparison moved.** Re-measured
+  2026-09-19 with P7's corrected rotation and 6-DoF translation in place, the same
+  gate reports **0.4805 m aligned against 0.5330 m unaligned** and agreement
+  **0.2191 against 0.1606** — the aligner ahead on both for the first time, where
+  before it was a coin flip with the winner alternating window by window. That is
+  consistent with the diagnosis above: the aligner was correcting the smaller error
+  while a mis-composed pose supplied the larger one, and with the pose fixed its
+  correction is visible.
+
+  **It is still printed rather than asserted**, because it is one run of a
+  measurement that has already flipped once, and a gate that asserts on a number
+  which alternates is a flaky gate. Promoting it needs the result to repeat across
+  runs; that is the entry in
+  [milestone-d-future.md](../plans/future/milestone-d-future.md).
 - Voxels observed fewer than 3 times do not ray-cast — that is the noise floor.
 - **The map is bounded at 300 000 blocks (~1.9 GB) and `bags/desk1` reaches
   200 000 of them.** That is a symptom, not a resolution set too fine: 200 000
   blocks is over 2000 m² of surface for a room with perhaps 60 m² in it, which is
-  thirty layers of the same wall, laid down by rotation-only odometry and an
-  unpinned `depth_scale`. The ceiling is what stops a session dying of memory
-  while those are outstanding; it fixes neither.
+  thirty layers of the same wall. Two causes were named when that was written —
+  rotation-only odometry and an unpinned `depth_scale` — and P7 settled the first:
+  with 6-DoF poses and the composition corrected the clip still fills 200 000-plus
+  blocks, so the layering is not the pose. The ceiling is what stops a session
+  dying of memory while the rest is outstanding; it fixes neither.
 - **A surface that moves further than one truncation leaves a ghost**, because
   only the blocks this frame's band names are updated. That is how every
   voxel-hashing integrator behaves and it is the price of not walking the whole
@@ -410,10 +489,14 @@ layers of the same wall — it is 24 rather than the volume's 3, chosen from the
 weight histogram `mesh_node` logs, and it is the difference between 15.7 M
 triangles and 800 k.
 
-**What the mesh does not look like yet:** a room. See stage 5 on rotation-only
-odometry; the surface is a shell at roughly constant radius rather than a desk
-with a wall behind it, and the scale is arbitrary until a tape measure pins
-`depth_scale`.
+**What the mesh does not look like yet:** a room. P7 corrected the pose — a
+rotation that had been composed inverted since P3, worth 3× on the paired-surface
+gap, and a real translation on top of it — and the surface is better for it
+without being a room. What is left is the depth network rather than the geometry:
+Depth Anything V2 estimates *relative* depth, its scale breathes a few percent a
+frame, and its shape changes with viewpoint, so the same wall comes back at a
+different distance however well the camera is posed. And the scale is still
+arbitrary until a tape measure pins `depth_scale`.
 
 ## Stage 7 — Dashboard (`dashboard_node`, dev box)
 

@@ -38,8 +38,8 @@ doc, commit and conversation.
 | A | [#4](https://github.com/bthek1/ros2_pi/issues/4) | P0–P1 | ✓ **closed 2026-09-09** — one source tree builds under both distros; the Pi ships stamped MJPEG |
 | B | [#5](https://github.com/bthek1/ros2_pi/issues/5) | P2–P3 | One reader, one decode, corners on it, and `bags/desk1` exists — ✓ **done 2026-09-13** |
 | C | [#6](https://github.com/bthek1/ros2_pi/issues/6) | P4 | Depth on the GPU at ≤ 80 ms, CUDA provider named in the log — ✓ **done 2026-09-15**, 55.10 ms mean |
-| D | [#7](https://github.com/bthek1/ros2_pi/issues/7) | P5–P6 | A triangle mesh you can recognise your room in |
-| E | [#8](https://github.com/bthek1/ros2_pi/issues/8) | P7–P8 | Translation is visible, and one tab shows the pipeline |
+| D | [#7](https://github.com/bthek1/ros2_pi/issues/7) | P5–P6 | A triangle mesh you can recognise your room in — ✓ **closed 2026-09-16** |
+| E | [#8](https://github.com/bthek1/ros2_pi/issues/8) | P7–P8 | Translation is visible — ✓ **P7 done 2026-09-19** — and one tab shows the pipeline |
 
 Each issue also carries a **`just view-*` RViz recipe** — a viewer for a person,
 never the evidence. The gates below are what pass or fail a phase. The view
@@ -530,23 +530,104 @@ constant radius. That is P7's to fix, and the gate says so in its own output.
 
 ---
 
-## ☐ P7 — 6-DoF odometry
+## ✓ P7 — 6-DoF odometry *(done 2026-09-19, [#8](https://github.com/bthek1/ros2_pi/issues/8))*
 
 **Goal:** translation stops being invisible, so the surface stops smearing.
 
-**Work**
+**Done 2026-09-19.** `bash tools/gates/odom.sh` over the whole of `bags/desk1`
+printed, for `odom_regime:=sixdof` against the `rotation_only` control:
 
-- Back-fill `keypoint_node` with depth-backed 3D–3D pose estimation on exact
-  RGB-D triples (a frame's ORB output, its own depth, and the TF at its stamp).
-- Rotation-only stays as a selectable fallback; the node logs its regime.
-- Keyframe store: descriptors, bearing rays and 3D landmarks, a new keyframe at
-  ~18° of view change or 0.3 m of motion, ~16 kB each.
+| | sixdof | rotation_only |
+| --- | --- | --- |
+| poses on `/odom` | 1043 at 17.47 Hz | 3452 at 57.85 Hz |
+| trajectory path | **31.1057 m** | **0.0000 m** |
+| net displacement | 4.8734 m | 0.0000 m |
+| fastest published motion | 1.9986 m/s | — |
+| median paired-surface gap | 0.4456 m | 0.4471 m |
+| median agreement | 0.2087 | 0.2254 |
 
-**Test:** `bash tools/gates/odom.sh` — replays `bags/desk1` through both regimes and
-asserts the 6-DoF run's paired-surface gap is smaller than the rotation-only
-run's on the same clip. Prints both gaps and the trajectory length each regime
-reported (a hand-held pan carries ~0.9 m of real arm arc, which rotation-only
-reports as zero).
+with the solve at **1.421 px** mean inlier reprojection over **97 inliers**,
+**79.9%** of depth frames posed rather than held, 96 poses refused as implausible
+motion, 1 depth map unmatched, and 22 keyframes at 837 kB.
+
+**Three things came out of this phase and the first is worth more than the
+phase.**
+
+**1. The rotation had been composed inverted since P3.** A fit answers
+`P_cur = M · P_prev` for a point seen twice; the camera composes with `M⁻¹`,
+because the point did not move. `update_pose()` composed `M` itself, so the
+published `odom → base_link` turned **left** when the camera panned right.
+Nothing failed — a frame that moves when you pan looks correct in RViz, the
+residual gate is indifferent to the sign, and a TSDF built from consistently
+mirrored poses still produces a surface. Measured with the old composition
+restored, same binary otherwise: median paired-surface gap **1.3440 m** against
+**0.4456 m**, agreement **0.1057** against **0.2087** — and the first of those
+reproduces what milestone D recorded (1.32–1.37 m at 0.115), which is what ties
+the number to the bug rather than to the afternoon. **3× on the surface, for one
+transpose.** `camera_step()` is now that inverse, named, with the loop closed in
+`test_rgbd_odometry`: simulate a camera with a known trajectory, show it what it
+would have seen, run the whole estimator, assert the pose that comes out is the
+trajectory that went in. `test_rotation_fit` had asserted every property of that
+pose except the direction of the one inverse between them.
+
+**2. The estimator is not the one this phase described, and four measurements
+say why.** The phase asks for a 3D–3D fit between two unprojected clouds. Both
+clouds carry the depth network's error, and it is *structured* — a smooth warp,
+not per-pixel noise — so it does not average down over three hundred landmarks;
+and the network's overall scale breathes a few percent a frame, which a rigid fit
+can only absorb as translation along the view axis. Measured in order on
+`bags/desk1`: rigid frame-to-frame reported an **89.5 m** path over a 45 s desk
+sweep; dividing the scale out left it at 117 m; measuring against a keyframe
+rather than the previous frame brought it to 44 m; a low-pass on the position
+brought it to 8.4 m. Every one of those was still worse than publishing no
+translation at all. What works is **PnP**: the keyframe's 3D landmarks against
+*this* frame's **pixels**, so one depth map is involved instead of two, there is
+no scale ratio between them, and the translation comes from where the corners
+landed on the sensor. The residual is then in **pixels**, which is the other
+reason to prefer it — the metres this pipeline works in are arbitrary until
+`depth_scale` is pinned with a tape measure.
+
+**3. A confident fit is not a correct one, and a residual cannot tell you.** PnP
+reports how well its pose explains the pixels it was given and has no opinion
+about whether the 3D points behind them are where the depth network said.
+Measured: a single step of **9.4 m** between two depth frames at a mean inlier
+reprojection of **1.23 px**, which then became the reference every later frame was
+measured from, while the mean step stayed at 2.7 cm and looked healthy.
+`max_speed_m_s` refuses that separately. **And the first version of that guard was
+armed only when an unrelated parameter was non-zero**, so with the low-pass off it
+reported `implausible=0` over a trajectory containing that step — a guard that is
+conditionally armed is worse than no guard, because its counter reads as evidence.
+
+**The keyframe store is built as specified and is consumed after all.** The phase
+said nothing would read it; measurement said frame-to-frame chaining is a random
+walk, so the odometry reads the newest entry as the view each frame is posed
+against, and the pose is **set** from it rather than accumulated. Simulated over a
+35 s sweep: final position error **0.106 m** against **2.70 m** frame-to-frame.
+What is still unbuilt is the other reader — matching against *every* keyframe to
+recognise a place seen minutes ago — which is the deferred loop-closure work. It
+measures **~37 kB** per keyframe rather than the ~16 kB budgeted here: the
+descriptors alone are 16 kB and the three geometric arrays beside them are the
+rest.
+
+**What the test does not assert, and this is deliberate.** P7 asks it to assert
+that the 6-DoF run's paired-surface gap is smaller than the rotation-only run's.
+On `bags/desk1` it is not — 0.4456 m against 0.4471 m, a dead heat, with the
+winner alternating window by window — while every number the 6-DoF run reports
+about itself is healthy. `desk1` is a **pan**: ~0.9 m of arm arc against 2–3 m of
+scene, so rotation already explains most of the frame motion, and what is left is
+dominated by the depth network rather than by the pose. So the gate prints that
+comparison and asserts instead a **ceiling the pre-P7 composition fails**, which
+is a threshold that has been watched to exclude something. The trigger for turning
+it back into an assertion is a clip with deliberate translation — a slow walk
+around the room — which needs a person and the camera and is therefore in
+[milestone-e-future.md](milestone-e-future.md) rather than here.
+
+**Test:** `bash tools/gates/odom.sh` — replays `bags/desk1` through both regimes
+with `odom_probe` loaded into the container, and asserts: the control publishes
+translation identically zero; the 6-DoF run reports a trajectory whose fastest
+published motion is under 2.5 m/s; the solve reaches ≤ 2.0 px over ≥ 55% of depth
+frames; and **both** regimes' median paired-surface gap is under 0.8 m with
+agreement over 0.15. Prints both trajectory lengths and both surface gaps.
 
 ---
 

@@ -136,6 +136,10 @@ PROBE_COMPONENTS = [
     # tools/gates/depth.sh: the depth rate on its own steady clock, and whether
     # /depth/rgb is byte-identical to the frame each depth map was inferred on.
     ('depth_probe', 'pimesh_perception', 'pimesh_perception::DepthProbe'),
+    # tools/gates/odom.sh: the trajectory as published, off /odom — the path
+    # length, the net displacement, and above all the largest single step, which
+    # is the number a mean hides.
+    ('odom_probe', 'pimesh_perception', 'pimesh_perception::OdomProbe'),
 ]
 
 
@@ -213,6 +217,8 @@ def _component(
                     LaunchConfiguration('align'), value_type=bool),
                 'remesh_period_s': ParameterValue(
                     LaunchConfiguration('remesh_period_s'), value_type=float),
+                'odometry': ParameterValue(
+                    LaunchConfiguration('odom_regime'), value_type=str),
             },
         ],
         extra_arguments=extra,
@@ -297,6 +303,16 @@ def generate_launch_description() -> LaunchDescription:
                         'tools/gates/mesh.sh sets it past the clip length for its '
                         'control run, so nothing meshes while the integrator is '
                         'measured.',
+        ),
+        DeclareLaunchArgument(
+            'odom_regime',
+            default_value='sixdof',
+            description="keypoint_node's estimator: sixdof fits a rigid "
+                        'transform to depth-backed landmarks, rotation_only '
+                        'fits bearing rays and publishes zero translation. The '
+                        'second is P3\'s estimator, kept as the control run in '
+                        'tools/gates/odom.sh — a claim that translation improves '
+                        'the surface needs a run without it.',
         ),
         DeclareLaunchArgument(
             'use_cuda',

@@ -36,9 +36,31 @@ printed and not asserted on, and both say so.
 
 ---
 
-## Re-measure whether scale alignment helps, once odometry has translation
+## Make the scale-alignment comparison an assertion, once it repeats
 
-**Trigger: P7, 6-DoF odometry.**
+**Trigger: the result below holding across runs.** P7 was the old trigger and it
+has fired; what is left is repeatability, which is a measurement anyone can take
+today — three runs of `bash tools/gates/fusion.sh` and a look at whether the sign
+is stable.
+
+**P7 fired, and the comparison moved.** Re-measured 2026-09-19 with the corrected
+pose and 6-DoF translation in place, the same gate reports **0.4805 m aligned
+against 0.5330 m unaligned** and agreement **0.2191 against 0.1606** — the aligner
+ahead on both for the first time, where before the winner alternated window by
+window. That is consistent with the diagnosis below: it was correcting the smaller
+error while a mis-composed pose supplied the larger one.
+
+It is still **printed rather than asserted** because that is one run of a number
+which has already flipped once, and a gate that asserts on a number which
+alternates is a flaky gate — the worst kind, because it teaches people to re-run
+until it passes. When three runs agree on the sign, the comparison goes back into
+`gates/fusion.sh` as an assertion with a margin taken from the spread of those
+runs, and the long note in its header is replaced by the measurement.
+
+The original entry follows, because it is what the number above is evidence
+about.
+
+---
 
 P5 asks `tools/gates/fusion.sh` to assert that per-frame scale alignment makes
 two views of the same wall agree better. Measured 2026-09-16 on `bags/desk1` it
@@ -58,6 +80,8 @@ separate. If they do, the comparison goes back into the gate as an assertion and
 the long note in its header is replaced by the measurement. If they still do not,
 that is worth knowing too — and would say the aligner is not earning its 20 ms
 of ray-casting per frame.
+
+*(They separated. See the top of this entry.)*
 
 ---
 

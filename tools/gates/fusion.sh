@@ -61,9 +61,12 @@
 # asserting a comparison that measurement says is a coin flip. The positive
 # properties of the aligner live in `test_scale_aligner`, which is where this
 # workspace puts logic that can be wrong in silence; the gate's job is the
-# numbers about a running system. **P7 is the trigger** — when odometry reports
-# translation, this comparison becomes worth asserting and the entry in
-# docs/plans/future/milestone-d-future.md says so.
+# numbers about a running system. **P7 was the trigger and it fired**: with the
+# corrected pose the aligned run came out ahead on both numbers for the first time
+# (0.4805 m against 0.5330 m, 0.2191 against 0.1606, measured 2026-09-19). It is
+# still printed rather than asserted, because one run of a number that has already
+# flipped once is not a threshold — the entry in
+# docs/plans/future/milestone-d-future.md now asks for the result to repeat.
 #
 # What the control *does* assert: that `align:=false` reaches the node at all,
 # and that the aligner does not inflate the map. A knob whose off position has
@@ -470,14 +473,25 @@ echo "  ... blocks        : ${cmp_on:-?} aligned vs ${cmp_off:-?} unaligned at w
 echo "  ... integrate     : ${integrate_mean} ms aligned vs ${c_integrate:-?} ms unaligned"
 echo
 echo "  P5 asks this gate to assert the aligned gap is smaller. Measured"
-echo "  2026-09-16 it is not: the two runs are a coin flip on both the gap and"
-echo "  the agreement, because keypoint_node publishes rotation only and a"
-echo "  hand-held sweep's ~0.9 m of unmodelled arm arc is a far larger error"
-echo "  than the scale wobble the aligner clamps at 15%. The aligner's own"
-echo "  properties are pinned in test_scale_aligner instead, which is where"
-echo "  this workspace puts logic that can be wrong in silence. **P7 is the"
-echo "  trigger** to turn this back into an assertion — see"
-echo "  docs/plans/future/milestone-d-future.md."
+echo "  2026-09-16 it was not: the two runs were a coin flip on both the gap"
+echo "  and the agreement, because keypoint_node published rotation only —"
+echo "  and, as P7 later found, published it turning the wrong way — so a"
+echo "  hand-held sweep's unmodelled arm arc was a far larger error than the"
+echo "  scale wobble the aligner clamps at 15%."
+echo
+echo "  **P7 was named as the trigger and it fired.** Re-measured 2026-09-19"
+echo "  with the corrected pose and 6-DoF translation, the aligner came out"
+echo "  ahead on both numbers for the first time: 0.4805 m against 0.5330 m,"
+echo "  and 0.2191 against 0.1606. That is consistent with the diagnosis — it"
+echo "  was correcting the smaller error while a mis-composed pose supplied"
+echo "  the larger one."
+echo
+echo "  It stays *printed* all the same, because that is one run of a number"
+echo "  which has already flipped once, and a gate asserting on a number that"
+echo "  alternates is a flaky gate. Promoting it needs the result to repeat"
+echo "  across runs; see docs/plans/future/milestone-d-future.md. The"
+echo "  aligner's own properties are pinned in test_scale_aligner regardless,"
+echo "  which is where this workspace puts logic that can be wrong in silence."
 echo
 echo "  And the scale itself is still arbitrary. Monocular depth is"
 echo "  scale-ambiguous, so every distance above is plausibly shaped and the"
