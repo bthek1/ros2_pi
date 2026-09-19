@@ -133,6 +133,15 @@ if(BUILD_TESTING)
   if(TARGET test_shared_volume)
     target_link_libraries(test_shared_volume world_components)
   endif()
+
+  # The saved surface, read back both ways. P6's evidence is a triangle count
+  # taken off a PLY file through read_ply, so writer and reader being wrong
+  # *together* is invisible to the gate and to a round trip alike — this suite
+  # also reads the bytes against the layout the header promises.
+  ament_add_gtest(test_mesh_io test/test_mesh_io.cpp)
+  if(TARGET test_mesh_io)
+    target_link_libraries(test_mesh_io world_components)
+  endif()
 endif()
 
 ament_export_include_directories(include)

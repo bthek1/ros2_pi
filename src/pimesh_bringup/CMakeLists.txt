@@ -44,6 +44,13 @@ if(BUILD_TESTING)
   # its azimuth would write three copies of one picture and satisfy that check
   # three times over.
   ament_add_pytest_test(test_mesh_render test/test_mesh_render.py)
+
+  # P3's outside opinion. gates/keypoints.sh asserts that keypoint_node's matched
+  # fraction is within 5 points of this reimplementation of the predecessor's
+  # algorithm — so the reimplementation decides the gate. Two of the ways it can
+  # be wrong move the number *up* and make the gate agree better: many-to-one
+  # matching, and scoring a featureless frame as zero.
+  ament_add_pytest_test(test_orb_reference test/test_orb_reference.py)
 endif()
 
 ament_package()

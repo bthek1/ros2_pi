@@ -24,6 +24,18 @@ OpenCV's ORB is wrong, both are wrong together.
 It is deliberately not fast. It has no frame rate to make and no deadline, so it
 decodes and matches every frame in the clip, which is the one advantage it has
 over the node: it sees frames the node was right to drop.
+
+**The tracking is a class rather than a loop body, and that is what makes it
+checkable.** Every way this can be wrong produces a number the gate will happily
+assert on: drop the one-to-one claim and two features inherit one track, which
+moves the matched fraction *up* and makes the comparison agree better; count a
+featureless frame as a matched fraction of zero and the reference drifts about
+five points from the node it is the reference for, which is the whole tolerance.
+Neither shows up as a failure — they show up as a gate that passes for the wrong
+reason. `src/pimesh_bringup/test/test_orb_reference.py` pins the properties with
+synthetic descriptors, no bag and no camera, and pins the same ones
+`test_orb_tracker` pins on the C++ side, which is the only way the two numbers
+are comparable at all.
 """
 
 import argparse
@@ -63,66 +75,94 @@ def read_compressed(bag: str, topic: str):
         yield deserialize_message(record[1], CompressedImage)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('bag', help='a bag directory (must contain metadata.yaml)')
-    parser.add_argument('--topic', default='/image_raw/compressed')
-    parser.add_argument('--max-features', type=int, default=500)
-    parser.add_argument('--match-window', type=int, default=10)
-    parser.add_argument('--match-max-distance', type=int, default=64)
-    # The same warm-up the C++ probe skips, and for the same reason: the first
-    # frame can match nothing and the window takes ten frames to fill, so a mean
-    # taken from frame zero is a measurement of the warm-up rather than of the
-    # tracker.
-    parser.add_argument('--warmup-frames', type=int, default=15)
-    parser.add_argument('--limit', type=int, default=0, help='0 = the whole clip')
-    args = parser.parse_args()
+# The three defaults below are config/pimesh.yaml's, spelled once here and passed
+# to argparse from these names so the CLI and the class cannot disagree.
+MATCH_WINDOW = 10
+MATCH_MAX_DISTANCE = 64
+# The same warm-up the C++ probe skips, and for the same reason: the first frame
+# can match nothing and the window takes ten frames to fill, so a mean taken from
+# frame zero is a measurement of the warm-up rather than of the tracker.
+WARMUP_FRAMES = 15
 
-    if not pathlib.Path(args.bag, 'metadata.yaml').is_file():
-        print(f'no bag at {args.bag} (looked for metadata.yaml)', file=sys.stderr)
-        return 2
 
-    # The same three parameters as config/pimesh.yaml, and the same WTA_K=2 the C++
-    # side spells out: the 3 and 4 variants produce descriptors that Hamming
-    # distance does not describe, so a matcher configured for Hamming on one of
-    # those returns confident nonsense.
-    orb = cv2.ORB_create(
-        nfeatures=args.max_features, scaleFactor=1.2, nlevels=8, edgeThreshold=31,
+def orb_detector(max_features: int):
+    """ORB configured as `keypoint_node` configures it.
+
+    The same three parameters as config/pimesh.yaml, and the same WTA_K=2 the C++
+    side spells out: the 3 and 4 variants produce descriptors that Hamming
+    distance does not describe, so a matcher configured for Hamming on one of
+    those returns confident nonsense.
+    """
+    return cv2.ORB_create(
+        nfeatures=max_features, scaleFactor=1.2, nlevels=8, edgeThreshold=31,
         firstLevel=0, WTA_K=2, scoreType=cv2.ORB_HARRIS_SCORE, patchSize=31,
         fastThreshold=20)
-    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
-    window = deque(maxlen=args.match_window)
-    next_id = 0
-    fractions = []
-    counts = []
-    frames = 0
-    empty = 0
 
-    for msg in read_compressed(args.bag, args.topic):
-        frames += 1
-        if args.limit and frames > args.limit:
-            break
+class PooledTracker:
+    """The predecessor's pooled-window matching, and the bookkeeping around it.
 
-        buffer = np.frombuffer(bytes(msg.data), dtype=np.uint8)
-        bgr = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
-        if bgr is None:
-            continue
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    A class rather than a loop body so that a test can drive it with descriptors
+    it chose — see this module's docstring for why that matters more here than it
+    would in a node. It holds no image and no bag: `observe` takes descriptors and
+    returns who each one turned out to be.
 
-        keypoints, descriptors = orb.detectAndCompute(gray, None)
+    Deliberately *not* shared with `pimesh_perception/orb_tracker.hpp`. The gate
+    compares the two, and two implementations sharing their matching code agree
+    with each other whatever either of them does.
+    """
+
+    def __init__(
+        self,
+        match_window: int = MATCH_WINDOW,
+        match_max_distance: int = MATCH_MAX_DISTANCE,
+        warmup_frames: int = WARMUP_FRAMES,
+    ):
+        self.match_window = match_window
+        self.match_max_distance = match_max_distance
+        self.warmup_frames = warmup_frames
+
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+        self.window = deque(maxlen=match_window)
+        self.next_id = 0
+
+        #: Messages read, decodable or not — see `start_frame`.
+        self.frames = 0
+        #: Frames past the warm-up that had no features at all.
+        self.empty = 0
+        #: One matched fraction per frame past the warm-up that had features.
+        self.fractions = []
+        #: Feature count for those same frames.
+        self.counts = []
+
+    def start_frame(self) -> None:
+        """One message off the bag, before anything has been decoded.
+
+        Separate from `observe` because a frame that fails to decode never
+        reaches the tracker and yet still consumes warm-up — which is this
+        script's behaviour and is pinned as such rather than tidied, since the
+        alternative silently shifts which seconds of a clip the mean covers.
+        """
+        self.frames += 1
+
+    def observe(self, keypoints, descriptors):
+        """Match one frame's descriptors against the window; return (ids, is_new).
+
+        `descriptors` is None when ORB found nothing, which is not the same as a
+        frame that did not arrive — see the empty-frame branch below.
+        """
         n = 0 if descriptors is None else len(keypoints)
         ids = [-1] * n
         is_new = [True] * n
 
-        pooled = [d for d in window if d[0] is not None]
+        pooled = [d for d in self.window if d[0] is not None]
         if n and pooled:
             pooled_desc = np.vstack([d[0] for d in pooled])
             pooled_ids = [i for d in pooled for i in d[1]]
 
-            knn = matcher.knnMatch(descriptors, pooled_desc, k=1)
+            knn = self.matcher.knnMatch(descriptors, pooled_desc, k=1)
             candidates = sorted(
-                (m[0] for m in knn if m and m[0].distance <= args.match_max_distance),
+                (m[0] for m in knn if m and m[0].distance <= self.match_max_distance),
                 key=lambda m: m.distance)
 
             # One-to-one, claimed by track: the same reasoning as the C++ side. A
@@ -141,36 +181,74 @@ def main() -> int:
 
         for i in range(n):
             if is_new[i]:
-                ids[i] = next_id
-                next_id += 1
+                ids[i] = self.next_id
+                self.next_id += 1
 
-        window.append((descriptors, ids))
+        self.window.append((descriptors, ids))
 
-        if frames <= args.warmup_frames:
+        if self.frames > self.warmup_frames:
+            if n:
+                self.fractions.append(sum(1 for f in is_new if not f) / n)
+                self.counts.append(n)
+            else:
+                # A frame with no features has no matched fraction: 0/0 is
+                # undefined, not zero. It is counted and excluded, which is
+                # exactly what keypoint_probe does — the two have to count the
+                # same way or the difference the gate asserts on is measuring
+                # their conventions rather than the tracker. On bags/desk1 this
+                # convention is worth about 5 points.
+                self.empty += 1
+
+        return ids, is_new
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('bag', help='a bag directory (must contain metadata.yaml)')
+    parser.add_argument('--topic', default='/image_raw/compressed')
+    parser.add_argument('--max-features', type=int, default=500)
+    parser.add_argument('--match-window', type=int, default=MATCH_WINDOW)
+    parser.add_argument('--match-max-distance', type=int, default=MATCH_MAX_DISTANCE)
+    parser.add_argument('--warmup-frames', type=int, default=WARMUP_FRAMES)
+    parser.add_argument('--limit', type=int, default=0, help='0 = the whole clip')
+    args = parser.parse_args()
+
+    if not pathlib.Path(args.bag, 'metadata.yaml').is_file():
+        print(f'no bag at {args.bag} (looked for metadata.yaml)', file=sys.stderr)
+        return 2
+
+    orb = orb_detector(args.max_features)
+    tracker = PooledTracker(
+        match_window=args.match_window,
+        match_max_distance=args.match_max_distance,
+        warmup_frames=args.warmup_frames)
+
+    for msg in read_compressed(args.bag, args.topic):
+        tracker.start_frame()
+        if args.limit and tracker.frames > args.limit:
+            break
+
+        buffer = np.frombuffer(bytes(msg.data), dtype=np.uint8)
+        bgr = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+        if bgr is None:
             continue
-        if not n:
-            # A frame with no features has no matched fraction: 0/0 is undefined, not
-            # zero. It is counted and excluded, which is exactly what keypoint_probe
-            # does — the two have to count the same way or the difference the gate
-            # asserts on is measuring their conventions rather than the tracker. On
-            # bags/desk1 this convention is worth about 5 points.
-            empty += 1
-            continue
-        fractions.append(sum(1 for f in is_new if not f) / n)
-        counts.append(n)
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
-    if not fractions:
+        keypoints, descriptors = orb.detectAndCompute(gray, None)
+        tracker.observe(keypoints, descriptors)
+
+    if not tracker.fractions:
         print('ref frames=0', file=sys.stdout)
         print(f'no usable frames in {args.bag}', file=sys.stderr)
         return 1
 
     print(f'ref bag={args.bag}')
-    print(f'ref frames={len(fractions)}')
-    print(f'ref skipped_warmup={min(frames, args.warmup_frames)}')
-    print(f'ref keypoints_mean={np.mean(counts):.1f}')
-    print(f'ref matched_fraction={np.mean(fractions):.4f}')
-    print(f'ref matched_p05={np.percentile(fractions, 5):.4f}')
-    print(f'ref tracks={next_id}')
+    print(f'ref frames={len(tracker.fractions)}')
+    print(f'ref skipped_warmup={min(tracker.frames, args.warmup_frames)}')
+    print(f'ref keypoints_mean={np.mean(tracker.counts):.1f}')
+    print(f'ref matched_fraction={np.mean(tracker.fractions):.4f}')
+    print(f'ref matched_p05={np.percentile(tracker.fractions, 5):.4f}')
+    print(f'ref tracks={tracker.next_id}')
     return 0
 
 

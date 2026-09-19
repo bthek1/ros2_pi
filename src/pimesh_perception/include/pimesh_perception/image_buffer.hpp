@@ -49,6 +49,42 @@ inline cv::Mat mat_over(const sensor_msgs::msg::Image & msg)
     const_cast<std::uint8_t *>(msg.data.data()), step);
 }
 
+/// The `32FC1` encoding string, spelled once, for the same reason `bgr8` is.
+inline const char * depth32f_encoding() {return "32FC1";}
+
+/// `mat_over` for a 32FC1 depth map — a header over the message's own floats.
+///
+/// **It lives here rather than beside its one caller**, which is the habit this
+/// project arrived at the hard way: `percentile` existed in four anonymous
+/// namespaces and FNV-1a in two, none of them reachable by a test, and one of
+/// them had been wrong since milestone A. This was a seventh copy of the same
+/// shape — the mat-over-a-message arithmetic — sitting inside fusion_node.cpp
+/// where nothing could call it.
+///
+/// Empty on anything it cannot vouch for, which is a refusal rather than a guess.
+/// A wrong step on a float image does not look like the shear it produces on a
+/// colour one; it looks like a room made of diagonal streaks, which is easy to
+/// blame on the depth model.
+///
+/// **It is stricter than `mat_over` about `step == 0`**, and deliberately so
+/// rather than by oversight: `mat_over` reads a zero as "not set, derive it",
+/// because bgr8 arrives from publishers this workspace does not own. The only
+/// 32FC1 publisher here is `depth_node`, which always sets it, so a zero on this
+/// topic is a malformed message and not an omission. The asymmetry is written
+/// down because the next person to see the two side by side will otherwise
+/// "fix" one of them.
+inline cv::Mat depth_mat_over(const sensor_msgs::msg::Image & msg)
+{
+  if (msg.encoding != depth32f_encoding()) {return cv::Mat();}
+  if (msg.width == 0 || msg.height == 0) {return cv::Mat();}
+  const std::size_t row_bytes = static_cast<std::size_t>(msg.width) * sizeof(float);
+  if (msg.step < row_bytes) {return cv::Mat();}
+  if (msg.data.size() < static_cast<std::size_t>(msg.step) * msg.height) {return cv::Mat();}
+  return cv::Mat(
+    static_cast<int>(msg.height), static_cast<int>(msg.width), CV_32FC1,
+    const_cast<std::uint8_t *>(msg.data.data()), msg.step);
+}
+
 /// Size a message to hold `mat` and copy the pixels in.
 ///
 /// The copy is real and is the price of publishing a `unique_ptr`: each message

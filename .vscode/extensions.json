@@ -1,0 +1,13 @@
+{
+    // The Testing panel needs one extension per language here, and neither is
+    // optional: without them the panel is empty and nothing says why.
+    //
+    // A C++ debug session on a gtest suite additionally needs a debugger
+    // extension (ms-vscode.cpptools or vadimcn.vscode-lldb) and a
+    // `testMate.cpp.debug.configTemplate`; that is not configured, because
+    // debugging is not what closes anything here — tools/gates/*.sh is.
+    "recommendations": [
+        "matepek.vscode-catch2-test-adapter",
+        "ms-python.python"
+    ]
+}

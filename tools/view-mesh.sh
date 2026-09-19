@@ -16,8 +16,8 @@
 # a trap until its foreground child returns and an rviz2 signalled during its own
 # startup never returns.
 #
-# Takes a bag name to replay instead of the camera: `bash tools/view-mesh.sh 600
-# desk1`. With no bag it uses the Pi's live camera.
+# Takes a bag name to replay instead of the camera: `just view-mesh 600 desk1`.
+# With no bag it uses the Pi's live camera.
 #
 # **A bag plays once here, not on a loop.** `--loop` sends every header stamp ~60 s
 # into the past at each wrap; fusion_node looks the pose up at the frame's own

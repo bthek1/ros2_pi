@@ -50,7 +50,7 @@ yet, for a reason given below:
   with meshing running against 401.3 ms in a control with nothing meshing** — the
   extraction costs the integrator nothing measurable.
 
-`just build` then `bash tools/view-mesh.sh` shows it running; `just --list` is the
+`just build` then `just view-mesh` shows it running; `just --list` is the
 whole of what you type on a normal day. The tests are the `tools/gates/*.sh`
 scripts, run directly, and each milestone issue records what they printed —
 [#4](https://github.com/bthek1/ros2_pi/issues/4) for capture,

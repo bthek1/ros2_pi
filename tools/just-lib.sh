@@ -613,10 +613,29 @@ arm_cleanup() {         # $1 = optional cleanup function, default cleanup_both
     trap '_pimesh_on_signal HUP'  HUP
 }
 
+# **A second Ctrl-C must not be able to kill the teardown it is impatient with,
+# and until 2026-09-18 it could.** `_pimesh_on_signal` restored the default
+# disposition *before* cleaning up, so from that instant the script was killable
+# by the next interrupt — and verified teardown takes 7-9 s while printing
+# nothing, which is exactly long enough to look hung. Measured with a fixture of
+# this handler's shape: one SIGINT ran kill_local and kill_pi to completion; two,
+# three seconds apart, ran kill_local and died inside kill_pi. The real thing
+# behind that number was `just view-mesh` closed with `^C^C`, which left the Pi
+# holding /dev/video0 with a clean dev box beside it and no teardown message
+# anywhere — the signature is always the same, because kill_local goes first.
+#
+# So the signals are *ignored* for the duration rather than defaulted, and the
+# one thing that made a second Ctrl-C tempting is removed too: a line saying
+# what is happening and how long it may take. Ignoring is safe only because the
+# wait is bounded — each half gives up after PIMESH_TEARDOWN_SECONDS and says
+# so — and an unbounded cleanup that cannot be interrupted would be the worse
+# bug of the two.
 _pimesh_cleanup_once() {
     [[ -n ${PIMESH_CLEANED:-} ]] && return "${PIMESH_CLEANUP_RC:-0}"
     PIMESH_CLEANED=1
     PIMESH_CLEANUP_RC=0
+    trap '' INT TERM HUP
+    echo "cleaning up and checking, up to ${PIMESH_TEARDOWN_SECONDS}s per machine — further Ctrl-C ignored" >&2
     "${PIMESH_CLEANUP_FN:-cleanup_both}" || PIMESH_CLEANUP_RC=$?
     return "$PIMESH_CLEANUP_RC"
 }
@@ -637,8 +656,16 @@ _pimesh_on_exit() {
 }
 
 _pimesh_on_signal() {   # $1 = signal name
-    trap - EXIT INT TERM HUP
+    # Ignore first, and only then drop EXIT: the window between entering this
+    # handler and _pimesh_cleanup_once installing its own ignore is a window in
+    # which a second Ctrl-C still has the default disposition. Bash does not
+    # block a signal while its own handler for it runs.
+    trap '' INT TERM HUP
+    trap - EXIT
     _pimesh_cleanup_once
+    # Defaults back, so the re-raise below actually ends this shell rather than
+    # being discarded: exit-as-if-by-signal is what makes a Ctrl-C read as 130.
+    trap - INT TERM HUP
     kill -"$1" $$
     # Only reached if the signal was inherited as SIG_IGN, which a shell cannot
     # undo — see the comment on `set -m` in gates/hello-clean.sh.

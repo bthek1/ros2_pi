@@ -259,10 +259,22 @@ session_up() {              # $1 = recipe
 # seconds later the Pi had the whole chain running. Only view-camera carries this
 # case, because it is the cheapest recipe that spans both machines and has a
 # window to close.
+#
+# INT-TWICE is the fourth time round, and it is the one this file had no case for
+# on 2026-09-18: `just view-mesh` ended with `^C^C` left a camera_node holding
+# /dev/video0 on the Pi with a clean dev box beside it. `_pimesh_on_signal`
+# restored the default disposition before cleaning up, so the second interrupt
+# killed the script between kill_local and kill_pi — and the split is the tell,
+# because kill_local always goes first. Ten INT cases over five recipes had never
+# sent a *second* signal, and a verified teardown takes 7-9 s while printing
+# nothing, which is long enough that pressing Ctrl-C again is the normal thing to
+# do. Only view-camera carries this case, for the same reason it carries
+# CLOSE-EARLY: it is the cheapest recipe that spans both machines, and a teardown
+# with no far end to reach cannot exhibit the bug.
 hows_for() {                # $1 = recipe
     case $1 in
         lan|compose) echo "INT HUP" ;;
-        view-camera) echo "INT HUP CLOSE CLOSE-EARLY" ;;
+        view-camera) echo "INT INT-TWICE HUP CLOSE CLOSE-EARLY" ;;
         *)           echo "INT HUP CLOSE" ;;
     esac
 }
@@ -348,6 +360,64 @@ run_and_end() {             # $1 = INT | HUP | CLOSE | CLOSE-EARLY, $2 = recipe
                 return 1
             fi
             ;;
+        INT-TWICE)
+            if ! kill -INT -"$pgid" 2>/dev/null; then
+                echo "FAIL: could not send SIGINT to process group ${pgid} for $2"
+                return 1
+            fi
+            # **The second one has to land inside the teardown**, or this case is
+            # the INT case wearing a different name and asserting nothing. The
+            # aim is taken off the clock and off the group still existing:
+            # cleanup starts synchronously the moment the handler is entered, and
+            # by then the session has no other work left, so a session still
+            # alive a moment later is a session *inside* its teardown.
+            #
+            # **It deliberately does not wait for the teardown's announcement
+            # line, and the first version of this case did.** That line arrived
+            # with the fix, so keying the aim on it made the case unable to fail
+            # against the very code it exists to catch: run against the pre-fix
+            # handler on 2026-09-18 it reported "never announced a teardown" and
+            # proved nothing, where aimed by the clock it leaves a camera_node on
+            # the Pi. A test whose trigger ships with the fix is a test of the
+            # fix's presence, not of the behaviour.
+            sleep 0.5
+            if ! kill -INT -"$pgid" 2>/dev/null; then
+                echo "FAIL: $2 finished tearing down within 0.5 s, so the window this case"
+                echo "      exists to test was never open — verified teardown takes 7-9 s"
+                return 1
+            fi
+
+            # **This case cannot use the sweep the others use, and finding out why
+            # was worth more than the case.** Every other ending is asserted by
+            # _reap_session below — wait for the session's whole process *group* to
+            # empty, then run tools/stragglers.sh — and that method is structurally
+            # blind to this leak. The local `ssh` client sits in the group until its
+            # remote command finishes, so when the script is killed mid-teardown the
+            # group does not empty until the *recipe's own* `timeout` expires on the
+            # Pi, 90 s in — which is the same event that kills the leaked camera_node.
+            # By the time the group is empty the evidence has reaped itself, and the
+            # sweep reports 0/0 truthfully. Measured 2026-09-18: this case passed
+            # against the pre-fix handler that way, which is a false green.
+            #
+            # So it waits for the *script* rather than its group — the pgid leader is
+            # the recipe, and its exit is exactly the contract's "the recipe has
+            # returned" — and looks at the Pi at once. Gap and window, measured
+            # against the pre-fix handler over five runs: a second SIGINT at 0.2, 1
+            # and 2 s each left 3 processes on the Pi, at 4 and 6 s none, because
+            # kill_pi has finished by then. 0.5 s has margin at both ends.
+            for _ in $(seq 240); do
+                kill -0 "$pgid" 2>/dev/null || break
+                sleep 0.25
+            done
+            local pileft; pileft=$(pimesh_pi_processes)
+            if [[ -n $pileft ]]; then
+                echo "FAIL: $2 was killed by the second SIGINT mid-teardown and left the Pi"
+                echo "      holding these — a camera_node there holds /dev/video0:"
+                sed 's/^/  /' <<<"$pileft"
+                kill_pi >/dev/null 2>&1 || true
+                tail -20 "$log"; return 1
+            fi
+            ;;
         *)
             # A group kill that names no group is the failure this function was
             # once rewritten to prevent, so it is checked rather than swallowed.
@@ -366,6 +436,16 @@ run_and_end() {             # $1 = INT | HUP | CLOSE | CLOSE-EARLY, $2 = recipe
     if ! _reap_session "$sess" "$pgid" 90; then
         echo "FAIL: the $2 session did not return after $1 — still running:"
         pgrep -a -g "$pgid" | sed 's/^/  /'
+        tail -20 "$log"; return 1
+    fi
+
+    # **Nine silent seconds is what makes a second Ctrl-C tempting**, so the line
+    # that breaks the silence is part of the contract rather than a nicety, and it
+    # is asserted separately from the behaviour above — after the fact, where it
+    # cannot become the thing the case is aimed with.
+    if [[ $1 == INT-TWICE ]] && ! grep -q 'further Ctrl-C ignored' "$log"; then
+        echo "FAIL: $2 tore down without saying it was doing so. A teardown that"
+        echo "      prints nothing for 7-9 s is the reason this case exists."
         tail -20 "$log"; return 1
     fi
     return 0
@@ -508,7 +588,7 @@ for what in "${RECIPES[@]}"; do
                     exit 1
                 fi
                 ;;
-            INT)
+            INT|INT-TWICE)
                 if [[ $SESSION_STATUS -ne 130 ]]; then
                     echo "FAIL: ${what} exited ${SESSION_STATUS} after SIGINT, expected 130"
                     echo "      a handler that cleans up and returns is not an interrupt;"
@@ -525,6 +605,7 @@ done
 echo
 echo "survivors dev/pi : ${counts}"
 echo "                   (assert 0/0 after every ending, ${cases} cases over"
-echo "                    ${#RECIPES[@]} recipes: Ctrl-C, a closed terminal, a closed"
-echo "                    window, and a window closed before the far end is up)"
+echo "                    ${#RECIPES[@]} recipes: Ctrl-C, Ctrl-C twice with the second"
+echo "                    inside the teardown, a closed terminal, a closed window,"
+echo "                    and a window closed before the far end is up)"
 echo "PASS gate-hello-clean"

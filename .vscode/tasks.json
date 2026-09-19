@@ -1,0 +1,100 @@
+{
+    // The commands this workspace already has, reachable from the editor.
+    //
+    // Nothing here reimplements anything: every task is one line that runs the
+    // same tools/ script a person runs in a terminal, for the reason the
+    // justfile gives for its own recipes — a second spelling of a command is a
+    // second thing to keep true, and it drifts.
+    //
+    // Every task runs under `bash -lc`. The scripts source their own ROS
+    // environment, but a login shell is what the rest of this project assumes
+    // (see CLAUDE.md on `ssh pi` without one), and a task shell that read no
+    // profile is on domain 0 with the wrong RMW.
+    "version": "2.0.0",
+    "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": { "executable": "/bin/bash", "args": ["-lc"] }
+    },
+    "tasks": [
+        {
+            // Ctrl+Shift+B. `-DPython3_EXECUTABLE` and `-DCMAKE_BUILD_TYPE`
+            // live inside the script, not here, so the editor cannot build
+            // something different from what the gates measure.
+            "label": "build",
+            "type": "shell",
+            "command": "bash tools/build.sh",
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": ["$gcc"],
+            "presentation": { "reveal": "always", "panel": "dedicated" }
+        },
+        {
+            // Ctrl+Shift+P -> Run Test Task. Builds first, as the script says:
+            // nothing under test/ is compiled until BUILD_TESTING is on, and
+            // `colcon test` against an unbuilt tree reports 0 tests and exits 0.
+            "label": "test: unit suites",
+            "type": "shell",
+            "command": "bash tools/test.sh",
+            "group": { "kind": "test", "isDefault": true },
+            "problemMatcher": ["$gcc"],
+            "presentation": { "reveal": "always", "panel": "dedicated" }
+        },
+        {
+            // The gate, which is the thing that actually decides: `colcon test`
+            // exits 0 on a failing test and on no tests at all.
+            "label": "test: unit-test gate (counts, not just exit status)",
+            "type": "shell",
+            "command": "bash tools/gates/test.sh",
+            "group": "test",
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "dedicated" }
+        },
+        {
+            // The phase tests. Most need the Pi, the camera or bags/desk1, and
+            // they refuse to start beside another session — that refusal is the
+            // point, so let it happen rather than closing the terminal on it.
+            "label": "gate: pick one",
+            "type": "shell",
+            "command": "bash tools/gates/${input:gate}.sh",
+            "group": "test",
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "dedicated" }
+        },
+        {
+            // After anything that ran a session. Exits non-zero with the pid
+            // and full path of whatever outlived it, on both machines.
+            "label": "check: no stragglers on either machine",
+            "type": "shell",
+            "command": "bash tools/stragglers.sh",
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "dedicated" }
+        },
+        {
+            // Regenerates .vscode/ros.env, which is what makes the Testing
+            // panel see this workspace at all. On folder open because it is a
+            // generated file and the only thing worse than regenerating it is
+            // remembering to. VSCode asks once whether to allow automatic
+            // tasks; say yes, or run this task by hand after every build that
+            // adds a package.
+            "label": "refresh ROS env for the Testing panel",
+            "type": "shell",
+            "command": "bash tools/vscode-env.sh",
+            "runOptions": { "runOn": "folderOpen" },
+            "problemMatcher": [],
+            "presentation": { "reveal": "silent", "panel": "dedicated", "close": true }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "gate",
+            "type": "pickString",
+            "description": "Which gate?",
+            "options": [
+                "build", "capture", "ipc", "keypoints", "depth", "fusion", "mesh",
+                "gpu-stack", "calibration",
+                "test", "view-configs", "justfile",
+                "hello-build", "hello-talk", "hello-ipc", "hello-lan", "hello-clean"
+            ],
+            "default": "test"
+        }
+    ]
+}

@@ -68,26 +68,13 @@ std::int64_t stamp_ns(const builtin_interfaces::msg::Time & t)
   return static_cast<std::int64_t>(t.sec) * 1000000000LL + t.nanosec;
 }
 
-/// A cv::Mat header over a 32FC1 message's own pixels — no copy.
-///
-/// Empty when the encoding or the step arithmetic does not check out, which is a
-/// refusal rather than a guess, exactly as `mat_over` is for bgr8. A wrong step
-/// on a float image does not look like a shear the way it does on a colour one;
-/// it looks like a room made of diagonal streaks, which is easy to blame on the
-/// depth model.
-cv::Mat depth_mat_over(const sensor_msgs::msg::Image & msg)
-{
-  if (msg.encoding != "32FC1") {return cv::Mat();}
-  if (msg.width == 0 || msg.height == 0) {return cv::Mat();}
-  const std::size_t row_bytes = static_cast<std::size_t>(msg.width) * sizeof(float);
-  if (msg.step < row_bytes) {return cv::Mat();}
-  if (msg.data.size() < static_cast<std::size_t>(msg.step) * msg.height) {return cv::Mat();}
-  return cv::Mat(
-    static_cast<int>(msg.height), static_cast<int>(msg.width), CV_32FC1,
-    const_cast<std::uint8_t *>(msg.data.data()), msg.step);
-}
-
 }  // namespace
+
+// The 32FC1 header-over-a-message lives in pimesh_perception/image_buffer.hpp
+// beside the bgr8 one it is a copy of. It was in the anonymous namespace above
+// until 2026-09-19, where no test could reach it — which is how four copies of
+// `percentile` and a wrong FNV-1a basis got as far as they did.
+using pimesh_perception::depth_mat_over;
 
 FusionNode::FusionNode(const rclcpp::NodeOptions & options)
 : Node("fusion_node", options),

@@ -5,21 +5,18 @@
 # action is a script in tools/, run as one — no recipe, no wrapper:
 #
 # The phase gates, each exiting non-zero and printing the number it asserted on:
-#   bash tools/gates/{build,capture,ipc,keypoints,depth}.sh   P0-P4
-#   bash tools/gates/calibration.sh   P9: real intrinsics, and that they straighten
+#   bash tools/gates/{build,capture,ipc,keypoints,depth,fusion,mesh}.sh    P0-P6
+#   bash tools/gates/{gpu-stack,calibration}.sh  the GPU toolchain; P9's intrinsics
 #   bash tools/gates/{test,view-configs,justfile}.sh          the workspace's own
 #   bash tools/gates/hello-{build,talk,ipc,lan,clean}.sh      the scaffolding's own
 # and the scripts they lean on:
 #   bash tools/record-clip.sh desk1   record the reference clip P3 onwards replay
 #   bash tools/fetch-{gpu-stack,model}.sh   the GPU stack and the depth weights
-#   bash tools/calibrate.sh           run the checkerboard P9's intrinsics come from
-#   bash tools/camera-reset.sh        clear the camera's persistent V4L2 controls
+#   bash tools/mesh-views.sh <mesh.ply>     three offscreen renders — P6's evidence
+#   bash tools/{calibrate,camera-reset}.sh  P9's intrinsics; the V4L2 controls
 #   bash tools/test.sh                the unit tests, here (tools/test-pi.sh there)
 #   bash tools/stragglers.sh          assert nothing outlived its session
-#   bash tools/{sync,build,clean}-pi.sh     ship source to the Pi, build it, clean it
-#   bash tools/clean.sh               delete the colcon trees
-#
-# Burying `hello-compose` among seven gate recipes is why this file got trimmed.
+#   bash tools/{sync,build,clean}-pi.sh and tools/clean.sh   the Pi's trees, ours
 #
 # Recipe bodies stay one line each. `just` gives a body no way to share code with
 # another, so inlined bash drifts between copies and shellcheck cannot parse
@@ -74,3 +71,8 @@ view-keypoints seconds="600" bag="":
 [group('run')]
 view-depth seconds="600" bag="":
     @bash "{{ ws }}/tools/view-depth.sh" {{ seconds }} {{ bag }}
+
+# The room as a triangle surface, in RViz. bag = optional, else the camera
+[group('run')]
+view-mesh seconds="600" bag="":
+    @bash "{{ ws }}/tools/view-mesh.sh" {{ seconds }} {{ bag }}

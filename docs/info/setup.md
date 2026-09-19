@@ -235,6 +235,7 @@ Available recipes:
     view-camera seconds="600"           # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
     view-depth seconds="600" bag=""     # The room as a depth cloud, in RViz. bag = optional, else the camera
     view-keypoints seconds="600" bag="" # ORB corners and the rotation-only pose, in RViz. bag = optional, else the camera
+    view-mesh seconds="600" bag=""      # The room as a triangle surface, in RViz. bag = optional, else the camera
 ```
 
 That is the whole list, and the shortness is the point: `build` is how you
@@ -275,6 +276,45 @@ bash tools/sync-pi.sh             # ship source to the Pi — source only
 bash tools/build-pi.sh            # ...and build it there, under Jazzy
 bash tools/clean.sh               # delete the colcon trees (clean-pi.sh for the Pi's)
 ```
+
+## In the editor
+
+`.vscode/` carries three committed files — `tasks.json`, `settings.json`,
+`extensions.json` — and nothing in them reimplements a command. Every task is
+one line running the same `tools/` script a person runs in a terminal, for the
+reason the justfile gives for its own recipes: a second spelling of a command is
+a second thing to keep true.
+
+- **Ctrl+Shift+B** builds (`tools/build.sh`), **Run Test Task** runs the unit
+  suites (`tools/test.sh`), and a `gate: pick one` task runs any of the
+  seventeen gates. Every task runs under `bash -lc`, because a task shell that
+  read no profile is on domain 0 with the wrong RMW.
+- **The Testing panel** shows all twenty suites once the two recommended
+  extensions are installed — VSCode offers them on first open. The sixteen gtest
+  ones come from `build/*/test_<name>`, and a run **builds first**: a stale
+  binary against edited source is a green test for code that does not exist.
+
+**Both halves need `.vscode/ros.env`, and it is generated.** The Python
+extension does not run tests through a shell — it spawns the interpreter
+directly, so `source install/setup.bash` never happens, and
+`test_transforms.py`'s ament-index lookups would resolve against whatever the
+desktop session had on `AMENT_PREFIX_PATH`, which on this box is *another
+workspace*. `python.envFile` and TestMate's `envFile` are the one hook either
+extension offers, and `bash tools/vscode-env.sh` writes it: the essential ROS
+variables unconditionally, plus whatever else the sourcing changed, so a future
+setup script learning a new variable does not need this script edited.
+
+It is a generated file — git-ignored, absolute paths, this machine's distro — so
+a task regenerates it on folder open (VSCode asks once whether to allow
+automatic tasks; say yes). **Run it by hand after adding a package**, or after a
+fresh clone. The failure is loud rather than quiet: an `AMENT_PREFIX_PATH`
+missing a package fails the launch-file tests with a `PackageNotFoundError`
+naming every path it searched.
+
+Measured 2026-09-19, with only that file's variables in an otherwise empty
+environment: **83 Python tests passed and all 16 gtest suites passed**. The
+editor is a convenience, though, not evidence — `bash tools/test.sh` and
+`bash tools/gates/test.sh` are what decide, and they are what CI would run.
 
 ## Calibrating the camera
 

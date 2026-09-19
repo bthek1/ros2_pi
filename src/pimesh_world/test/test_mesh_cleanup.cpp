@@ -7,10 +7,7 @@
 // looks like decimation until you notice the holes. None of them throws.
 
 #include <cmath>
-#include <cstdio>
-#include <fstream>
 #include <string>
-#include <unistd.h>
 #include <map>
 #include <set>
 
@@ -22,8 +19,6 @@ using pimesh_world::boundary_loops;
 using pimesh_world::decimate;
 using pimesh_world::fill_interior_holes;
 using pimesh_world::prune_small_components;
-using pimesh_world::read_ply;
-using pimesh_world::write_ply;
 
 namespace
 {
@@ -76,14 +71,6 @@ void punch_hole(Mesh & mesh, int n, int i, int j)
 /// deserves the warning: it returns a name, and anything may create that file
 /// between the return and the open. The pid plus a counter is unique enough for a
 /// test and has no window in it.
-std::string temp_path(const char * tag)
-{
-  static int counter = 0;
-  return std::string("/tmp/pimesh_test_") + tag + "_" +
-         std::to_string(static_cast<long>(getpid())) + "_" +
-         std::to_string(++counter) + ".ply";
-}
-
 /// Append `other`'s geometry to `mesh` as a separate component.
 void append(Mesh & mesh, const Mesh & other)
 {
@@ -329,59 +316,7 @@ TEST(Decimate, NoDegenerateTrianglesSurvive)
   EXPECT_EQ(mesh.vertices.size(), mesh.colours.size());
 }
 
-// --- PLY -------------------------------------------------------------------------
-
-TEST(Ply, WhatIsWrittenIsWhatComesBack)
-{
-  Mesh mesh = sheet(5);
-  mesh.colours[0] = cv::Vec3f(1.0F, 0.0F, 0.0F);
-  mesh.colours[1] = cv::Vec3f(0.0F, 1.0F, 0.0F);
-  mesh.colours[2] = cv::Vec3f(0.0F, 0.0F, 1.0F);
-
-  const std::string path = temp_path("roundtrip");
-  std::string error;
-  ASSERT_TRUE(write_ply(mesh, path, error)) << error;
-
-  Mesh back;
-  ASSERT_TRUE(read_ply(path, back, error)) << error;
-  ASSERT_EQ(back.vertices.size(), mesh.vertices.size());
-  ASSERT_EQ(back.triangles.size(), mesh.triangles.size());
-
-  for (std::size_t i = 0; i < mesh.vertices.size(); ++i) {
-    EXPECT_NEAR(back.vertices[i][0], mesh.vertices[i][0], 1e-6);
-    EXPECT_NEAR(back.vertices[i][1], mesh.vertices[i][1], 1e-6);
-    EXPECT_NEAR(back.vertices[i][2], mesh.vertices[i][2], 1e-6);
-    // 8-bit round trip, so within half a level either way.
-    for (int c = 0; c < 3; ++c) {
-      EXPECT_NEAR(back.colours[i][c], mesh.colours[i][c], 1.0 / 255.0)
-        << "vertex " << i << " channel " << c
-        << " — a channel swap here paints the whole room the wrong colour";
-    }
-  }
-  for (std::size_t i = 0; i < mesh.triangles.size(); ++i) {
-    EXPECT_EQ(back.triangles[i], mesh.triangles[i]);
-  }
-  std::remove(path.c_str());
-}
-
-TEST(Ply, AnUnwritablePathFailsAndLeavesNothing)
-{
-  Mesh mesh = sheet(3);
-  std::string error;
-  EXPECT_FALSE(write_ply(mesh, "/definitely/not/a/directory/x.ply", error));
-  EXPECT_FALSE(error.empty()) << "a refusal has to say why — the service returns this";
-}
-
-TEST(Ply, ReadingSomethingThatIsNotAPlyFails)
-{
-  const std::string path = temp_path("notaply");
-  {
-    std::ofstream out(path);
-    out << "this is not a ply file\n";
-  }
-  Mesh mesh;
-  std::string error;
-  EXPECT_FALSE(read_ply(path, mesh, error));
-  EXPECT_FALSE(error.empty());
-  std::remove(path.c_str());
-}
+// PLY moved to test_mesh_io.cpp on 2026-09-19. It lived here because `decimate`
+// was the first thing that wanted a file written, and a round trip was all it
+// asserted — which is the one shape of test that cannot see a writer and a
+// reader being wrong together. The new suite reads the bytes as well.
