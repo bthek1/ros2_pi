@@ -21,6 +21,8 @@ find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(pimesh_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 # --- The protocol, with no ROS in it ----------------------------------------
 #
@@ -103,12 +105,42 @@ if(BUILD_TESTING)
   if(TARGET test_web_paths)
     target_link_libraries(test_web_paths dashboard_protocol)
   endif()
+
+  # The two functions every byte of the page is built out of, which lived in an
+  # anonymous namespace inside dashboard_node.cpp until 2026-09-21 where nothing
+  # could call them. Both fail by *blanking the page*: JSON.parse throws on the
+  # first illegal byte, onStats never runs, and the table holds its last value
+  # with the socket up and the pipeline fine — which reads as a stalled pipeline.
+  # Header-only and ROS-free, so it links against nothing.
+  ament_add_gtest(test_json test/test_json.cpp)
+  if(TARGET test_json)
+    target_include_directories(test_json PRIVATE include)
+  endif()
+
+  # The binary mesh layout, pinned byte for byte. Its reader is hand-written
+  # JavaScript in web/app.js and cannot be linked against, so the two ends agree
+  # only because somebody typed 4, 12 and 3 twice — and a stride read one byte
+  # out still yields floats, so the page draws believable geometry in the wrong
+  # places rather than failing.
+  ament_add_gtest(test_mesh_payload test/test_mesh_payload.cpp)
+  if(TARGET test_mesh_payload)
+    target_include_directories(test_mesh_payload PRIVATE include)
+    target_link_libraries(
+      test_mesh_payload ${geometry_msgs_TARGETS} ${std_msgs_TARGETS})
+  endif()
+
+  # The other half of that contract, and of the JSON one: what web/app.js and
+  # dashboard_probe.cpp actually read, checked against what dashboard_node.cpp
+  # actually sends. It reads both files as text because the reader is in a
+  # browser — inelegant, and the only thing that can check it at all.
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(test_dashboard_contract test/test_dashboard_contract.py)
 endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(dashboard_protocol dashboard_components)
 ament_export_dependencies(
   rclcpp rclcpp_components ament_index_cpp sensor_msgs nav_msgs visualization_msgs
-  pimesh_msgs)
+  geometry_msgs std_msgs pimesh_msgs)
 
 ament_package()

@@ -1,6 +1,8 @@
 // One tab that shows the pipeline, and a rule that it must never slow it down.
 
 #include "pimesh_dashboard/dashboard_node.hpp"
+#include "pimesh_dashboard/json.hpp"
+#include "pimesh_dashboard/mesh_payload.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -48,44 +50,6 @@ rcl_interfaces::msg::ParameterDescriptor describe_double(
   range.to_value = high;
   descriptor.floating_point_range.push_back(range);
   return descriptor;
-}
-
-/// JSON string escaping. `detail` is free-form text written by another node and
-/// goes into the page verbatim — which makes it the one field here that can break
-/// the document if it is pasted in raw. A stray quote would truncate the JSON and
-/// the whole panel would go blank with a parse error in a console nobody has open.
-std::string quote(const std::string & text)
-{
-  std::string out = "\"";
-  for (char c : text) {
-    switch (c) {
-      case '"': out += "\\\""; break;
-      case '\\': out += "\\\\"; break;
-      case '\n': out += "\\n"; break;
-      case '\r': out += "\\r"; break;
-      case '\t': out += "\\t"; break;
-      default:
-        if (static_cast<unsigned char>(c) < 0x20) {
-          char buffer[8];
-          std::snprintf(buffer, sizeof(buffer), "\\u%04x", c);
-          out += buffer;
-        } else {
-          out += c;
-        }
-    }
-  }
-  return out + "\"";
-}
-
-std::string number(double value)
-{
-  // Finite or nothing. A NaN or an infinity printed into JSON is a *parse error*
-  // in the browser, not a bad value — JSON has no spelling for either — so the
-  // whole panel would go blank because one stage divided by zero.
-  if (!std::isfinite(value)) {return "null";}
-  char buffer[32];
-  std::snprintf(buffer, sizeof(buffer), "%.4g", value);
-  return buffer;
 }
 
 }  // namespace
@@ -306,41 +270,19 @@ void DashboardNode::on_mesh(visualization_msgs::msg::Marker::ConstSharedPtr msg)
 {
   // **Sent on arrival, not on the tick**, because it arrives once every ten
   // seconds and holding it for a tick would add latency for nothing. It is the
-  // one payload big enough to think about: 120 k triangles is ~4.3 MB, which at
-  // one every ten seconds is ~0.4 MB/s on a LAN.
-  const std::size_t vertices = msg->points.size();
-  if (vertices == 0 || vertices % 3 != 0) {return;}
+  // one payload big enough to think about: mesh_node's cap of 120 k *triangles*
+  // is 360 k vertices at 15 bytes each, so **5.4 MB** — an earlier version of
+  // this comment said 4.3 MB, which is the position array with the colour bytes
+  // forgotten. At one every ten seconds that is ~0.5 MB/s on a LAN, and it is
+  // 64% of the server's 8 MiB send limit rather than the 51% the old figure
+  // implied. Exceeding that limit is a silent drop, so the margin is worth
+  // stating correctly; test_mesh_payload asserts it.
+  // The layout, the refusals and the clamp are all in mesh_payload.hpp, where a
+  // test can reach them: this is the one payload here whose reader is hand-written
+  // JavaScript in another file, so the arithmetic is worth pinning byte for byte.
+  const std::vector<std::uint8_t> payload = pack_mesh(msg->points, msg->colors);
+  if (payload.empty()) {return;}
 
-  // A TRIANGLE_LIST Marker is already three points per triangle with no index
-  // reuse, so the indices are 0,1,2,… and sending them would be a third of the
-  // payload saying nothing. The header says how many vertices there are and the
-  // page builds a non-indexed BufferGeometry — which is what three.js and raw
-  // WebGL both want anyway.
-  std::vector<std::uint8_t> payload;
-  payload.resize(4 + vertices * (3 * sizeof(float) + 3));
-  std::uint32_t count = static_cast<std::uint32_t>(vertices);
-  std::memcpy(payload.data(), &count, 4);
-
-  float * positions = reinterpret_cast<float *>(payload.data() + 4);
-  std::uint8_t * colours = payload.data() + 4 + vertices * 3 * sizeof(float);
-  const bool have_colours = msg->colors.size() == vertices;
-  for (std::size_t i = 0; i < vertices; ++i) {
-    positions[i * 3 + 0] = static_cast<float>(msg->points[i].x);
-    positions[i * 3 + 1] = static_cast<float>(msg->points[i].y);
-    positions[i * 3 + 2] = static_cast<float>(msg->points[i].z);
-    if (have_colours) {
-      colours[i * 3 + 0] = static_cast<std::uint8_t>(
-        std::clamp(msg->colors[i].r, 0.0F, 1.0F) * 255.0F);
-      colours[i * 3 + 1] = static_cast<std::uint8_t>(
-        std::clamp(msg->colors[i].g, 0.0F, 1.0F) * 255.0F);
-      colours[i * 3 + 2] = static_cast<std::uint8_t>(
-        std::clamp(msg->colors[i].b, 0.0F, 1.0F) * 255.0F);
-    } else {
-      colours[i * 3 + 0] = 180;
-      colours[i * 3 + 1] = 180;
-      colours[i * 3 + 2] = 190;
-    }
-  }
   ++mesh_versions_;
   server_->broadcast(Channel::Mesh, payload.data(), payload.size());
 }
@@ -350,7 +292,7 @@ std::string DashboardNode::stats_json()
   const auto now = std::chrono::steady_clock::now();
   std::ostringstream out;
   out << "{\"uptime_s\":"
-      << number(std::chrono::duration<double>(now - started_).count())
+      << json::number(std::chrono::duration<double>(now - started_).count())
       << ",\"clients\":" << server_->clients()
       << ",\"ws_dropped\":" << server_->dropped()
       << ",\"mesh_versions\":" << mesh_versions_
@@ -363,10 +305,10 @@ std::string DashboardNode::stats_json()
     const double age = std::chrono::duration<double>(now - row.received).count();
     if (!first) {out << ",";}
     first = false;
-    out << "{\"stage\":" << quote(entry.first)
-        << ",\"rate_hz\":" << number(row.stats.rate_hz)
-        << ",\"latency_ms\":" << number(row.stats.latency_ms)
-        << ",\"latency_p95_ms\":" << number(row.stats.latency_p95_ms)
+    out << "{\"stage\":" << json::quote(entry.first)
+        << ",\"rate_hz\":" << json::number(row.stats.rate_hz)
+        << ",\"latency_ms\":" << json::number(row.stats.latency_ms)
+        << ",\"latency_p95_ms\":" << json::number(row.stats.latency_p95_ms)
         << ",\"frames_in\":" << row.stats.frames_in
         << ",\"frames_out\":" << row.stats.frames_out
         // **Two fields, never summed.** depth_node dropping ~72% of what it is
@@ -376,8 +318,8 @@ std::string DashboardNode::stats_json()
         // reason PipelineStats carries them apart.
         << ",\"dropped_by_design\":" << row.stats.dropped_by_design
         << ",\"dropped_in_transport\":" << row.stats.dropped_in_transport
-        << ",\"detail\":" << quote(row.stats.detail)
-        << ",\"age_s\":" << number(age)
+        << ",\"detail\":" << json::quote(row.stats.detail)
+        << ",\"age_s\":" << json::number(age)
         << ",\"stale\":" << ((age > stale_after_s_) ? "true" : "false")
         << "}";
   }
@@ -396,15 +338,15 @@ std::string DashboardNode::pose_json()
   const auto & p = last_odom_.pose.pose.position;
   const auto & q = last_odom_.pose.pose.orientation;
   out << "{\"have\":true,\"stale\":" << ((age > stale_after_s_) ? "true" : "false")
-      << ",\"age_s\":" << number(age)
-      << ",\"frame\":" << quote(last_odom_.header.frame_id)
-      << ",\"position\":[" << number(p.x) << "," << number(p.y) << "," << number(p.z) << "]"
-      << ",\"orientation\":[" << number(q.x) << "," << number(q.y) << "," << number(q.z)
-      << "," << number(q.w) << "]"
+      << ",\"age_s\":" << json::number(age)
+      << ",\"frame\":" << json::quote(last_odom_.header.frame_id)
+      << ",\"position\":[" << json::number(p.x) << "," << json::number(p.y) << "," << json::number(p.z) << "]"
+      << ",\"orientation\":[" << json::number(q.x) << "," << json::number(q.y) << "," << json::number(q.z)
+      << "," << json::number(q.w) << "]"
       << ",\"trail\":[";
   for (std::size_t i = 0; i < trail_.size(); ++i) {
     if (i != 0) {out << ",";}
-    out << number(trail_[i][0]) << "," << number(trail_[i][1]) << "," << number(trail_[i][2]);
+    out << json::number(trail_[i][0]) << "," << json::number(trail_[i][1]) << "," << json::number(trail_[i][2]);
   }
   out << "]}";
   return out.str();
