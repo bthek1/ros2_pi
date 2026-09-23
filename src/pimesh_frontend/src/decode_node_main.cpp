@@ -8,7 +8,7 @@
 
 #include <memory>
 
-#include "pimesh_frontend/decode_node.hpp"
+#include "pimesh_frontend/nodes/decode_node.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 int main(int argc, char ** argv)

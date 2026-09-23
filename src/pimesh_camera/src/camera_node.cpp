@@ -1,7 +1,7 @@
 // Capture on the Pi. The interesting twenty lines in this file are stamp_for();
 // everything else is plumbing around them.
 
-#include "pimesh_camera/camera_node.hpp"
+#include "pimesh_camera/nodes/camera_node.hpp"
 
 #include <time.h>
 

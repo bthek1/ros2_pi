@@ -1,6 +1,6 @@
 // One tab that shows the pipeline, and a rule that it must never slow it down.
 
-#include "pimesh_dashboard/dashboard_node.hpp"
+#include "pimesh_dashboard/nodes/dashboard_node.hpp"
 #include "pimesh_dashboard/json.hpp"
 #include "pimesh_dashboard/mesh_payload.hpp"
 

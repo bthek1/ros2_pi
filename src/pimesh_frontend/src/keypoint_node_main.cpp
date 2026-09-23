@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "pimesh_frontend/keypoint_node.hpp"
+#include "pimesh_frontend/nodes/keypoint_node.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 int main(int argc, char ** argv)

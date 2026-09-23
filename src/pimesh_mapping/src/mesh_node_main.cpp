@@ -12,7 +12,7 @@
 
 #include <memory>
 
-#include "pimesh_mapping/mesh_node.hpp"
+#include "pimesh_mapping/nodes/mesh_node.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 int main(int argc, char ** argv)

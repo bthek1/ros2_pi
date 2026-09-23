@@ -2,7 +2,7 @@
 // marches cubes over the copy holding no lock, and what comes out is cleaned,
 // capped, and published as a Marker.
 
-#include "pimesh_mapping/mesh_node.hpp"
+#include "pimesh_mapping/nodes/mesh_node.hpp"
 
 #include <algorithm>
 #include <chrono>

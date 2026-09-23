@@ -303,10 +303,21 @@ PYC
 # nodes/. Turning it on is that phase's test; printing it now is what stops the
 # number growing while the phase waits.
 
-echo "-- (d) headers  (reported; asserted from #14 P3)"
+echo "-- (d) headers"
 "$PY" - "$PIMESH_WS" <<'PYD'
 import re, sys, pathlib
 ws = pathlib.Path(sys.argv[1])
+
+# A library header that no test names, with the reason it has none. **Every
+# entry is asserted to still be needed**, like the path exemptions above: write
+# a test for one of these and the gate tells you to delete its line.
+EXEMPT = {
+    'pimesh_depth/depth_engine.hpp':
+        'a pure virtual interface — there is no behaviour here to assert. The '
+        'behaviour is in the two implementations behind it, and exactly one of '
+        'them is compiled per machine (ORT here, null on the Pi), so a suite '
+        'covering either would break gates/test.sh\'s "same suites at both ends"',
+}
 
 rows = []
 for pkg in sorted((ws / 'src').iterdir()):
@@ -326,17 +337,31 @@ for pkg in sorted((ws / 'src').iterdir()):
         uses_rclcpp = bool(re.search(r'#\s*include\s*[<"]rclcpp/', hpp.read_text(errors='ignore')))
         named = (f'{stem}.hpp' in tests) or (stem in test_names)
         if uses_rclcpp or not named:
-            rows.append((pkg.name, hpp.relative_to(pkg), uses_rclcpp, named))
+            rows.append((pkg.name, hpp.relative_to(inc), uses_rclcpp, named))
 
-print(f"   {len(rows)} library headers would fail (d) today")
-for pkgname, rel, rclcpp, named in rows:
+bad = [r for r in rows if f'{r[0]}/{r[1]}' not in EXEMPT]
+stale = [k for k in EXEMPT if k not in {f'{r[0]}/{r[1]}' for r in rows}]
+n_lib = sum(1 for pkg in (ws / 'src').iterdir()
+            if (pkg / 'include' / pkg.name).is_dir()
+            for h in (pkg / 'include' / pkg.name).rglob('*.hpp')
+            if h.parent.name != 'nodes')
+
+print(f"   {n_lib} library headers outside nodes/, {len(bad)} failing, "
+      f"{len(EXEMPT)} exempt ({len(stale)} no longer needed)")
+for k, why in sorted(EXEMPT.items()):
+    print(f"   exempt: {k} — {why}")
+for pkgname, rel, rclcpp, named in bad:
     why = []
     if rclcpp:
-        why.append('includes rclcpp/')
+        why.append('includes rclcpp/ but is not under nodes/')
     if not named:
         why.append('no test names it')
-    print(f"   {pkgname}/{rel}: {', '.join(why)}")
+    print(f"   FAILS: {pkgname}/{rel}: {', '.join(why)}")
+for k in sorted(stale):
+    print(f"   STALE EXEMPTION: {k} passes now — delete its line from this gate")
+sys.exit(1 if bad or stale else 0)
 PYD
+[[ $? -eq 0 ]] || note "a library header reaches for rclcpp or no test names it"
 
 echo
 if [[ $fail -eq 0 ]]; then

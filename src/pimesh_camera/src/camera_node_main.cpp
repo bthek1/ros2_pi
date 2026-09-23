@@ -20,7 +20,7 @@
 #include <exception>
 #include <memory>
 
-#include "pimesh_camera/camera_node.hpp"
+#include "pimesh_camera/nodes/camera_node.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 int main(int argc, char ** argv)

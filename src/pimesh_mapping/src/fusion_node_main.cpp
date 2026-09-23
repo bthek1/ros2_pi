@@ -9,7 +9,7 @@
 
 #include <memory>
 
-#include "pimesh_mapping/fusion_node.hpp"
+#include "pimesh_mapping/nodes/fusion_node.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 int main(int argc, char ** argv)

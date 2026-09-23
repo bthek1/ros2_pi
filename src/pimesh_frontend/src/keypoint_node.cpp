@@ -3,7 +3,7 @@
 // The pose left this file on 2026-09-23 for odometry_node.cpp. What is here is
 // the detector and the tracker, and the one output they produce.
 
-#include "pimesh_frontend/keypoint_node.hpp"
+#include "pimesh_frontend/nodes/keypoint_node.hpp"
 
 #include <algorithm>
 #include <chrono>

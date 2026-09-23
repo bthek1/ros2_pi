@@ -2,7 +2,7 @@
 // the subscription into the mailbox and out of the worker into publish();
 // everything else is counters.
 
-#include "pimesh_frontend/decode_node.hpp"
+#include "pimesh_frontend/nodes/decode_node.hpp"
 
 #include <chrono>
 #include <cstdio>

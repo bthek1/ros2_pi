@@ -5,7 +5,7 @@
 // come from — a topic rather than a member — and that this node's stats line is
 // its own rather than the second of two rows.
 
-#include "pimesh_frontend/odometry_node.hpp"
+#include "pimesh_frontend/nodes/odometry_node.hpp"
 
 #include <algorithm>
 #include <chrono>

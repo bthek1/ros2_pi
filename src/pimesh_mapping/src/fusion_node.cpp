@@ -2,7 +2,7 @@
 // thread behind a one-slot mailbox — the shape every expensive stage in this
 // workspace has.
 
-#include "pimesh_mapping/fusion_node.hpp"
+#include "pimesh_mapping/nodes/fusion_node.hpp"
 
 #include <algorithm>
 #include <chrono>

@@ -8,7 +8,7 @@
 
 #include <memory>
 
-#include "pimesh_frontend/odometry_node.hpp"
+#include "pimesh_frontend/nodes/odometry_node.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 int main(int argc, char ** argv)

@@ -3,7 +3,7 @@
 // unique_ptr), the header copy that keeps /depth dated to when the light
 // arrived, and the startup log that names the execution provider.
 
-#include "pimesh_depth/depth_node.hpp"
+#include "pimesh_depth/nodes/depth_node.hpp"
 
 #include <algorithm>
 #include <chrono>
