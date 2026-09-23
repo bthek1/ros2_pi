@@ -18,8 +18,34 @@ exception, a topic that stops — a gate is the cheaper place to catch it.
 completed — and it exits 0 again when a package has no tests at all, which is what
 an unbuilt tree looks like. `colcon test-result --all` is what decides, and
 `bash tools/gates/test.sh` asserts on the counts: zero failures, zero skips, a
-floor on how many tests ran, and the same suites at both ends. **Raise the floor
-when you add tests; never lower it to make a run pass.**
+floor on how many tests ran, the same suites at both ends, and — since #14's P5
+— **the same number of tests at both ends**. **Raise the floor when you add
+tests; never lower it to make a run pass.**
+
+**Two things make the count lie, and both were found on 2026-09-23 by moving
+three suites between packages.**
+
+`colcon test-result --all` reads every XML under `build/` whether the run that
+just finished wrote it or not. So **a suite that stops being run keeps reporting
+its last result — passing — for as long as the file survives**: a deleted suite
+is invisible, and a moved one is counted twice. The three suites moved and the
+total went 433 → 490, which is 433 plus the same three counted again out of the
+old package's leftovers. Nothing in the output said so; the totals simply got
+better. `tools/test.sh` deletes the result directories before running, which is
+why it must be the thing that runs them.
+
+Then the gate printed `dev=433 pi=490` and **PASS**, because it asserted a floor
+on each machine and identical *suite names* — and stale files carry the same
+names as the suites that wrote them, so nothing compared the two numbers. Hence
+the equality assertion. Same sources, same suites, two machines: a difference
+means different tests ran.
+
+**The reason the Pi kept its stale files is the one to carry.** `tools/pi/test-pi.sh`
+inlined its own `colcon build && colcon test && colcon test-result` — a second
+spelling of `tools/test.sh` that agreed until `tools/test.sh` grew a step. It
+runs `bash tools/test.sh` on the Pi now, and `tools/` is rsynced, so both ends
+run the same script. A gate proves the thing a person runs only if it *runs* the
+thing a person runs.
 
 Tests that need a camera do not belong in `colcon test` — the dev box has no
 capture device, and a suite that only runs on the Pi is one that stops being run.
