@@ -29,7 +29,9 @@ SRC = PACKAGE.parent
 APP_JS = (PACKAGE / "web" / "app.js").read_text()
 WEB_SERVER_HPP = (PACKAGE / "include" / "pimesh_dashboard" / "web_server.hpp").read_text()
 DASHBOARD_NODE_CPP = (PACKAGE / "src" / "dashboard_node.cpp").read_text()
-DASHBOARD_PROBE_CPP = (PACKAGE / "src" / "dashboard_probe.cpp").read_text()
+# apps/, not src/, since #14 P4: it has a main(), so it is an executable and
+# not a component, and the directory is what says so.
+DASHBOARD_PROBE_CPP = (PACKAGE / "apps" / "dashboard_probe.cpp").read_text()
 
 
 # ---------------------------------------------------------------------------

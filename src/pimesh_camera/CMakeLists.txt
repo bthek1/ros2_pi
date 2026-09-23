@@ -64,14 +64,14 @@ rclcpp_components_register_nodes(camera_components
   "pimesh_camera::CameraNode"
 )
 
-add_executable(camera_node src/camera_node_main.cpp)
+add_executable(camera_node apps/camera_node_main.cpp)
 target_link_libraries(camera_node PRIVATE camera_components rclcpp::rclcpp)
 
 # The gate's instrument, not part of the pipeline. It is here rather than in a
 # test directory because it is a ROS node that has to be built by the same
 # toolchain against the same message types, and because the thing it measures
 # is this package's claim.
-add_executable(capture_probe src/capture_probe_main.cpp)
+add_executable(capture_probe apps/capture_probe.cpp)
 target_link_libraries(capture_probe PRIVATE rclcpp::rclcpp ${sensor_msgs_TARGETS})
 
 install(DIRECTORY include/ DESTINATION include)

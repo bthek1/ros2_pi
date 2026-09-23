@@ -363,6 +363,52 @@ sys.exit(1 if bad or stale else 0)
 PYD
 [[ $? -eq 0 ]] || note "a library header reaches for rclcpp or no test names it"
 
+# --- (e) apps and probes ----------------------------------------------------
+#
+# The directory says what kind of thing a file is, so that a reader does not
+# have to open it. Before #14's P4 there were two spellings for a probe and no
+# way to tell an executable from a component by its name at all:
+# keypoint_probe_main.cpp and capture_probe_main.cpp had a main(), while
+# depth_probe.cpp, odom_probe.cpp and ipc_probe.cpp are components a gate loads
+# with probe:=, and all six sat in src/ beside the library code they measure.
+#
+# The third assertion is the one that keeps it: a main() appearing in src/ is
+# how the split comes undone, one file at a time.
+
+echo "-- (e) apps and probes"
+"$PY" - "$PIMESH_WS" <<'PYE'
+import re, sys, pathlib
+ws = pathlib.Path(sys.argv[1])
+
+MAIN = re.compile(r'^\s*int\s+main\s*\(', re.M)
+REG = re.compile(r'RCLCPP_COMPONENTS_REGISTER_NODE\s*\(')
+
+bad, n_apps, n_probes, n_src = [], 0, 0, 0
+for pkg in sorted((ws / 'src').iterdir()):
+    for cpp in sorted((pkg / 'apps').glob('*.cpp')):
+        n_apps += 1
+        if len(MAIN.findall(cpp.read_text(errors='ignore'))) != 1:
+            bad.append((cpp.relative_to(ws), 'is under apps/ but has no main()'))
+    for cpp in sorted((pkg / 'probes').glob('*.cpp')):
+        n_probes += 1
+        text = cpp.read_text(errors='ignore')
+        if not REG.search(text):
+            bad.append((cpp.relative_to(ws), 'is under probes/ but registers no component'))
+        if MAIN.search(text):
+            bad.append((cpp.relative_to(ws), 'is under probes/ but has a main() — it belongs in apps/'))
+    for cpp in sorted((pkg / 'src').glob('*.cpp')):
+        n_src += 1
+        if MAIN.search(cpp.read_text(errors='ignore')):
+            bad.append((cpp.relative_to(ws), 'has a main() but is in src/ — it belongs in apps/'))
+
+print(f"   {n_apps} apps (each exactly one main), {n_probes} probes "
+      f"(each exactly one registration, no main), {n_src} library sources")
+for rel, why in bad:
+    print(f"   MISFILED: {rel} {why}")
+sys.exit(1 if bad else 0)
+PYE
+[[ $? -eq 0 ]] || note "a source file is not where its kind says it should be"
+
 echo
 if [[ $fail -eq 0 ]]; then
     echo "PASS gate-naming"

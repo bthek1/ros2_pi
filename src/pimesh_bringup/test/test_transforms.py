@@ -843,10 +843,19 @@ def test_the_marker_cap_is_a_cap_and_not_a_target(config):
 # depth_node's declare_parameter calls no longer under any scanned directory,
 # every one of its YAML keys read as a parameter nobody declares. That is the
 # check working, and it is the only thing in the suite that saw the split at all.
-_COMPONENT_SRC = [
-    os.path.join(_HERE, '..', '..', 'pimesh_frontend', 'src'),
-    os.path.join(_HERE, '..', '..', 'pimesh_depth', 'src'),
-    os.path.join(_HERE, '..', '..', 'pimesh_mapping', 'src'),
+# **Package roots, not source directories, and that is the third correction
+# this list has needed.** A second package joined it at P5; a third and fourth at
+# #14's P2; and at #14's P4 the probes moved from src/ to probes/, so a list of
+# src/ directories silently stopped covering ipc_probe, odom_probe and
+# depth_probe — every one of whose YAML keys then read as a parameter nobody
+# declares. Each time the list was right and then a directory appeared beside it.
+# Naming the package and walking it removes the failure mode rather than the
+# instance: a new subdirectory is covered without anyone remembering.
+_COMPONENT_PKGS = [
+    os.path.join(_HERE, '..', '..', 'pimesh_frontend'),
+    os.path.join(_HERE, '..', '..', 'pimesh_depth'),
+    os.path.join(_HERE, '..', '..', 'pimesh_mapping'),
+    os.path.join(_HERE, '..', '..', 'pimesh_dashboard'),
 ]
 
 
@@ -864,12 +873,14 @@ def declared_parameters():
 
     pattern = re.compile(r'declare_parameter\s*(?:<[^>]*>)?\(\s*"([^"]+)"')
     names = set()
-    for directory in _COMPONENT_SRC:
-        assert os.path.isdir(directory), (
-            f'{directory} is missing, so this test would check less than it thinks')
-        sources = [f for f in os.listdir(directory) if f.endswith('.cpp')]
-        assert sources, f'no .cpp files in {directory} — not looking where it thinks'
-        for filename in sources:
+    for package in _COMPONENT_PKGS:
+        assert os.path.isdir(package), (
+            f'{package} is missing, so this test would check less than it thinks')
+        found = [(root, f)
+                 for root, _dirs, files in os.walk(package)
+                 for f in files if f.endswith('.cpp')]
+        assert found, f'no .cpp files under {package} — not looking where it thinks'
+        for directory, filename in found:
             with open(os.path.join(directory, filename)) as handle:
                 names |= set(pattern.findall(handle.read()))
     assert names, 'found no declare_parameter calls at all'

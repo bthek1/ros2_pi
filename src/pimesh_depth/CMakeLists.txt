@@ -61,7 +61,7 @@ endif()
 
 add_library(depth_components SHARED
   src/depth_node.cpp
-  src/depth_probe.cpp
+  probes/depth_probe.cpp
   # Exactly one of these two is compiled, and the choice is the only thing the
   # GPU stack's presence changes about this library.
   $<$<BOOL:${PIMESH_HAVE_ONNXRUNTIME}>:src/depth_engine_ort.cpp>
@@ -142,7 +142,7 @@ rclcpp_components_register_nodes(depth_components
   "pimesh_depth::DepthProbe"
 )
 
-add_executable(depth_node src/depth_node_main.cpp)
+add_executable(depth_node apps/depth_node_main.cpp)
 target_link_libraries(depth_node PRIVATE depth_components rclcpp::rclcpp)
 
 install(DIRECTORY include/ DESTINATION include)

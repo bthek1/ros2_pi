@@ -61,14 +61,14 @@ target_link_libraries(dashboard_components PUBLIC
 # Plural, so no main is generated: the thin one is written by hand in src/.
 rclcpp_components_register_nodes(dashboard_components "pimesh_dashboard::DashboardNode")
 
-add_executable(dashboard_node src/dashboard_node_main.cpp)
+add_executable(dashboard_node apps/dashboard_node_main.cpp)
 target_link_libraries(dashboard_node PRIVATE dashboard_components rclcpp::rclcpp)
 
 # The instrument tools/gates/dashboard.sh measures with. No ROS in it: it is a
 # TCP client, and a ROS node here would put a participant on the domain that the
 # measurement would then include. See the file's header for why it is not a real
 # headless browser.
-add_executable(dashboard_probe src/dashboard_probe.cpp)
+add_executable(dashboard_probe apps/dashboard_probe.cpp)
 target_link_libraries(dashboard_probe PRIVATE dashboard_protocol)
 
 install(DIRECTORY include/ DESTINATION include)

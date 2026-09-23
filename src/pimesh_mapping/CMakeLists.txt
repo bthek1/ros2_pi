@@ -72,7 +72,7 @@ rclcpp_components_register_nodes(mapping_components
 )
 
 foreach(node fusion_node mesh_node)
-  add_executable(${node} src/${node}_main.cpp)
+  add_executable(${node} apps/${node}_main.cpp)
   target_link_libraries(${node} PRIVATE mapping_components rclcpp::rclcpp)
 endforeach()
 

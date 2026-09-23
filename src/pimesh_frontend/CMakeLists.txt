@@ -38,10 +38,10 @@ find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs features2d calib3
 
 add_library(frontend_components SHARED
   src/decode_node.cpp
-  src/ipc_probe.cpp
+  probes/ipc_probe.cpp
   src/keyframe_store.cpp
   src/keypoint_node.cpp
-  src/odom_probe.cpp
+  probes/odom_probe.cpp
   src/odometry_node.cpp
   src/orb_tracker.cpp
   src/rgbd_odometry.cpp
@@ -81,7 +81,7 @@ rclcpp_components_register_nodes(frontend_components
 )
 
 foreach(node decode_node keypoint_node odometry_node)
-  add_executable(${node} src/${node}_main.cpp)
+  add_executable(${node} apps/${node}_main.cpp)
   target_link_libraries(${node} PRIVATE frontend_components rclcpp::rclcpp)
 endforeach()
 
@@ -92,7 +92,7 @@ endforeach()
 # what is *in* the messages. This one reports the matched-keypoint fraction off
 # the published track ids, which is the number the gate compares against the
 # predecessor's.
-add_executable(keypoint_probe src/keypoint_probe_main.cpp)
+add_executable(keypoint_probe apps/keypoint_probe.cpp)
 target_include_directories(keypoint_probe PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include ${pimesh_core_INCLUDE_DIRS})
 target_link_libraries(keypoint_probe PRIVATE rclcpp::rclcpp ${pimesh_msgs_TARGETS})
