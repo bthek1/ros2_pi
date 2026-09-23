@@ -7,7 +7,7 @@
 #   bash tools/gates/{build,capture,ipc,keypoints,depth}.sh          P0-P4
 #   bash tools/gates/{fusion,mesh,odom,dashboard}.sh                 P5-P8
 #   bash tools/gates/{gpu-stack,calibration}.sh  the GPU toolchain; P9's intrinsics
-#   bash tools/gates/{test,view-configs,justfile,teardown}.sh the workspace's own
+#   bash tools/gates/{test,view-configs,justfile,teardown,naming}.sh workspace-own
 # and the scripts they lean on — record-clip, fetch-{gpu-stack,model}, mesh-views,
 # calibrate, camera-reset, test, stragglers, {sync,build,clean}-pi, clean.
 #

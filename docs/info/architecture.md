@@ -107,10 +107,12 @@ configuration is a gate whose green means nothing the day a stage is added.
 
 ### It is measured, and the measurement needs a control
 
-`bash tools/gates/hello-ipc.sh` runs one container twice — `intra_process:=true` and
-`intra_process:=false`, same binary, same launch file — and compares the payload
-address the publisher logged against the address the subscriber was handed.
-Measured 2026-09-08: **19/19 equal with it on, 0/16 with it off**.
+The retired `gates/hello-ipc.sh` ran one container twice — `intra_process:=true`
+and `intra_process:=false`, same binary, same launch file — and compared the
+payload address the publisher logged against the address the subscriber was
+handed. Measured 2026-09-08: **19/19 equal with it on, 0/16 with it off**. It
+went with `pimesh_hello` on 2026-09-23, having measured the one configuration
+that cannot fail: a single consumer.
 
 `bash tools/gates/ipc.sh` is the same experiment on the real pipeline, with the
 Pi's camera feeding it: the probe is loaded into the live container beside

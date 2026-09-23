@@ -126,7 +126,8 @@ suite, so the dev box's 26.04 upgrade replaced every `ros-jazzy-*` package with
 `piros2` on 2026-08-31 (topics, `camera_info`, `tf_static` all crossed), and
 re-measured as **this** project's own on 2026-09-08: a Jazzy publisher on the Pi
 delivered 39 of 40 messages in 20 s at 2 Hz to a Lyrical subscriber here
-(`bash tools/gates/hello-lan.sh`). DDS is wire-compatible across distros; the C++ ABI is
+(the retired `gates/hello-lan.sh`; `bash tools/gates/capture.sh` covers the claim
+now). DDS is wire-compatible across distros; the C++ ABI is
 not, and that one sentence is the whole reason for the build-from-source rule.
 
 **Consequence for C++, and it is the sharpest one in the project:** ROS 2 has no
@@ -220,8 +221,9 @@ strong priors, re-verify before quoting a number as this project's own.
   main structural reason this rewrite exists — do not break it by launching
   components as separate processes "for debugging".
 
-  **This one is no longer inherited: it is measured here.** `bash tools/gates/hello-ipc.sh`
-  runs the same container twice, with intra-process on and off, and compares the
+  **This one is no longer inherited: it is measured here.** The retired
+  `gates/hello-ipc.sh` ran the same container twice, with intra-process on and
+  off, and compared the
   payload address the publisher logged against the one the subscriber received —
   19/19 equal with it on, 0/16 with it off (2026-09-08). `bash tools/gates/ipc.sh`
   is the same experiment on the real pipeline with the Pi's camera feeding it:
