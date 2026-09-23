@@ -20,8 +20,8 @@ a plane and a cube built in memory, projected through the renderer, and the
 picture required to be the one the geometry implies.
 
 It lives in `pimesh_bringup` because that is where this workspace's Python tests
-live, and it imports `tools/mesh_render.py` by path for the same reason
-`test_straightness.py` imports `tools/calib_straightness.py` — the module is in
+live, and it imports `tools/eval/mesh_render.py` by path for the same reason
+`test_straightness.py` imports `tools/calib/calib_straightness.py` — the module is in
 `tools/` because that is where this project's one-off tools live, and `tools/` is
 rsynced to the Pi, so this test runs at both ends the way `gates/test.sh`
 requires.
@@ -38,14 +38,14 @@ cv2 = pytest.importorskip('cv2')
 
 
 def _load_module():
-    """Import tools/mesh_render.py by path.
+    """Import tools/eval/mesh_render.py by path.
 
     Three parents up from src/pimesh_bringup/test/test_mesh_render.py is `src/`,
     four is the workspace root. Resolved from __file__ rather than from the cwd
     because `colcon test` runs tests from the build tree.
     """
     root = pathlib.Path(__file__).resolve().parents[3]
-    path = root / 'tools' / 'mesh_render.py'
+    path = root / 'tools' / 'eval' / 'mesh_render.py'
     assert path.is_file(), f'{path} is missing, so this test would check nothing'
     spec = importlib.util.spec_from_file_location('mesh_render', path)
     module = importlib.util.module_from_spec(spec)
@@ -308,7 +308,7 @@ def test_an_empty_mesh_is_background_and_a_non_zero_exit(render_module, tmp_path
 
 def test_the_renders_are_written_and_their_coverage_is_reported(
         render_module, tmp_path, capsys):
-    """End to end, the way `tools/mesh-views.sh` calls it: three files with the
+    """End to end, the way `tools/eval/mesh-views.sh` calls it: three files with the
     names the gate greps for, and a coverage line per view."""
     import sys
     vertices, colours, triangles = _cube()

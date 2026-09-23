@@ -7,10 +7,10 @@
 # false positive there is: a sealed box with no openings looks *more* finished
 # than a correct scan, and a plausible-looking room can be metres out of scale
 # with nothing on the screen saying so. `bash tools/gates/mesh.sh` is what passes
-# or fails P6, and the three PNGs `tools/mesh-views.sh` writes are what it points
+# or fails P6, and the three PNGs `tools/eval/mesh-views.sh` writes are what it points
 # at. This is here so a person can see the thing exists.
 #
-# Same shape as tools/view-depth.sh, and the teardown is all in just-lib.sh: a
+# Same shape as tools/view/view-depth.sh, and the teardown is all in just-lib.sh: a
 # handler on EXIT and on INT/TERM/HUP that kills both machines *and then checks*,
 # and rviz2 **backgrounded** rather than run in the foreground, because bash defers
 # a trap until its foreground child returns and an rviz2 signalled during its own
@@ -23,14 +23,14 @@
 # into the past at each wrap; fusion_node looks the pose up at the frame's own
 # stamp and tf2 refuses anything older than the newest it holds, so after the first
 # wrap nothing would be integrated at all and the surface would stop growing. See
-# tools/replay.sh for the measurement.
+# tools/view/replay.sh for the measurement.
 #
 # **Give it half a minute.** depth_node loads a 99 MB model and warms a CUDA
 # session; fusion needs frames before there is a volume; and mesh_node extracts on
 # a 10 s timer, so the first surface appears about ten seconds after the first
 # frame is integrated and grows at every tick after that.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 
 SECONDS_LIMIT=${1:-600}
 BAG_ARG=${2:-}
@@ -99,7 +99,7 @@ measure. Do not adjust it by eye against a mesh that looks about right.
 
   Save the surface at any point, full detail, from another terminal:
     ros2 service call /world/save_mesh pimesh_msgs/srv/SaveMesh "{path: '/tmp/room.ply'}"
-    bash tools/mesh-views.sh /tmp/room.ply
+    bash tools/eval/mesh-views.sh /tmp/room.ply
 
   Throw the map away and start again:
     ros2 service call /world/reset_map pimesh_msgs/srv/ResetMap "{}"
@@ -110,7 +110,7 @@ clip, not a crash. The window stays until Ctrl-C or ${SECONDS_LIMIT}s.
 CHECKLIST
 
 if [[ -n $BAG ]]; then
-    # See tools/replay.sh for why both the flag and the redirect are needed: a
+    # See tools/view/replay.sh for why both the flag and the redirect are needed: a
     # backgrounded player that can read its terminal is stopped by SIGTTIN and
     # publishes nothing, silently. **No `--loop`** — see the header.
     run_for "$SECONDS_LIMIT" \

@@ -14,7 +14,7 @@ The format is the standard `camera_info` YAML, which is exactly what
 here verbatim rather than transcribed into a parameter file: fourteen numbers
 retyped by hand is fourteen chances to be silently wrong.
 
-Produce one with `bash tools/calibrate.sh` and check it with
+Produce one with `bash tools/calib/calibrate.sh` and check it with
 `bash tools/gates/calibration.sh`. The resolution in `image_width`/`image_height`
 must match the stream — a 720p calibration on a 1080p capture is wrong by a
 constant factor in fx, fy, cx and cy at once, so `camera_node` refuses to start

@@ -67,7 +67,7 @@
 # **Opening the page in a real browser while this runs invalidates the run**,
 # since claim 1 is a comparison against a run with nothing attached.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 echo "== gate-dashboard =="
 
 BAG_NAME=${1:-desk1}
@@ -109,7 +109,7 @@ STALE_HIGH=3.0
 # that proves the pacing rule is armed rather than merely intended.
 MAX_WS_DROPPED=0
 
-# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh.
+# Before arm_cleanup, always — see assert_no_session in tools/lib/just-lib.sh.
 assert_no_session "bash tools/gates/dashboard.sh"
 
 arm_cleanup kill_local

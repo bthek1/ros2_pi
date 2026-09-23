@@ -7,7 +7,7 @@ predecessor's algorithm over the same clip — 0.9063 against 0.9065 on
 outside this workspace, and it is worth exactly as much as the reimplementation
 is right.
 
-**Every way `tools/orb_reference.py` can be wrong produces a number, and two of
+**Every way `tools/eval/orb_reference.py` can be wrong produces a number, and two of
 them make the gate agree better rather than worse:**
 
 - Drop the one-to-one claim and a plain nearest-neighbour pass is many-to-one:
@@ -31,7 +31,7 @@ twice, is not measuring the same quantity as the thing it is the reference for,
 however close the two numbers come out.
 
 It lives in pimesh_bringup because that is where this workspace's Python tests
-live, and it imports tools/orb_reference.py by path for the reason
+live, and it imports tools/eval/orb_reference.py by path for the reason
 test_straightness imports its own subject that way: `tools/` is where this
 project's analysis scripts live, and it is rsynced to the Pi, so this runs at
 both ends as gates/test.sh requires.
@@ -47,7 +47,7 @@ cv2 = pytest.importorskip('cv2')
 
 
 def _load_module():
-    """Import tools/orb_reference.py by path.
+    """Import tools/eval/orb_reference.py by path.
 
     Three parents up from src/pimesh_bringup/test/ is the workspace root.
     Resolved from __file__ rather than from the cwd, because `colcon test` runs
@@ -56,7 +56,7 @@ def _load_module():
     the algorithm is reachable on a machine with no bag support at all.
     """
     root = pathlib.Path(__file__).resolve().parents[3]
-    path = root / 'tools' / 'orb_reference.py'
+    path = root / 'tools' / 'eval' / 'orb_reference.py'
     assert path.is_file(), f'{path} is missing — the gate has no reference'
     spec = importlib.util.spec_from_file_location('orb_reference', path)
     module = importlib.util.module_from_spec(spec)

@@ -2,8 +2,8 @@
 #
 # Put ROS on the environment of a `just` recipe. Sourced, never executed.
 #
-#   source tools/ros-env.sh              # the underlay only
-#   source tools/ros-env.sh --overlay    # ...plus this workspace's install/
+#   source tools/lib/ros-env.sh              # the underlay only
+#   source tools/lib/ros-env.sh --overlay    # ...plus this workspace's install/
 #
 # Login shells on both machines already do the first half (~/.profile), so this
 # is redundant — right up until the shell integration is the thing that is
@@ -35,7 +35,7 @@ if [ -z "${ROS_DISTRO:-}" ]; then
 fi
 
 if [ "${1:-}" = "--overlay" ]; then
-    _ros_ws=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+    _ros_ws=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
     [ -r "$_ros_ws/install/setup.bash" ] ||
         _ros_env_fail "no install/setup.bash in $_ros_ws — build first"
     set +u

@@ -14,19 +14,19 @@
 # is a number some node measured about itself, which is what makes the page and
 # `ros2 topic echo` unable to disagree.
 #
-# Takes a bag name to replay instead of the camera: `bash tools/dashboard.sh 600 desk1`.
+# Takes a bag name to replay instead of the camera: `bash tools/view/dashboard.sh 600 desk1`.
 # With no bag it uses the Pi's live camera — and that is the one configuration
 # where the `capture` row appears at all, since it is published by camera_node on
 # the Pi and a bag does not carry it.
 #
-# **A bag plays once here, not on a loop**, for the reason tools/replay.sh
+# **A bag plays once here, not on a loop**, for the reason tools/view/replay.sh
 # documents: a looping bag replays every header stamp ~60 s into the past at each
 # wrap, and the pose would freeze at the bag's final stamp for the rest of the run.
 #
 # Give it half a minute: depth_node loads a 99 MB model and warms a CUDA session,
 # and the first surface appears about ten seconds after the first frame is fused.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 
 SECONDS_LIMIT=${1:-600}
 BAG_ARG=${2:-}
@@ -88,7 +88,7 @@ ${BAG:+
 CHECKLIST
 
 if [[ -n $BAG ]]; then
-    # See tools/replay.sh for why both the flag and the redirect are needed: a
+    # See tools/view/replay.sh for why both the flag and the redirect are needed: a
     # backgrounded player that can read its terminal is stopped by SIGTTIN and
     # publishes nothing, silently.
     run_for "$SECONDS_LIMIT" \

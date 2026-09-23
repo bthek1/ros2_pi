@@ -7,16 +7,16 @@
 # alive and sane — green circles on texture, a frame that rotates when they pan —
 # before trusting a number about it.
 #
-# Same shape as tools/view-camera.sh, and the teardown is all in just-lib.sh: a
+# Same shape as tools/view/view-camera.sh, and the teardown is all in just-lib.sh: a
 # handler on EXIT and on INT/TERM/HUP that kills both machines *and then checks*,
 # and rviz2 *backgrounded* rather than in the foreground, because bash defers a
 # trap until its foreground child returns and an rviz2 signalled during its own
 # startup never returns. That leak costs the Pi's camera, which holds
 # /dev/video0 exclusively — and on 2026-09-14 this recipe lost it to the other
 # half of the same problem: the handler ran, fired one pkill at the far end, and
-# exited without ever looking. See the note on kill_pi in tools/just-lib.sh.
+# exited without ever looking. See the note on kill_pi in tools/lib/just-lib.sh.
 #
-# Takes a bag name to replay instead of the camera: `bash tools/view-keypoints.sh
+# Takes a bag name to replay instead of the camera: `bash tools/view/view-keypoints.sh
 # 600 desk1`. With no bag it uses the Pi's live camera.
 #
 # **A bag plays once here, not on a loop, and that is the one thing about this
@@ -28,11 +28,11 @@
 # `tf2_echo` beside a looping player: the edge froze at the bag's last stamp for
 # the whole rest of the run, and every listener — RViz included — logged
 # TF_OLD_DATA at the frame rate from inside the buffer's own mutex, which stalls
-# the render loop and makes both panels stutter. tools/replay.sh's header has
+# the render loop and makes both panels stutter. tools/view/replay.sh's header has
 # the long version, including why `--clock` and `use_sim_time` are measured to
 # be the wrong fix. So: one pass, and the session ends when the clip does.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 
 SECONDS_LIMIT=${1:-600}
 BAG_ARG=${2:-}
@@ -84,13 +84,13 @@ The clip plays **once** and then everything stops updating — the preview holds
 last frame and the TF axes fade out over 30 s. That is the end of the clip, not a
 crash: a looping bag replays header stamps minutes into the past, and a pose
 published from them is rejected by every TF listener in the domain. The window
-stays until Ctrl-C or ${SECONDS_LIMIT}s. \`bash tools/replay.sh\` is the one that
+stays until Ctrl-C or ${SECONDS_LIMIT}s. \`bash tools/view/replay.sh\` is the one that
 loops, and it can because it publishes no pose at all.
 }
 CHECKLIST
 
 if [[ -n $BAG ]]; then
-    # See tools/replay.sh for why both the flag and the redirect are needed: a
+    # See tools/view/replay.sh for why both the flag and the redirect are needed: a
     # backgrounded player that can read its terminal is stopped by SIGTTIN and
     # publishes nothing, silently. **No `--loop`** — see the header.
     run_for "$SECONDS_LIMIT" \

@@ -77,7 +77,7 @@
             // adds a package.
             "label": "refresh ROS env for the Testing panel",
             "type": "shell",
-            "command": "bash tools/vscode-env.sh",
+            "command": "bash tools/lib/vscode-env.sh",
             "runOptions": { "runOn": "folderOpen" },
             "problemMatcher": [],
             "presentation": { "reveal": "silent", "panel": "dedicated", "close": true }

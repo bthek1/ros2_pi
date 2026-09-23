@@ -72,7 +72,7 @@ it; the numbers below marked **(measured here)** are that gate's output.
   into parameters. **Calibrated 2026-09-12** ([P9](https://github.com/bthek1/ros2_pi/issues/9),
   closed): fx=953.4, fy=957.6, cx=627.7, cy=334.6, held-out reprojection **0.4955 px**
   over 24 marker-confirmed frames, and the startup WARNING is gone. Produced with
-  `bash tools/calibrate.sh record | select | solve` and checked by
+  `bash tools/calib/calibrate.sh record | select | solve` and checked by
   `bash tools/gates/calibration.sh`.
 
   Two results from that phase are worth carrying: **this camera has essentially no
@@ -109,7 +109,7 @@ the job of catching an epoch error.
 `exposure_dynamic_framerate=1` trades rate for exposure indoors; with the
 control cleared it delivers **42–60 distinct frames/s at true 720p MJPEG
 (inherited, measured 2026-08-04)**. **(measured here, 2026-09-09)** with
-`bash tools/camera-reset.sh` run first and the camera in Aperture Priority Mode:
+`bash tools/calib/camera-reset.sh` run first and the camera in Aperture Priority Mode:
 **59.3 Hz at the Pi**, and **44.3–58.6 Hz as received on the dev box** across
 five runs — 0 duplicate payloads in every run, so those are distinct frames.
 The gap between the two is the Wi-Fi hop, and it is the thing to watch: never
@@ -579,7 +579,7 @@ meshing against 401.3 ms in a control run with nothing meshing** — no dip.
   - `/world/save_mesh` writes the **full-detail PLY** — 779 740 triangles against
     the Marker's 120 000 on the same extraction. A Marker is rebuilt and
     re-serialised on every publish; a file is written once.
-- `bash tools/mesh-views.sh <mesh.ply>` renders three fixed angles offscreen, in
+- `bash tools/eval/mesh-views.sh <mesh.ply>` renders three fixed angles offscreen, in
   numpy, with no GL and no Open3D. **Those PNGs are the evidence; the RViz window
   is not.**
 

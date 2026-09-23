@@ -17,7 +17,7 @@
 # the failure mode is not a bad recipe, it is a good recipe in a file that is no
 # longer a short answer to "what do I type?".
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh"
 echo "== gate-justfile =="
 
 MAX_LINES=80
@@ -82,7 +82,7 @@ PY
 # 3. No inlined shell. Each of these is a thing that must be spelled the same
 #    way everywhere: the SSH options (a bare ssh hangs two minutes on the Pi's
 #    dead link), the bracketed kill patterns (the plain spelling kills the shell
-#    asking), and the prelude. One copy each, in tools/just-lib.sh.
+#    asking), and the prelude. One copy each, in tools/lib/just-lib.sh.
 # The recipe *bodies*, from the dump, not the file: a comment explaining why the
 # ssh options are what they are is the opposite of the problem, and grepping the
 # raw file cannot tell the two apart.
@@ -105,7 +105,7 @@ inlined=0
 for pat in 'set -euo pipefail' '\bssh ' '\bpkill\b' '\bpgrep\b' 'BatchMode'; do
     hits=$(grep -cE "$pat" "$bodies" || true)
     if (( hits > 0 )); then
-        note "recipe bodies still inline ${pat} (${hits}×) — it belongs in tools/just-lib.sh"
+        note "recipe bodies still inline ${pat} (${hits}×) — it belongs in tools/lib/just-lib.sh"
         grep -nE "$pat" "$bodies" | sed 's/^/  /'
         inlined=$(( inlined + hits ))
     fi
@@ -153,7 +153,7 @@ fi
 # argument along: its port would have been read as the bag.
 #
 # **Nothing covered it, and the reason is worth keeping.** `gates/teardown.sh`
-# exercises both recipes — and calls `tools/view-odom.sh` *directly*, with a bag
+# exercises both recipes — and calls `tools/view/view-odom.sh` *directly*, with a bag
 # it names itself, because it needs the process group. So the one gate that
 # starts these recipes never goes through the justfile, and the justfile is the
 # user-facing surface. Ask what the gate does **not** touch.

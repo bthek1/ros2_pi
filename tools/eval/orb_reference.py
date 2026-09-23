@@ -32,7 +32,7 @@ moves the matched fraction *up* and makes the comparison agree better; count a
 featureless frame as a matched fraction of zero and the reference drifts about
 five points from the node it is the reference for, which is the whole tolerance.
 Neither shows up as a failure — they show up as a gate that passes for the wrong
-reason. `src/pimesh_bringup/test/test_orb_reference.py` pins the properties with
+reason. `src/pimesh_instruments/test/test_orb_reference.py` pins the properties with
 synthetic descriptors, no bag and no camera, and pins the same ones
 `test_orb_tracker` pins on the C++ side, which is the only way the two numbers
 are comparable at all.

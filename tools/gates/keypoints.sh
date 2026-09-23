@@ -15,7 +15,7 @@
 #     clock that sees both ends is the node's. Nothing outside it can measure this
 #     without measuring the queue in front of it as well.
 #  3. **Matched-keypoint fraction**, against the predecessor's algorithm over the
-#     same clip — tools/orb_reference.py, a separate implementation in a different
+#     same clip — tools/eval/orb_reference.py, a separate implementation in a different
 #     language. This is the one claim that is about whether the corners *mean*
 #     anything: a tracker can run at 50 Hz inside its budget while matching
 #     nothing, and rate and cost both look perfect while it does.
@@ -39,7 +39,7 @@
 # frames the bag contains, because a comparison against the reference only means
 # something if both covered the same material.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 echo "== gate-keypoints =="
 
 BAG_NAME=${1:-desk1}
@@ -58,10 +58,10 @@ MAX_MATCH_DELTA_PCT=5.0
 MIN_CLIP_COVERAGE_PCT=85
 # Frames the probe ignores before it starts averaging. The window takes ten frames
 # to fill, so a matched fraction that includes the warm-up is partly a measurement
-# of the warm-up. tools/orb_reference.py skips the same number.
+# of the warm-up. tools/eval/orb_reference.py skips the same number.
 WARMUP_FRAMES=15
 
-# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# Before arm_cleanup, always — see assert_no_session in tools/lib/just-lib.sh:
 # the cleanup handler kills this workspace's processes, so a refusal after the
 # trap is armed would tear down the session it is refusing to disturb.
 assert_no_session "bash tools/gates/keypoints.sh"
@@ -153,7 +153,7 @@ grep -q "Loaded node '/keypoint_node'" "$work/launch.log" 2>/dev/null || {
 # the seam where playback jumps from the last frame back to the first — a view change
 # no tracker can match across, which would count against the matched fraction as if
 # the room had moved. Both halves of the terminal problem are here for the reason
-# tools/replay.sh documents at length: a backgrounded `ros2 bag play` that can read
+# tools/view/replay.sh documents at length: a backgrounded `ros2 bag play` that can read
 # its controlling TTY is sent SIGTTIN and stops, silently, publishing nothing.
 timeout -s INT $(( MEASURE_S + 30 )) ros2 bag play "$BAG" \
     --disable-keyboard-controls </dev/null >"$work/play.log" 2>&1 &
@@ -274,9 +274,9 @@ fi
 echo
 echo "-- the reference implementation over the same clip (this takes a minute) --"
 ref_start=$SECONDS
-/usr/bin/python3 "$PIMESH_WS/tools/orb_reference.py" "$BAG" \
+/usr/bin/python3 "$PIMESH_WS/tools/eval/orb_reference.py" "$BAG" \
     --warmup-frames "$WARMUP_FRAMES" >"$work/ref.out" 2>"$work/ref.err" || {
-    note "tools/orb_reference.py failed"
+    note "tools/eval/orb_reference.py failed"
     tail -5 "$work/ref.err"
 }
 ref_seconds=$(( SECONDS - ref_start ))

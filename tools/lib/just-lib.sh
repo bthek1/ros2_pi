@@ -2,9 +2,9 @@
 #
 # The shell that every `just` recipe in this repo shares. Sourced, never run:
 #
-#   source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh"            # prelude only
-#   source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --ros      # ...plus /opt/ros
-#   source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay  # ...plus install/
+#   source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh"            # prelude only
+#   source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --ros      # ...plus /opt/ros
+#   source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay  # ...plus install/
 #
 # It exists because a `justfile` recipe body is a script with no way to share
 # code with another recipe — `just` has no file-scope shell functions. Before
@@ -21,7 +21,7 @@ set -euo pipefail
 # The workspace root, from this file's own location rather than from the
 # caller's cwd: gate scripts get run from `just`, from a terminal and from
 # inside a `setsid` process group, and only one of those starts anywhere known.
-PIMESH_WS=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+PIMESH_WS=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$PIMESH_WS"
 
 # ament_cmake is not a pure-CMake buildtool: it shells out to Python at
@@ -83,9 +83,9 @@ pi_run() {              # $* = command line to run on the Pi
 
 # ...in the Pi's workspace, with its own ROS and this workspace's install/ on
 # the environment. The Pi is Jazzy and this box is Lyrical, so the distro is
-# discovered at the far end by tools/ros-env.sh and never named here.
+# discovered at the far end by tools/lib/ros-env.sh and never named here.
 pi_ws_run() {           # $* = command line to run in the Pi's workspace
-    pi_run "cd $PI_WS && source tools/ros-env.sh --overlay && $*"
+    pi_run "cd $PI_WS && source tools/lib/ros-env.sh --overlay && $*"
 }
 
 # --- Killing things ---------------------------------------------------------
@@ -748,8 +748,8 @@ in_range() {            # $1 = value, $2 = low, $3 = high
 # --- ROS on the environment -------------------------------------------------
 
 case "${1:-}" in
-    --overlay) . "$PIMESH_WS/tools/ros-env.sh" --overlay ;;
-    --ros)     . "$PIMESH_WS/tools/ros-env.sh" ;;
+    --overlay) . "$PIMESH_WS/tools/lib/ros-env.sh" --overlay ;;
+    --ros)     . "$PIMESH_WS/tools/lib/ros-env.sh" ;;
     "")        ;;
     *)         echo "just-lib: unknown option $1" >&2; exit 1 ;;
 esac

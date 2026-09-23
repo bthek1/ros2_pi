@@ -360,7 +360,7 @@ and every argument after it shifts one place left:
 
 ```
 view-odom seconds="600" bag="" regime="sixdof":
-    @bash "{{ ws }}/tools/view-odom.sh" {{ seconds }} {{ bag }} {{ regime }}
+    @bash "{{ ws }}/tools/view/view-odom.sh" {{ seconds }} {{ bag }} {{ regime }}
                                         ↓        ↓         ↓
                                        600                sixdof      ← $2
 ```
@@ -381,7 +381,7 @@ as many arguments as it has parameters.
 is one of them. Typing `pkill -f component_container_mt` at a terminal kills that
 terminal's shell. Measured three times in one afternoon, 2026-09-08.
 
-Two defences, both in `tools/just-lib.sh` and used by every script:
+Two defences, both in `tools/lib/just-lib.sh` and used by every script:
 
 - **Bracket the first character** — `[c]omponent_container_mt` matches the
   process and not the pattern's own text.
@@ -414,7 +414,7 @@ grep -E '^Sig(Ign|Cgt):' /proc/<pid>/status
 The fix is to reset the disposition before exec'ing the thing under test:
 
 ```bash
-setsid env --default-signal=INT,TERM,HUP bash tools/view-camera.sh 45 &
+setsid env --default-signal=INT,TERM,HUP bash tools/view/view-camera.sh 45 &
 ```
 
 That is also the *faithful* spelling, not a workaround: a terminal's Ctrl-C
@@ -453,7 +453,7 @@ cannot compensate: the interrupt is recorded and the handler waits for
 | `timeout ... &` then `wait` | trap fired immediately, group gone |
 
 Both fixes work and they are not interchangeable. **`run_for` in
-`tools/just-lib.sh`** (`timeout --foreground -s INT`) is the one for anything a
+`tools/lib/just-lib.sh`** (`timeout --foreground -s INT`) is the one for anything a
 person watches: the child stays in the caller's group, so Ctrl-C reaches
 `ros2 launch` directly and ROS shuts down the way it does under a bare launch —
 measured at 0.30 s from keypress to a container that logged *process has
@@ -502,12 +502,12 @@ Inherited from `piros2/tools/calib/make_calib_target.py`, which composes that li
 when it draws the sheet. The PDF is a printed artefact, so the wrong line is on the
 wall and cannot be edited there.
 
-**Fix.** Use `bash tools/calibrate.sh`, which takes `--squares 7x9` and derives the
+**Fix.** Use `bash tools/calib/calibrate.sh`, which takes `--squares 7x9` and derives the
 interior-corner count itself, precisely so the two conventions cannot be typed
 inconsistently. If running `cameracalibrator` by hand, pass squares to `--size`.
 
 Note the same number means the *other* thing for `findChessboardCorners`, which is
-what `tools/calib_straightness.py` and the gate use: there it is 6x8. One input,
+what `tools/calib/calib_straightness.py` and the gate use: there it is 6x8. One input,
 two conventions, and they are one apart — which is why neither is typed twice.
 
 ## A replayed bag shows a grey Image panel and publishes nothing
@@ -526,7 +526,7 @@ a message. Being stopped is not a failure it gets to report, so there is no log
 line to find. Measured 2026-09-12: two players stopped this way sat for four
 minutes while `ros2 topic info` reported `Publisher count: 1`.
 
-**Fix.** `bash tools/replay.sh` (`just replay <bag>`) passes both
+**Fix.** `bash tools/view/replay.sh` (`just replay <bag>`) passes both
 `--disable-keyboard-controls` and `</dev/null`. By hand, either of those works;
 in the foreground, neither is needed. Confirm with `ps -o stat= -p <pid>` — a
 `T` is this, not a hang.
@@ -538,7 +538,7 @@ different reason. `just replay` starts the launch for exactly this.
 
 ## A looping replay flickers, and floods the terminal with `TF_OLD_DATA`
 
-**Symptom.** `bash tools/replay.sh desk1` comes up fine, and after about a minute
+**Symptom.** `bash tools/view/replay.sh desk1` comes up fine, and after about a minute
 the RViz Image panel starts stuttering, the 3D view stutters **while displaying
 nothing at all**, and the terminal fills with
 
@@ -568,8 +568,8 @@ drawn by that one Qt loop, which is why an **empty** 3D view stutters too — th
 is the tell that the problem is not in the graphics.
 
 **Fix.** Do not publish a dynamic transform over a looping bag.
-`bash tools/replay.sh` starts `pimesh.launch.py pipeline:=false`, which brings up
-the static frame tree and no components at all; `bash tools/view-keypoints.sh
+`bash tools/view/replay.sh` starts `pimesh.launch.py pipeline:=false`, which brings up
+the static frame tree and no components at all; `bash tools/view/view-keypoints.sh
 <seconds> <bag>` needs the pose, so it plays the clip **once** and ends when the
 clip does. With a purely static chain `_getLatestCommonTime` returns
 `TimePointZero`, which `FrameInfo::setLastUpdate` special-cases into a refresh on
@@ -609,7 +609,7 @@ This is the rule about one reader on the Wi-Fi topic, seen from the publisher's
 side, and it is not limited to two viewers — a gate run beside a viewer measures
 the same mixture and says nothing about it.
 
-**Fix.** `assert_no_session` in `tools/just-lib.sh` refuses to start while
+**Fix.** `assert_no_session` in `tools/lib/just-lib.sh` refuses to start while
 anything of this workspace's is already running, and prints the pids it found.
 **Every script that starts a session calls it — the three viewers, the recording
 and calibration tools, and the gates.** For a gate it is the sharper case: a
@@ -628,7 +628,7 @@ is wrong.
 
 ## `cameracalibrator` sees nothing, and `republish` is why
 
-**Symptom.** `bash tools/calibrate.sh session` comes up, the calibrator window opens,
+**Symptom.** `bash tools/calib/calibrate.sh session` comes up, the calibrator window opens,
 and it never registers a single sample — as if the board were not there at all.
 
 **Cause.** `image_transport republish` takes its transports as **parameters** on
@@ -642,7 +642,7 @@ starts a node that logs `The 'in_transport' parameter is set to: raw`, subscribe
 *raw* topic nothing publishes, and emits nothing. There is no error: the positional
 words are simply ignored. Measured 2026-09-12.
 
-**Fix**, and what `tools/calibrate.sh` now uses:
+**Fix**, and what `tools/calib/calibrate.sh` now uses:
 
 ```bash
 ros2 run image_transport republish \

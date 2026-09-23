@@ -43,7 +43,7 @@
 # the prelude, which exits 1 with "unknown option --print-prefix" before a line of
 # this file runs. Every script here that takes an argument passes the empty option
 # explicitly.
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" ""
+source "$(dirname "${BASH_SOURCE[0]}")/lib/just-lib.sh" ""
 
 PREFIX=${PIMESH_GPU_PREFIX:-$HOME/.local/opt/pimesh-gpu}
 LIB=$PREFIX/lib

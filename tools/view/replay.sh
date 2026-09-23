@@ -2,7 +2,7 @@
 #
 # Replay a recorded bag and watch it, with the frame tree next to it.
 #
-# **A viewer, not evidence**, exactly like tools/view-camera.sh — this is the
+# **A viewer, not evidence**, exactly like tools/view/view-camera.sh — this is the
 # same window fed from disk instead of from the Pi, so that a bag can be looked
 # at without the camera, the LAN or the Pi being involved at all. Nothing here
 # asserts anything; gates/capture.sh is what passes or fails a claim about the
@@ -70,14 +70,14 @@
 #     into a refresh on every tick — so the frames stay lit indefinitely instead
 #     of fading out under camera.rviz's 15 s Frame Timeout.
 #
-#     The pipeline on a bag is `bash tools/view-keypoints.sh <seconds> <bag>`,
+#     The pipeline on a bag is `bash tools/view/view-keypoints.sh <seconds> <bag>`,
 #     and that one does not loop, for the same reason.
 #
 # Teardown is local-only — `arm_cleanup kill_local` rather than the default
 # cleanup_both — because no part of this touches the Pi, and an SSH round trip
 # on the way out of a recipe that never opened one is latency for nothing.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 
 BAG_ARG=${1:-}
 SECONDS_LIMIT=${2:-600}
@@ -148,7 +148,7 @@ What you should see:
   odometry_node's, and nothing downstream of capture runs in this recipe —
   a looping bag replays old stamps, and a pose published from them floods
   every TF listener in the domain. The pipeline on this clip is
-  \`bash tools/view-keypoints.sh ${SECONDS_LIMIT} $(basename "$BAG")\`.
+  \`bash tools/view/view-keypoints.sh ${SECONDS_LIMIT} $(basename "$BAG")\`.
 
 The intrinsics you are looking at are whatever was true when the bag was
 recorded, and a bag recorded before a calibration existed carries the nominal
@@ -177,6 +177,6 @@ export QT_QPA_PLATFORM=xcb
 
 # Backgrounded and waited on, never foreground — bash defers a trap until the
 # foreground child returns, and an rviz2 signalled during its own startup never
-# returns. tools/view-camera.sh carries the long version of that measurement.
+# returns. tools/view/view-camera.sh carries the long version of that measurement.
 run_for "$SECONDS_LIMIT" rviz2 -d "$RVIZ_CONFIG" &
 wait $! || true

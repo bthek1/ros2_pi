@@ -149,7 +149,7 @@ truncated file has the right name and a plausible size, and ONNX Runtime opens i
 and fails with a protobuf parse error that names no cause.
 
 **The model does not go on the Pi** — inference is dev-box-only, and
-`tools/sync-pi.sh` ships `src`, `tools` and the justfile and nothing else, so
+`tools/pi/sync-pi.sh` ships `src`, `tools` and the justfile and nothing else, so
 `models/` is excluded by construction rather than by a rule somebody has to
 remember.
 
@@ -176,11 +176,11 @@ them but source.
 
 ```bash
 just build                   # dev box
-bash tools/build-pi.sh       # rsync source to the Pi, then build there under Jazzy
+bash tools/pi/build-pi.sh       # rsync source to the Pi, then build there under Jazzy
 bash tools/test.sh           # build, then colcon test, then colcon test-result
-bash tools/test-pi.sh        # the same, on the Pi, under Jazzy
+bash tools/pi/test-pi.sh        # the same, on the Pi, under Jazzy
 bash tools/clean.sh          # drop build/ install/ log/ here
-bash tools/clean-pi.sh       # and there
+bash tools/pi/clean-pi.sh       # and there
 ```
 
 `just build` is the only one of these in the justfile, because it is the only
@@ -197,9 +197,9 @@ and that argument is not optional here — without it every `ament_cmake` packag
 fails at configure time with `No module named 'catkin_pkg'`. See
 [troubleshooting.md](troubleshooting.md).
 
-`tools/sync-pi.sh` ships `src/`, `tools/` and the `justfile` with `rsync --delete`,
+`tools/pi/sync-pi.sh` ships `src/`, `tools/` and the `justfile` with `rsync --delete`,
 and **never** `build/`, `install/` or `log/`. It then runs
-`tools/check-stale.sh` on the Pi and clears the Pi's build tree if the sync left
+`tools/pi/check-stale.sh` on the Pi and clears the Pi's build tree if the sync left
 artefacts whose sources are gone — colcon never forgets a package on its own, so
 a stale overlay will otherwise keep answering `ros2 pkg list` with packages that
 no longer exist.
@@ -270,13 +270,13 @@ bash tools/gates/teardown.sh      # Ctrl-C, a closed terminal and a closed windo
                                   #   each leave nothing running, either machine,
                                   #   for every recipe in the justfile's `run` group
 
-bash tools/calibrate.sh record    # a bag of the board from many angles
-bash tools/calibrate.sh select    #   ...best frames out of it, marker-confirmed
-bash tools/calibrate.sh solve     #   ...fit, and write the YAML + report.txt
-bash tools/camera-reset.sh        # clear the camera's persistent V4L2 controls
+bash tools/calib/calibrate.sh record    # a bag of the board from many angles
+bash tools/calib/calibrate.sh select    #   ...best frames out of it, marker-confirmed
+bash tools/calib/calibrate.sh solve     #   ...fit, and write the YAML + report.txt
+bash tools/calib/camera-reset.sh        # clear the camera's persistent V4L2 controls
 bash tools/stragglers.sh          # assert nothing outlived its session
-bash tools/sync-pi.sh             # ship source to the Pi — source only
-bash tools/build-pi.sh            # ...and build it there, under Jazzy
+bash tools/pi/sync-pi.sh             # ship source to the Pi — source only
+bash tools/pi/build-pi.sh            # ...and build it there, under Jazzy
 bash tools/clean.sh               # delete the colcon trees (clean-pi.sh for the Pi's)
 ```
 
@@ -303,7 +303,7 @@ directly, so `source install/setup.bash` never happens, and
 `test_transforms.py`'s ament-index lookups would resolve against whatever the
 desktop session had on `AMENT_PREFIX_PATH`, which on this box is *another
 workspace*. `python.envFile` and TestMate's `envFile` are the one hook either
-extension offers, and `bash tools/vscode-env.sh` writes it: the essential ROS
+extension offers, and `bash tools/lib/vscode-env.sh` writes it: the essential ROS
 variables unconditionally, plus whatever else the sourcing changed, so a future
 setup script learning a new variable does not need this script edited.
 
@@ -326,10 +326,10 @@ Done once, on 2026-09-12, and the result is committed — `camera_node` loads
 run on a fresh checkout. Redo it only if the camera or the printed board changes:
 
 ```bash
-bash tools/calibrate.sh record --square 0.02475 --squares 7x9 --marker 0.01782 --seconds 120
-bash tools/calibrate.sh select --bag bags/calib_<timestamp> --square 0.02475 --squares 7x9 --marker 0.01782
-bash tools/calibrate.sh solve  --square 0.02475 --squares 7x9 --marker 0.01782
-bash tools/build.sh --packages-select pimesh_bringup && bash tools/sync-pi.sh && bash tools/build-pi.sh
+bash tools/calib/calibrate.sh record --square 0.02475 --squares 7x9 --marker 0.01782 --seconds 120
+bash tools/calib/calibrate.sh select --bag bags/calib_<timestamp> --square 0.02475 --squares 7x9 --marker 0.01782
+bash tools/calib/calibrate.sh solve  --square 0.02475 --squares 7x9 --marker 0.01782
+bash tools/build.sh --packages-select pimesh_bringup && bash tools/pi/sync-pi.sh && bash tools/pi/build-pi.sh
 bash tools/gates/calibration.sh
 ```
 
@@ -364,7 +364,7 @@ were deleted on 2026-09-23, once `gates/build.sh`, `gates/ipc.sh` and
 
 **The justfile is the user-facing surface; the shell is in `tools/`.** Every
 recipe is one line that runs a script — `tools/build.sh` — because `just` gives a recipe body no way to share code with another recipe, so
-inlined bash gets copy-pasted and drifts. `tools/just-lib.sh` is what they all
+inlined bash gets copy-pasted and drifts. `tools/lib/just-lib.sh` is what they all
 source: the prelude, the single spelling of the Pi's `ssh` invocation, the
 bracketed `pkill` patterns and `in_range`. Two consequences worth knowing:
 the scripts run without `just` (which is why `gate-teardown` can signal one
@@ -381,7 +381,7 @@ arrive with the phases of
 that build the nodes they run.
 
 Every session recipe **tears itself down on both machines**: the viewer runs in
-the foreground and `arm_cleanup` (in `tools/just-lib.sh`) installs a handler on
+the foreground and `arm_cleanup` (in `tools/lib/just-lib.sh`) installs a handler on
 EXIT and on INT/TERM/HUP that `pkill -f`s each node pattern, locally and over
 SSH, so Ctrl-C and closing the window both work. The handler cleans up once and
 re-raises, so an interrupted run exits 130 rather than falling through to the

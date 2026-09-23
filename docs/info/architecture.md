@@ -216,8 +216,8 @@ base_link ──(static)──▶ camera_link ──(static)──▶ camera_opt
   bag's last stamp and every listener logs `TF_OLD_DATA` at the frame rate, from
   inside the buffer's own mutex, which stalls RViz's render loop. The launch
   therefore takes `pipeline:=false`, bringing up the three static edges and no
-  components at all; that is what `tools/replay.sh` uses to loop a clip safely,
-  and `tools/view-keypoints.sh`, which needs the pose, plays a bag once instead.
+  components at all; that is what `tools/view/replay.sh` uses to loop a clip safely,
+  and `tools/view/view-keypoints.sh`, which needs the pose, plays a bag once instead.
   `--clock` with `use_sim_time` does not rescue it: the backwards jump makes
   `tf2_ros::Buffer` clear the whole buffer, `tf_static` included, and nothing
   republishes a latched topic. Full account in

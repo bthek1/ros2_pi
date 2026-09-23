@@ -46,7 +46,7 @@
 
 # The empty option is deliberate — see tools/fetch-gpu-stack.sh on why a script
 # that could be handed an argument must not let it reach the prelude.
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" ""
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" ""
 echo "== gate-gpu-stack =="
 
 # The budget P4 sets for depth_node's per-frame cost. Asserted here on inference
@@ -59,7 +59,7 @@ CUDA_RUNS=200
 # near the budget and does not cost a minute of wall clock to find out.
 CPU_RUNS=20
 
-# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh: the
+# Before arm_cleanup, always — see assert_no_session in tools/lib/just-lib.sh: the
 # cleanup handler kills this workspace's processes, so a refusal after the trap
 # is armed would tear down the session it is refusing to disturb.
 #
@@ -137,7 +137,7 @@ echo "driver : ${DRIVER}"
 # reporting one.
 compile() {             # $1 = output binary, $2 = extra linker flag
     g++ -O2 -std=c++17 -Wall -Wextra \
-        -I"$PREFIX/include" "$PIMESH_WS/tools/gpu_probe.cpp" -o "$1" \
+        -I"$PREFIX/include" "$PIMESH_WS/tools/eval/gpu_probe.cpp" -o "$1" \
         -L"$PREFIX/lib" -lonnxruntime "$2" -Wl,-rpath,"$PREFIX/lib"
 }
 

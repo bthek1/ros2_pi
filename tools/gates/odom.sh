@@ -76,7 +76,7 @@
 # Both runs replay bags/desk1, like every phase from P3 on, so the numbers compare
 # like for like. The Pi is not involved at all.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 echo "== gate-odom =="
 
 BAG_NAME=${1:-desk1}
@@ -117,7 +117,7 @@ MIN_POSED_PCT=55
 # — the last window of every run is the idle tail and a `rate > 0` filter keeps it.
 RUNNING_RATE_HZ=5
 
-# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh: the
+# Before arm_cleanup, always — see assert_no_session in tools/lib/just-lib.sh: the
 # cleanup handler kills this workspace's processes, so a refusal after the trap is
 # armed would tear down the session it is refusing to disturb.
 assert_no_session "bash tools/gates/odom.sh"
@@ -209,7 +209,7 @@ run_regime() {           # $1 = log path, $2 = window seconds, $3 = regime
     # Once, not --loop. A looping bag replays header stamps ~60 s into the past at
     # every wrap; odometry_node stamps the pose with the frame's own stamp, and
     # tf2 refuses any transform older than the newest it holds. Both halves of the
-    # terminal handling are here for the reason tools/replay.sh documents: a
+    # terminal handling are here for the reason tools/view/replay.sh documents: a
     # backgrounded `ros2 bag play` that can read its controlling TTY is sent
     # SIGTTIN and stops, silently, publishing nothing.
     timeout -s INT $(( window + 20 )) ros2 bag play "$BAG" \

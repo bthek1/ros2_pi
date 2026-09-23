@@ -186,7 +186,7 @@ void V4l2Capture::negotiate_format(const Config & config)
   // in indoor light — a control that persists inside the camera across
   // processes and reboots. So this is best-effort: not being able to set it is
   // not fatal, and the number reported back is not a promise either. Never
-  // quote a frame rate from here; measure it. tools/camera-reset.sh is what
+  // quote a frame rate from here; measure it. tools/calib/camera-reset.sh is what
   // clears the control that actually costs the frames.
   struct v4l2_streamparm parm {};
   parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;

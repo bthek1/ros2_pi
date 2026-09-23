@@ -4,12 +4,12 @@
 #
 # Three modes, run in this order, and the middle one is the physical session:
 #
-#   bash tools/calibrate.sh record  --square 0.02475 --marker 0.01782   a bag of the board
-#   bash tools/calibrate.sh select  --bag bags/<dir> ...                 ...frames from it
-#   bash tools/calibrate.sh grab    --square 0.02475 --marker 0.01782   (or live instead)
-#   bash tools/calibrate.sh session --bag bags/<dir> ...                 ...and calibrate it
-#   bash tools/calibrate.sh session --square 0.02475 --marker 0.01782   (or live instead)
-#   bash tools/calibrate.sh solve   --square 0.02475 --squares 7x9      fit + write both
+#   bash tools/calib/calibrate.sh record  --square 0.02475 --marker 0.01782   a bag of the board
+#   bash tools/calib/calibrate.sh select  --bag bags/<dir> ...                 ...frames from it
+#   bash tools/calib/calibrate.sh grab    --square 0.02475 --marker 0.01782   (or live instead)
+#   bash tools/calib/calibrate.sh session --bag bags/<dir> ...                 ...and calibrate it
+#   bash tools/calib/calibrate.sh session --square 0.02475 --marker 0.01782   (or live instead)
+#   bash tools/calib/calibrate.sh solve   --square 0.02475 --squares 7x9      fit + write both
 #
 # Those are the *measured* sizes of docs/charuco_a4_7x9_25mm.pdf as printed: the
 # sheet's 100 mm bar measures 99 mm (2026-09-12), so its nominal 25 mm squares and
@@ -31,7 +31,7 @@
 # out, including the camera on the Pi — a leaked camera_node holds /dev/video0
 # exclusively and every later session dies with "Device or resource busy".
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 
 CAMERA=c922_720p
 CALIB_DIR="$PIMESH_WS/calib/$CAMERA"
@@ -99,9 +99,9 @@ if [[ -z $square ]]; then
     cat >&2 <<'USAGE'
 calibrate: --square is required, in metres, and measured with a ruler.
 
-    bash tools/calibrate.sh grab    --square 0.02475 --squares 7x9 --marker 0.01782
-    bash tools/calibrate.sh session --square 0.02475 --squares 7x9 --marker 0.01782
-    bash tools/calibrate.sh install --square 0.02475 --squares 7x9 --marker 0.01782
+    bash tools/calib/calibrate.sh grab    --square 0.02475 --squares 7x9 --marker 0.01782
+    bash tools/calib/calibrate.sh session --square 0.02475 --squares 7x9 --marker 0.01782
+    bash tools/calib/calibrate.sh install --square 0.02475 --squares 7x9 --marker 0.01782
 
 Those are the MEASURED numbers for docs/charuco_a4_7x9_25mm.pdf as printed: its
 100 mm bar measures 99 mm, so the nominal 25/18 mm are really 24.75/17.82 mm. See
@@ -146,10 +146,10 @@ awk -v s="$square" 'BEGIN {exit !(s > 0.005 && s < 0.15)}' || {
     echo "calibrate: --square $square is not a plausible size in METRES" >&2; exit 2
 }
 
-# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# Before arm_cleanup, always — see assert_no_session in tools/lib/just-lib.sh:
 # the cleanup handler kills this workspace's processes, so a refusal after the
 # trap is armed would tear down the session it is refusing to disturb.
-assert_no_session "bash tools/calibrate.sh"
+assert_no_session "bash tools/calib/calibrate.sh"
 
 arm_cleanup
 
@@ -180,7 +180,7 @@ record)
     # job at the wall is just "move the camera slowly" rather than negotiating with a
     # tool that is refusing frames.
     echo "== calibrate record =="
-    bash "$PIMESH_WS/tools/camera-reset.sh" >"$work/reset" 2>&1 ||
+    bash "$PIMESH_WS/tools/calib/camera-reset.sh" >"$work/reset" 2>&1 ||
         { echo "calibrate: camera-reset did not reach its baseline" >&2
           sed 's/^/  /' "$work/reset" >&2; exit 1; }
     start_camera $(( seconds + 30 )) || exit 1
@@ -227,7 +227,7 @@ EOF
         echo "FAIL: only ${n_msgs:-0} messages — the camera stream did not reach the recorder" >&2
         exit 1
     fi
-    echo "next             : bash tools/calibrate.sh select --bag $bag_dir \\"
+    echo "next             : bash tools/calib/calibrate.sh select --bag $bag_dir \\"
     echo "                       --square $square --squares $squares --marker $marker"
     ;;
 
@@ -243,7 +243,7 @@ select)
         echo "kept the previous frames in ${FRAMES_DIR#"$PIMESH_WS"/}.prev"
     fi
 
-    /usr/bin/python3 "$PIMESH_WS/tools/calib_select.py" \
+    /usr/bin/python3 "$PIMESH_WS/tools/calib/calib_select.py" \
         --bag "$BAG" --out "$FRAMES_DIR" --squares "$squares" \
         --square "$square" --marker "$marker" --dict "$dict" --count "$select_count"
     ;;
@@ -253,7 +253,7 @@ grab)
     # camera's JPEG itself and writes those same bytes back out, so nothing
     # re-encodes the image between the sensor and the gate's sub-pixel corner fit.
     echo "== calibrate grab =="
-    bash "$PIMESH_WS/tools/camera-reset.sh" >"$work/reset" 2>&1 ||
+    bash "$PIMESH_WS/tools/calib/camera-reset.sh" >"$work/reset" 2>&1 ||
         { echo "calibrate: camera-reset did not reach its baseline" >&2
           sed 's/^/  /' "$work/reset" >&2; exit 1; }
 
@@ -294,7 +294,7 @@ you from this one.
 Ctrl-C when it says it is done.
 
 EOF
-    run_for "$seconds" /usr/bin/python3 "$PIMESH_WS/tools/calib_grab.py" \
+    run_for "$seconds" /usr/bin/python3 "$PIMESH_WS/tools/calib/calib_grab.py" \
         --out "$FRAMES_DIR" --size "$corners" --count "$frames" \
         --square "$square" --marker "$marker" --dict "$dict" || true
 
@@ -323,7 +323,7 @@ session)
     if [[ -n $BAG ]]; then
         [[ -d $BAG ]] || { echo "calibrate: no such bag $BAG" >&2; exit 2; }
         # --disable-keyboard-controls and </dev/null, both deliberately, and the
-        # reason is in tools/replay.sh: playback reads the controlling terminal for
+        # reason is in tools/view/replay.sh: playback reads the controlling terminal for
         # its space-to-pause keys, a *backgrounded* process that reads its TTY is sent
         # SIGTTIN and stopped by the kernel, and a stopped player publishes nothing
         # while reporting no error at all. The flag stops it wanting the terminal; the
@@ -333,7 +333,7 @@ session)
         echo "playing $BAG on a loop as the calibrator's input"
         sleep 3
     else
-        bash "$PIMESH_WS/tools/camera-reset.sh" >"$work/reset" 2>&1 ||
+        bash "$PIMESH_WS/tools/calib/camera-reset.sh" >"$work/reset" 2>&1 ||
             { echo "calibrate: camera-reset did not reach its baseline" >&2
               sed 's/^/  /' "$work/reset" >&2; exit 1; }
         start_camera "$seconds" || exit 1
@@ -384,7 +384,7 @@ against a true 905, k1=+1.97 against a true +0.085, and a reprojection error of
 When X, Y, Size and Skew are all green, press CALIBRATE, then SAVE. SAVE writes
 $TARBALL; then run:
 
-    bash tools/calibrate.sh install --square $square
+    bash tools/calib/calibrate.sh install --square $square
 
 --no-service-check is passed because camera_node deliberately offers no
 set_camera_info service, and without the flag the tool refuses to start.
@@ -413,7 +413,7 @@ EOF
     echo
     if [[ -f $TARBALL ]]; then
         echo "tarball          : $TARBALL ($(stat -c %s "$TARBALL") bytes)"
-        echo "next             : bash tools/calibrate.sh install --square $square"
+        echo "next             : bash tools/calib/calibrate.sh install --square $square"
     else
         echo "no $TARBALL — SAVE was not pressed, so nothing was written"
         exit 1
@@ -432,13 +432,13 @@ solve)
         { echo "calibrate: no frames in $FRAMES_DIR — run record then select first" >&2; exit 2; }
 
     mkdir -p "$(dirname "$CONFIG_YAML")" "$CALIB_DIR"
-    /usr/bin/python3 "$PIMESH_WS/tools/calib_solve.py" \
+    /usr/bin/python3 "$PIMESH_WS/tools/calib/calib_solve.py" \
         --frames "$FRAMES_DIR" --out "$CONFIG_YAML" --report "$CALIB_DIR/report.txt" \
         --name "$CAMERA" --squares "$squares" --square "$square" \
         --marker "$marker" --dict "$dict" || exit 1
     echo
     echo "next             : bash tools/build.sh --packages-select pimesh_bringup"
-    echo "                   bash tools/sync-pi.sh && bash tools/build-pi.sh"
+    echo "                   bash tools/pi/sync-pi.sh && bash tools/pi/build-pi.sh"
     echo "                   bash tools/gates/calibration.sh"
     ;;
 
@@ -477,7 +477,7 @@ install)
     report="$CALIB_DIR/report.txt"
     {
         echo "# $CAMERA — reprojection error, recomputed from $CONFIG_YAML"
-        echo "# written by tools/calibrate.sh install on $(date -Is)"
+        echo "# written by tools/calib/calibrate.sh install on $(date -Is)"
         echo "# square $square m, board $squares squares = $corners interior corners"
         echo "#"
         echo "# Re-derive this calibration from the stored images with:"
@@ -491,14 +491,14 @@ install)
         echo
         if [[ -n ${in_sample_dir:-} && -d ${in_sample_dir:-} ]]; then
             echo "## in sample — the calibrator's own frames"
-            /usr/bin/python3 "$PIMESH_WS/tools/calib_straightness.py" \
+            /usr/bin/python3 "$PIMESH_WS/tools/calib/calib_straightness.py" \
                 --frames "$in_sample_dir" --calibration "$CONFIG_YAML" \
                 --size "$corners" --square "$square" \
                 --squares "$squares" --marker "$marker" --dict "$dict" 2>&1 | sed 's/^straightness /  /'
             echo
         fi
-        echo "## held out — tools/calibrate.sh grab's frames, which the fit never saw"
-        /usr/bin/python3 "$PIMESH_WS/tools/calib_straightness.py" \
+        echo "## held out — tools/calib/calibrate.sh grab's frames, which the fit never saw"
+        /usr/bin/python3 "$PIMESH_WS/tools/calib/calib_straightness.py" \
             --frames "$FRAMES_DIR" --calibration "$CONFIG_YAML" \
             --size "$corners" --square "$square" \
             --squares "$squares" --marker "$marker" --dict "$dict" 2>&1 | sed 's/^straightness /  /'
@@ -509,7 +509,7 @@ install)
         sed 's/^/  /'
     echo
     echo "next             : bash tools/build.sh --packages-select pimesh_bringup"
-    echo "                   bash tools/sync-pi.sh && bash tools/build-pi.sh"
+    echo "                   bash tools/pi/sync-pi.sh && bash tools/pi/build-pi.sh"
     echo "                   bash tools/gates/calibration.sh"
     ;;
 

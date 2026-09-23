@@ -19,9 +19,9 @@
 # nothing said so. kill_pi now kills the whole remote wrapper chain and keeps
 # asking until the Pi answers with nothing — and when it cannot get that answer
 # it prints what is still running and this script exits non-zero. See the note on
-# kill_pi in tools/just-lib.sh.
+# kill_pi in tools/lib/just-lib.sh.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 
 SECONDS_LIMIT=${1:-600}
 RVIZ_CONFIG="$(ros2 pkg prefix pimesh_bringup)/share/pimesh_bringup/rviz/camera.rviz"

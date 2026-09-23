@@ -18,7 +18,7 @@
 // tracker recognised none of them". Only the second is the tracker's. On the desk1
 // clip the difference was worth **5 points** of matched fraction, which is the
 // whole tolerance the gate asserts on, so it is not a rounding detail. It is also
-// what tools/orb_reference.py does, and the two have to count the same way or the
+// what tools/eval/orb_reference.py does, and the two have to count the same way or the
 // comparison between them is measuring their conventions.
 
 #include <algorithm>

@@ -18,7 +18,7 @@
 # x86_64 under Lyrical here, aarch64 under Jazzy there — and because a test
 # suite that only runs on one machine is one that stops being run on the other.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh"
 echo "== gate-test =="
 
 MIN_TESTS=430
@@ -43,7 +43,7 @@ for host in dev pi; do
     if [[ $host == dev ]]; then
         bash "$PIMESH_WS/tools/test.sh" >"$work/$host" 2>&1 || true
     else
-        bash "$PIMESH_WS/tools/test-pi.sh" >"$work/$host" 2>&1 || true
+        bash "$PIMESH_WS/tools/pi/test-pi.sh" >"$work/$host" 2>&1 || true
     fi
 
     summary=$(summarise "$work/$host")

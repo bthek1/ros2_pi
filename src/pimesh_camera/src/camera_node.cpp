@@ -180,7 +180,7 @@ CameraNode::CameraNode(const rclcpp::NodeOptions & options)
       "camera_info carries NOMINAL intrinsics, not a calibration "
       "(fx=%.1f fy=%.1f cx=%.1f cy=%.1f, zero distortion). "
       "Depth unprojection with these is approximate. Run the checkerboard — "
-      "bash tools/calibrate.sh — and the file it writes ends this warning by "
+      "bash tools/calib/calibrate.sh — and the file it writes ends this warning by "
       "existing; there is no flag to set.",
       camera_info_.k[0], camera_info_.k[4], camera_info_.k[2], camera_info_.k[5]);
   }
@@ -397,7 +397,7 @@ void CameraNode::capture_loop(int timeout_ms)
           fail(
             "no frame in " + std::to_string(kMaxQuiet) + " x " + std::to_string(timeout_ms) +
             " ms — the device has stopped delivering. Check that nothing else opened it, "
-            "and that the exposure controls are sane (bash tools/camera-reset.sh).");
+            "and that the exposure controls are sane (bash tools/calib/camera-reset.sh).");
           return;
         }
         RCLCPP_WARN(get_logger(), "no frame in %d ms (%d/%d)", timeout_ms, quiet, kMaxQuiet);

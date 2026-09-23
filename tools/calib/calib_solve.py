@@ -169,7 +169,7 @@ def main(argv=None):
     report = pathlib.Path(args.report)
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text('\n'.join([
-        f'# {args.name} — intrinsics fitted by tools/calib_solve.py',
+        f'# {args.name} — intrinsics fitted by tools/calib/calib_solve.py',
         f'# {datetime.datetime.now().isoformat(timespec="seconds")}',
         f'# square {args.square} m, marker {args.marker} m, board {args.squares} '
         f'squares, dict {args.dict}',
@@ -177,7 +177,7 @@ def main(argv=None):
         '#',
         '# Not cameracalibrator: that tool builds left/right stereo subscribers even',
         '# for a mono calibration and crashes on Lyrical in RcutilsLogger.warn before',
-        '# reading a frame. See tools/calib_solve.py.',
+        '# reading a frame. See tools/calib/calib_solve.py.',
         '',
         '## in sample — the frames this was fitted to',
         f'  reproj_rms_px={rms:.4f}',

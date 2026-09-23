@@ -26,7 +26,7 @@
 # whole architecture is arranged to prevent: five of them collapsed the
 # predecessor's link to ~2 frames/s each.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 echo "== gate-capture =="
 
 MIN_RATE_HZ=40
@@ -44,7 +44,7 @@ BUSY_EXIT_BUDGET_S=2.0
 RATE_WINDOW_S=30
 STAMP_WINDOW_S=10
 
-# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# Before arm_cleanup, always — see assert_no_session in tools/lib/just-lib.sh:
 # the cleanup handler kills this workspace's processes, so a refusal after the
 # trap is armed would tear down the session it is refusing to disturb.
 assert_no_session "bash tools/gates/capture.sh"
@@ -118,7 +118,7 @@ fi
 #    across processes and reboots, and exposure_dynamic_framerate costs ~10 fps
 #    in indoor light. A rate measured without this step is a measurement of
 #    whatever the last person left behind.
-bash "$PIMESH_WS/tools/camera-reset.sh" >"$work/reset" 2>&1 || {
+bash "$PIMESH_WS/tools/calib/camera-reset.sh" >"$work/reset" 2>&1 || {
     echo "FAIL: camera-reset did not reach its baseline"; sed 's/^/  /' "$work/reset"; exit 1
 }
 exposure_mode=$(awk -F= '$1 == "camera-reset exposure_mode" {print $2}' "$work/reset")

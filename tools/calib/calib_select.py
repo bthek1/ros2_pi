@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pick the best calibration frames out of a recorded bag.
 
-The alternative to `tools/calibrate.sh grab`, and the better one for anything but a
+The alternative to `tools/calib/calibrate.sh grab`, and the better one for anything but a
 quick look. Record a minute or two of the board from varied angles, then choose the
 frames offline. Three things that buys:
 
@@ -12,7 +12,7 @@ frames offline. Three things that buys:
     pose and image position instead of accumulated by luck.
  2. **The bag is a re-usable artefact.** A selection can be redone with different
     criteria, a different count, or a tighter obliquity bound, without going back to
-    the wall. That is the same reason tools/calibrate.sh keeps the calibrator's
+    the wall. That is the same reason tools/calib/calibrate.sh keeps the calibrator's
     tarball: a physical session nobody can repeat should leave something re-runnable.
  3. **It is a much easier thing for a person to do.** Move the camera slowly for
     ninety seconds. No negotiating with a tool that is refusing frames.

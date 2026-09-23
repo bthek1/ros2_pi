@@ -23,7 +23,7 @@
 # diff without the wait; the mode is printed with the numbers so a fast run
 # cannot be mistaken for the real one.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh"
 echo "== gate-build =="
 
 MODE=scratch
@@ -44,7 +44,7 @@ note() { echo "FAIL: $*"; fail=1; }
 #    against a stale one there proves nothing about the pair.
 if [[ $MODE == scratch ]]; then
     bash "$PIMESH_WS/tools/clean.sh"
-    bash "$PIMESH_WS/tools/clean-pi.sh"
+    bash "$PIMESH_WS/tools/pi/clean-pi.sh"
 fi
 
 # 2. Build here, through the same script `just build` runs — the gate proves the
@@ -56,10 +56,10 @@ here_build=$(awk -v a="$t0" -v b="$(date +%s.%N)" 'BEGIN { printf "%.1f", b - a 
 # 3. Build on the Pi. build-pi.sh rsyncs source first — source only, never a
 #    built tree — and compiles it there under the Pi's own ROS.
 t0=$(date +%s.%N)
-bash "$PIMESH_WS/tools/build-pi.sh" >/dev/null || { echo "FAIL: build failed on $PI"; exit 1; }
+bash "$PIMESH_WS/tools/pi/build-pi.sh" >/dev/null || { echo "FAIL: build failed on $PI"; exit 1; }
 pi_build=$(awk -v a="$t0" -v b="$(date +%s.%N)" 'BEGIN { printf "%.1f", b - a }')
 
-. "$PIMESH_WS/tools/ros-env.sh" --overlay
+. "$PIMESH_WS/tools/lib/ros-env.sh" --overlay
 
 # 4. Different distros, or nothing cross-distro was exercised and the diff below
 #    is a file compared with itself.

@@ -287,7 +287,7 @@ def test_the_launch_description_actually_builds(launch_module):
     # remesh_period_s, dashboard, dashboard_port, odom_regime, use_cuda,
     # pipeline — each exists because something outside this file has to be able
     # to set it: the first ten for gates and viewers, the last for
-    # tools/replay.sh.
+    # tools/view/replay.sh.
     assert kinds.get(DeclareLaunchArgument) == 11
     # One per probe, loaded into the running container rather than listed in it,
     # because `composable_node_descriptions` is built when this file is evaluated
@@ -420,7 +420,7 @@ def test_the_container_can_be_left_out_but_is_there_by_default(launch_module):
     """`pipeline:=false` has to actually remove the container, and the default
     has to keep it.
 
-    This is the assertion tools/replay.sh stands on. A looping bag replays header
+    This is the assertion tools/view/replay.sh stands on. A looping bag replays header
     stamps ~60 s into the past at every wrap, keypoint_node stamps
     `odom -> base_link` with the frame's own stamp, and tf2 rejects every
     transform older than the newest it holds — so a replay that composes the

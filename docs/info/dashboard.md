@@ -1,7 +1,7 @@
 # The dashboard
 
 **Built 2026-09-19** — P8, [#8](https://github.com/bthek1/ros2_pi/issues/8).
-`bash tools/dashboard.sh` starts it; `http://localhost:8080` is the page;
+`bash tools/view/dashboard.sh` starts it; `http://localhost:8080` is the page;
 `bash tools/gates/dashboard.sh` is what passes or fails it.
 
 Everything below described intent until then. Where a number appears now it was

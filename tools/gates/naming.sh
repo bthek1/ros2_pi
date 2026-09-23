@@ -16,7 +16,7 @@
 #   (a) components  — a registered class that no launch list names. The failure
 #       is a container that comes up without a stage and says nothing, because
 #       nothing asked for the stage that is missing.
-#   (b) patterns    — a kill pattern in tools/just-lib.sh that matches nothing
+#   (b) patterns    — a kill pattern in tools/lib/just-lib.sh that matches nothing
 #       this workspace installs. tools/stragglers.sh then prints 0 on both
 #       machines over a leaked camera_node holding /dev/video0, and
 #       assert_no_session quietly stops refusing. Three republish processes
@@ -37,7 +37,7 @@
 # touched. That is *why* the package renames in P2 are safe, and this check is
 # what turns "we looked and they're globbed" into something that stays true.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh"
 echo "== gate-naming =="
 
 fail=0
@@ -181,7 +181,7 @@ while IFS='=' read -r var val; do
     if ! grep -Eq -- "$pat" "$specimens"; then
         note "$var matches no command this workspace produces: $pat"
     fi
-done < <(grep -E "^PIMESH_[A-Z_]+_PAT=" "$PIMESH_WS/tools/just-lib.sh")
+done < <(grep -E "^PIMESH_[A-Z_]+_PAT=" "$PIMESH_WS/tools/lib/just-lib.sh")
 echo "   ${n_pat} patterns checked against $(wc -l <"$specimens") specimens (${n_installed} installed executables)"
 
 # --- (c) names --------------------------------------------------------------
@@ -202,6 +202,14 @@ ws = pathlib.Path(sys.argv[1])
 targets = [ws / 'CLAUDE.md', ws / 'README.md', ws / 'justfile',
            ws / '.vscode/settings.json']
 targets += [p for p in sorted((ws / 'docs/info').glob('*.md')) if p.name != 'build-log.md']
+# **And the scripts themselves**, which are instructions to a machine rather
+# than to a person and so are the sharpest case of all. #14's P6 regrouped
+# tools/ into subdirectories and this check could not see a script naming a
+# script that had moved — tools/calib/calibrate.sh pointed at four helpers by
+# their old paths and nothing failed until somebody ran it. A gate that reads
+# what people are told to run, and not what scripts are told to run, is reading
+# the easier half.
+targets += sorted((ws / 'tools').rglob('*.sh')) + sorted((ws / 'tools').rglob('*.py'))
 
 # Named on purpose before they exist, deleted and recorded as deleted, or built
 # rather than committed. **Every entry is asserted to still be needed** — the
@@ -238,7 +246,8 @@ def resolves(rel):
     return any((p / rel).exists() for p in pkgs)
 
 
-# 1. Paths a reader is told to run: `bash tools/x.sh`, `just ...`, and any
+# 1. Paths a reader is told to run: a `bash <script>` invocation, a `just`
+#    recipe, and any
 #    repo-shaped path in a code span.
 PATHS = re.compile(r'(?:bash\s+|`)((?:src|tools|docs|rviz|config|web|include|launch|test)'
                    r'/[A-Za-z0-9_./-]*[A-Za-z0-9_])')

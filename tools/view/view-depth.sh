@@ -9,16 +9,16 @@
 # number about it — and because a cloud that comes out sideways, or flat, is
 # obvious in a second here and takes a paragraph to assert.
 #
-# Same shape as tools/view-keypoints.sh, and the teardown is all in just-lib.sh:
+# Same shape as tools/view/view-keypoints.sh, and the teardown is all in just-lib.sh:
 # a handler on EXIT and on INT/TERM/HUP that kills both machines *and then
 # checks*, and rviz2 **backgrounded** rather than run in the foreground, because
 # bash defers a trap until its foreground child returns and an rviz2 signalled
 # during its own startup never returns.
 #
-# Takes a bag name to replay instead of the camera: `bash tools/view-depth.sh 600
+# Takes a bag name to replay instead of the camera: `bash tools/view/view-depth.sh 600
 # desk1`. With no bag it uses the Pi's live camera.
 #
-# **A bag plays once here, not on a loop**, for the reason tools/replay.sh
+# **A bag plays once here, not on a loop**, for the reason tools/view/replay.sh
 # documents at length: odometry_node is in this container too and stamps
 # `odom -> base_link` with the frame's own stamp, `--loop` sends those stamps
 # ~60 s into the past at every wrap, and tf2 rejects any transform older than the
@@ -31,7 +31,7 @@
 # context creation, cuBLAS handles and kernel autotuning — so the cloud appears
 # noticeably after the preview does.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 
 SECONDS_LIMIT=${1:-600}
 BAG_ARG=${2:-}
@@ -97,7 +97,7 @@ the clip, not a crash. The window stays until Ctrl-C or ${SECONDS_LIMIT}s.
 CHECKLIST
 
 if [[ -n $BAG ]]; then
-    # See tools/replay.sh for why both the flag and the redirect are needed: a
+    # See tools/view/replay.sh for why both the flag and the redirect are needed: a
     # backgrounded player that can read its terminal is stopped by SIGTTIN and
     # publishes nothing, silently. **No `--loop`** — see the header.
     run_for "$SECONDS_LIMIT" \

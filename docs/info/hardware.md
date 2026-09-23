@@ -96,7 +96,7 @@ signal processor. They are not this camera and there is no CSI camera attached �
 
 The two bullets below about frame rate are no longer inherited. `pimesh_camera`
 was built and measured on 2026-09-09 with `bash tools/gates/capture.sh`, after
-`bash tools/camera-reset.sh`, in Aperture Priority Mode with
+`bash tools/calib/camera-reset.sh`, in Aperture Priority Mode with
 `exposure_dynamic_framerate=0`: **59.3 fps measured at the Pi**, **44.3–58.6 fps
 as received on the dev box** over five runs, **0 duplicate payloads** in any of
 them, ~80 kB per frame. The spread is the Wi-Fi hop, not the camera. The 18–21
@@ -238,7 +238,7 @@ Two consequences for the gate, both applied:
 
 ### Acquire the frames from a bag, not live
 
-`bash tools/calibrate.sh record` then `select` is the better of the two paths, and
+`bash tools/calib/calibrate.sh record` then `select` is the better of the two paths, and
 the live `grab` is kept only for a quick look. Recording separates the physical job
 from the judgement: at the wall you only have to move the camera slowly, and the
 choosing happens afterwards with every candidate on the table at once instead of one

@@ -5,9 +5,9 @@
 # makes it an assertion rather than a utility — gates/teardown.sh uses it as
 # its test, so it has to be runnable outside `just` and outside this box.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/just-lib.sh"
 
-# The dev-box sweep is `pimesh_local_processes` in tools/just-lib.sh, which drops
+# The dev-box sweep is `pimesh_local_processes` in tools/lib/just-lib.sh, which drops
 # the caller's own process group — `pgrep -f` reads command lines, and the command
 # line asking the question is one of them, so a terminal command that merely
 # *mentions* a pattern makes this script report itself. A genuine straggler is by
@@ -16,7 +16,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh"
 # The Pi half is `pimesh_pi_processes`, in the same file. Both live there rather
 # than here because `assert_no_session` asks the same question before a session
 # starts, and "what of ours is running" must not have two spellings — that is the
-# drift tools/just-lib.sh exists to prevent. Read the note on the Pi one: an
+# drift tools/lib/just-lib.sh exists to prevent. Read the note on the Pi one: an
 # unreachable Pi is reported as a clean Pi, which is this script's one soft spot.
 
 total=0

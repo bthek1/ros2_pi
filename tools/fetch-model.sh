@@ -11,7 +11,7 @@
 # the same reason: there is nothing in the repo to compare it against.
 #
 # **It does not go on the Pi.** Inference is dev-box-only and the Pi is a sensor
-# head; tools/sync-pi.sh ships src, tools and the justfile and nothing else, so
+# head; tools/pi/sync-pi.sh ships src, tools and the justfile and nothing else, so
 # models/ is excluded by construction rather than by a rule somebody has to
 # remember.
 #
@@ -26,7 +26,7 @@
 # the prelude, which exits 1 with "unknown option --print-path" before a line of
 # this file runs. Every script here that takes an argument passes the empty option
 # explicitly.
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" ""
+source "$(dirname "${BASH_SOURCE[0]}")/lib/just-lib.sh" ""
 
 # onnx-community's export of Depth Anything V2 Small: ViT-S/14, dynamic batch and
 # spatial dims, input `pixel_values` (ImageNet-normalised NCHW float, **not** raw

@@ -27,14 +27,14 @@
 # takes a `unique_ptr`. A `const &` callback works perfectly and quietly copies,
 # and nothing in any log, topic tool or rate measurement says so.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 echo "== gate-ipc =="
 
 MIN_FRAMES=20
 MAX_CONTROL_MATCH_PCT=25
 MEASURE_S=8
 
-# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# Before arm_cleanup, always — see assert_no_session in tools/lib/just-lib.sh:
 # the cleanup handler kills this workspace's processes, so a refusal after the
 # trap is armed would tear down the session it is refusing to disturb.
 assert_no_session "bash tools/gates/ipc.sh"

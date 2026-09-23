@@ -13,7 +13,7 @@
 # an unbuilt tree reports "0 tests" and exits 0. That is a pass that means
 # nothing, so this script always builds.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --ros
+source "$(dirname "${BASH_SOURCE[0]}")/lib/just-lib.sh" --ros
 
 bash "$PIMESH_WS/tools/build.sh" "$@"
 

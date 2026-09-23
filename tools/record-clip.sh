@@ -21,7 +21,7 @@
 # against the same seconds of room, so re-recording it invalidates the comparison.
 # Record it once, note its sha256, and keep it.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/lib/just-lib.sh" --overlay
 
 NAME=${1:-}
 SECONDS_LIMIT=${2:-60}
@@ -41,7 +41,7 @@ BAG="$PIMESH_WS/bags/$NAME"
     exit 1
 }
 
-# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# Before arm_cleanup, always — see assert_no_session in tools/lib/just-lib.sh:
 # the cleanup handler kills this workspace's processes, so a refusal after the
 # trap is armed would tear down the session it is refusing to disturb.
 assert_no_session "bash tools/record-clip.sh"
@@ -51,7 +51,7 @@ arm_cleanup
 # The camera's own state, first. gates/capture.sh does this for the same reason:
 # a rate measured without it is a measurement of whatever the last person left
 # behind, and a *clip* recorded without it is that permanently.
-bash "$PIMESH_WS/tools/camera-reset.sh" || exit 1
+bash "$PIMESH_WS/tools/calib/camera-reset.sh" || exit 1
 
 cat <<CHECKLIST
 
@@ -92,7 +92,7 @@ done
 echo "recording to bags/${NAME} ..."
 
 # mcap, the default storage here, and both topics. --disable-keyboard-controls for
-# the same reason tools/replay.sh has it: a recorder that reads the terminal gets
+# the same reason tools/view/replay.sh has it: a recorder that reads the terminal gets
 # SIGTTIN the moment it is not in the foreground.
 run_for "$SECONDS_LIMIT" \
     ros2 bag record -s mcap -o "$BAG" \

@@ -16,7 +16,7 @@ is the part that decides whether the physical session's number means anything.
 
 It lives in pimesh_bringup because that is where this workspace's Python tests
 live and because the code under test is a dev-box analysis tool, not a node. It
-imports tools/calib_straightness.py by path — the module is in tools/ because
+imports tools/calib/calib_straightness.py by path — the module is in tools/ because
 that is where this project's shell and one-off tools live, and it is rsynced to
 the Pi, so this test runs at both ends the way gates/test.sh requires.
 """
@@ -31,14 +31,14 @@ cv2 = pytest.importorskip('cv2')
 
 
 def _load_module():
-    """Import tools/calib_straightness.py by path.
+    """Import tools/calib/calib_straightness.py by path.
 
     Four parents up from src/pimesh_bringup/test/test_straightness.py is the
     workspace root. Resolved from __file__ rather than from the cwd because
     `colcon test` runs tests from the build tree.
     """
     root = pathlib.Path(__file__).resolve().parents[3]
-    path = root / 'tools' / 'calib_straightness.py'
+    path = root / 'tools' / 'calib' / 'calib_straightness.py'
     assert path.is_file(), f'{path} is missing — the gate has no instrument'
     spec = importlib.util.spec_from_file_location('calib_straightness', path)
     module = importlib.util.module_from_spec(spec)
@@ -466,7 +466,7 @@ def test_the_held_out_reprojection_error_is_what_catches_it():
     ~0.08 px for the degenerate solution, better than the 0.5 px budget and about
     as good as the correct fit. Run against frames the fit never saw, the same
     measurement separates them by a factor of ~50. That is the whole reason
-    tools/calibrate.sh grabs its frames *before* the calibration session.
+    tools/calib/calibrate.sh grabs its frames *before* the calibration session.
     """
     k_bad, d_bad, in_sample_bad = _calibrate_from(0.0)
     k_ok, d_ok, _ = _calibrate_from(0.44)
@@ -660,7 +660,7 @@ def test_a_transposed_size_is_detected_but_refused():
     the way it tries the 180 degree flip. A flip is the detector's unavoidable
     ambiguity about the same corners and must be absorbed; a transpose means the
     caller asked for the wrong board and must be reported, not quietly fixed.
-    tools/calibrate.sh derives --size from --squares so it cannot drift, and this
+    tools/calib/calibrate.sh derives --size from --squares so it cannot drift, and this
     test is what says why that derivation matters.
     """
     image, dictionary, board = _render_board()

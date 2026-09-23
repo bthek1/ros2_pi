@@ -64,7 +64,7 @@
 # plausible number rather than an error. A gate whose instrument is not tested is
 # a gate that reports whatever its instrument says.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 echo "== gate-calibration =="
 
 CAMERA=c922_720p
@@ -162,7 +162,7 @@ REPORT="$CALIB_DIR/report.txt"
 CONFIG_YAML="$PIMESH_WS/src/pimesh_bringup/config/camera_info/$CAMERA.yaml"
 NODE_SRC="$PIMESH_WS/src/pimesh_camera/src/camera_node.cpp"
 
-# Before arm_cleanup, always — see assert_no_session in tools/just-lib.sh:
+# Before arm_cleanup, always — see assert_no_session in tools/lib/just-lib.sh:
 # the cleanup handler kills this workspace's processes, so a refusal after the
 # trap is armed would tear down the session it is refusing to disturb.
 assert_no_session "bash tools/gates/calibration.sh"
@@ -188,13 +188,13 @@ sv() {                  # $1 = key -> the straightness tool's value for it
 missing=0
 if [[ ! -f $CONFIG_YAML ]]; then
     echo "FAIL: no calibration at $CONFIG_YAML"
-    echo "      P9 has not been run. bash tools/calibrate.sh grab --square <metres>,"
+    echo "      P9 has not been run. bash tools/calib/calibrate.sh grab --square <metres>,"
     echo "      then session, then install."
     missing=1
 fi
 if [[ ! -d $FRAMES_DIR ]] || [[ -z $(find "$FRAMES_DIR" -name '*.jpg' -print -quit 2>/dev/null) ]]; then
     echo "FAIL: no held-out frames in $FRAMES_DIR"
-    echo "      bash tools/calibrate.sh grab --square <metres> saves them."
+    echo "      bash tools/calib/calibrate.sh grab --square <metres> saves them."
     missing=1
 fi
 (( missing == 0 )) || { echo "FAIL gate-calibration"; exit 1; }
@@ -329,7 +329,7 @@ fi
 
 # --- 2 & 4. Straightness, its control, and whether the frames covered the lens --
 
-/usr/bin/python3 "$PIMESH_WS/tools/calib_straightness.py" \
+/usr/bin/python3 "$PIMESH_WS/tools/calib/calib_straightness.py" \
     --frames "$FRAMES_DIR" --calibration "$CONFIG_YAML" --size "$BOARD_SIZE" \
     --squares "$BOARD_SQUARES" --marker "$BOARD_MARKER" --dict "$BOARD_DICT" \
     >"$work/straightness" 2>"$work/straightness.err" || {
@@ -396,7 +396,7 @@ else
     # Assertion 4. Without this the two above can both pass on frames that never
     # left the middle of the picture.
     awk -v v="${cover:-0}" -v m="$MIN_COVERAGE" 'BEGIN {exit !(v >= m)}' ||
-        note "the frames only reach ${cover} of the way to a frame corner (floor ${MIN_COVERAGE}) — near the optical axis an uncalibrated board is already straight, so the comparison above is not evidence. Re-run tools/calibrate.sh grab and take the board to the corners"
+        note "the frames only reach ${cover} of the way to a frame corner (floor ${MIN_COVERAGE}) — near the optical axis an uncalibrated board is already straight, so the comparison above is not evidence. Re-run tools/calib/calibrate.sh grab and take the board to the corners"
     (( ${quadrants:-0} == 4 )) ||
         note "the frames visit only ${quadrants} of the 4 quadrants — three quarters of the lens is unmeasured"
 fi
@@ -425,7 +425,7 @@ fi
 square=$(awk '/^# square /{print $3; exit}' "$REPORT" 2>/dev/null || true)
 live=unmeasured
 if [[ -n ${square:-} && -n ${cal_worst:-} ]]; then
-    /usr/bin/python3 "$PIMESH_WS/tools/calib_straightness.py" \
+    /usr/bin/python3 "$PIMESH_WS/tools/calib/calib_straightness.py" \
         --frames "$FRAMES_DIR" --calibration "$CONFIG_YAML" --size "$BOARD_SIZE" \
         --squares "$BOARD_SQUARES" --marker "$BOARD_MARKER" --dict "$BOARD_DICT" \
         --square "$square" >"$work/live" 2>&1 || true

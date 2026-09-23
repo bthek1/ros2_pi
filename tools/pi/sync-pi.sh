@@ -2,7 +2,7 @@
 #
 # Ship source to the Pi. Source only — never a built tree.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh"
 
 # src, tools and the justfile. Not build/, not install/, not log/ — and this is
 # the one thing in the project that cannot be worked around. ROS 2 makes no ABI
@@ -16,10 +16,10 @@ rsync -a --delete -e "ssh ${PI_SSH[*]}" \
 # a package's sources while its artefacts stay behind, and a colcon overlay
 # never forgets a package on its own. Derived data, so clearing it is safe;
 # saying so is not optional.
-if ! stale=$(pi_run "cd $PI_WS && bash tools/check-stale.sh"); then
+if ! stale=$(pi_run "cd $PI_WS && bash tools/pi/check-stale.sh"); then
     echo "sync-pi: the Pi's build tree has artefacts with no source:"
     printf '  %s\n' $stale
     echo "sync-pi: clearing it — colcon will not do this for you"
-    bash "$PIMESH_WS/tools/clean-pi.sh"
+    bash "$PIMESH_WS/tools/pi/clean-pi.sh"
 fi
 echo "sync-pi: source is current on $PI"

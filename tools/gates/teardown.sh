@@ -14,7 +14,7 @@
 # with a script's authority behind it. Every recipe a person can Ctrl-C belongs
 # here; the question to ask of this file is always what it does *not* touch.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 echo "== gate-teardown =="
 
 log=$(mktemp -d)/clean.log
@@ -114,7 +114,7 @@ RECIPES=(view-camera replay view-keypoints view-depth view-mesh view-odom dashbo
 #
 # `view-keypoints` plays a bag **once** rather than on a loop (a looping bag
 # replays header stamps minutes into the past, and odometry_node's pose is then
-# rejected by every TF listener in the domain — tools/replay.sh's header has the
+# rejected by every TF listener in the domain — tools/view/replay.sh's header has the
 # measurement). `session_up` for that recipe requires the player, the container
 # *and* the viewer to be running at the same moment, and rviz2 takes several
 # seconds to exist — so a three-second clip was finished before there was
@@ -168,7 +168,7 @@ make_fixture_bag() {
     local rec=$!
     sleep "$GATE_BAG_SECONDS"
     # SIGINT, not SIGTERM: the recorder finalizes its storage on an interrupt
-    # and a bag without metadata.yaml is one tools/replay.sh refuses by design.
+    # and a bag without metadata.yaml is one tools/view/replay.sh refuses by design.
     # Bounded, because a `wait` that does not return is how this was found.
     kill -INT "$rec" 2>/dev/null || true
     _reap "$rec" 10 || { echo "FAIL: the fixture recorder ignored SIGINT"; return 1; }
@@ -186,15 +186,15 @@ trap cleanup_fixture EXIT
 
 argv_for() {                # $1 = recipe, $2 = seconds; prints one argv word per line
     case $1 in
-        replay)      printf '%s\n' "$PIMESH_WS/tools/replay.sh" "$GATE_BAG" "$2" ;;
-        view-camera) printf '%s\n' "$PIMESH_WS/tools/view-camera.sh" "$2" ;;
-        view-keypoints) printf '%s\n' "$PIMESH_WS/tools/view-keypoints.sh" "$2" "$GATE_BAG" ;;
-        view-depth)  printf '%s\n' "$PIMESH_WS/tools/view-depth.sh" "$2" "$GATE_BAG" ;;
-        view-mesh)   printf '%s\n' "$PIMESH_WS/tools/view-mesh.sh" "$2" "$GATE_BAG" ;;
-        view-odom)   printf '%s\n' "$PIMESH_WS/tools/view-odom.sh" "$2" "$GATE_BAG" ;;
+        replay)      printf '%s\n' "$PIMESH_WS/tools/view/replay.sh" "$GATE_BAG" "$2" ;;
+        view-camera) printf '%s\n' "$PIMESH_WS/tools/view/view-camera.sh" "$2" ;;
+        view-keypoints) printf '%s\n' "$PIMESH_WS/tools/view/view-keypoints.sh" "$2" "$GATE_BAG" ;;
+        view-depth)  printf '%s\n' "$PIMESH_WS/tools/view/view-depth.sh" "$2" "$GATE_BAG" ;;
+        view-mesh)   printf '%s\n' "$PIMESH_WS/tools/view/view-mesh.sh" "$2" "$GATE_BAG" ;;
+        view-odom)   printf '%s\n' "$PIMESH_WS/tools/view/view-odom.sh" "$2" "$GATE_BAG" ;;
         # A port, not a window. The third argument keeps it off 8080 so a gate run
         # cannot collide with a dashboard somebody has open.
-        dashboard)   printf '%s\n' "$PIMESH_WS/tools/dashboard.sh" "$2" "$GATE_BAG" 18080 ;;
+        dashboard)   printf '%s\n' "$PIMESH_WS/tools/view/dashboard.sh" "$2" "$GATE_BAG" 18080 ;;
         # No fallback on purpose. A dispatch table that guesses an argv for a
         # recipe nobody taught it is how a row gets added to RECIPES above and
         # silently tested as something else.
@@ -616,7 +616,7 @@ for what in "${RECIPES[@]}"; do
                 if [[ $SESSION_STATUS -ne 130 ]]; then
                     echo "FAIL: ${what} exited ${SESSION_STATUS} after SIGINT, expected 130"
                     echo "      a handler that cleans up and returns is not an interrupt;"
-                    echo "      see _pimesh_on_signal in tools/just-lib.sh"
+                    echo "      see _pimesh_on_signal in tools/lib/just-lib.sh"
                     tail -20 "$log"
                     exit 1
                 fi

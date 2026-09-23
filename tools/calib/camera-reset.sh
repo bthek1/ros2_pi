@@ -22,7 +22,7 @@
 # Runs against the Pi over SSH, because that is where the camera is. Prints
 # `camera-reset <key>=<value>` lines for the gate on top of the human table.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh"
 
 DEVICE=${1:-/dev/video0}
 

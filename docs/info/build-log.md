@@ -293,7 +293,7 @@ camera and is in
 the same visit.
 
 **The dashboard exists as of 2026-09-19** — P8 and P10,
-[gh issue #8](https://github.com/bthek1/ros2_pi/issues/8). `bash tools/dashboard.sh`
+[gh issue #8](https://github.com/bthek1/ros2_pi/issues/8). `bash tools/view/dashboard.sh`
 starts it, `http://localhost:8080` is the page, and
 `bash tools/gates/dashboard.sh` closes the claim. `dashboard_node` is an HTTP and
 WebSocket server inside a ROS 2 node, **in its own process** — the one dev-box

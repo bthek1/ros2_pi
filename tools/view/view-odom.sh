@@ -11,14 +11,14 @@
 #
 # **Run it twice, once in each regime, and compare:**
 #
-#     bash tools/view-odom.sh 600 desk1                      6-DoF
-#     bash tools/view-odom.sh 600 desk1 rotation_only        the control
+#     bash tools/view/view-odom.sh 600 desk1                      6-DoF
+#     bash tools/view/view-odom.sh 600 desk1 rotation_only        the control
 #
 # Rotation-only piles every arrow at the origin, spinning in place: the ~0.9 m of
 # real arm arc a hand sweep carries, reported as zero. 6-DoF draws an arc through
 # space. That difference is the whole of P7.
 #
-# Same shape as tools/view-mesh.sh, and the teardown is all in just-lib.sh: a
+# Same shape as tools/view/view-mesh.sh, and the teardown is all in just-lib.sh: a
 # handler on EXIT and on INT/TERM/HUP that kills both machines *and then checks*,
 # and rviz2 **backgrounded** rather than run in the foreground, because bash defers
 # a trap until its foreground child returns and an rviz2 signalled during its own
@@ -28,14 +28,14 @@
 # into the past at each wrap; odometry_node stamps the pose with the frame's own
 # stamp and tf2 refuses anything older than the newest it holds, so after the first
 # wrap the pose would freeze at the bag's final stamp for the rest of the run. See
-# tools/replay.sh for the measurement.
+# tools/view/replay.sh for the measurement.
 #
 # **Give it half a minute.** depth_node loads a 99 MB model and warms a CUDA
 # session, and in sixdof **no pose is published at all until depth is running** —
 # the trajectory comes from depth-backed landmarks, so an empty 3D view for the
 # first twenty seconds is the model loading, not a fault.
 
-source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 
 SECONDS_LIMIT=${1:-600}
 BAG_ARG=${2:-}
@@ -115,7 +115,7 @@ not a crash. The window stays until Ctrl-C or ${SECONDS_LIMIT}s.
 CHECKLIST
 
 if [[ -n $BAG ]]; then
-    # See tools/replay.sh for why both the flag and the redirect are needed: a
+    # See tools/view/replay.sh for why both the flag and the redirect are needed: a
     # backgrounded player that can read its terminal is stopped by SIGTTIN and
     # publishes nothing, silently. **No `--loop`** — see the header.
     run_for "$SECONDS_LIMIT" \

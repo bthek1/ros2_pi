@@ -38,7 +38,7 @@
 #     before the Marker's decimation, so the PLY must have *more* triangles than
 #     the topic. Saving the decimated one would quietly throw away the detail the
 #     volume paid sixty seconds to accumulate, and nothing would look wrong.
-#  5. **Three renders exist and have a surface in them.** `tools/mesh-views.sh`
+#  5. **Three renders exist and have a surface in them.** `tools/eval/mesh-views.sh`
 #     writes them offscreen and reports what fraction of each frame the surface
 #     covers. Asserted rather than merely written: an empty mesh, a camera inside
 #     the geometry and a sign error in the projection all produce a black
@@ -50,7 +50,7 @@
 #
 # It replays bags/desk1, like every phase from P3 on. The Pi is not involved.
 
-source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 echo "== gate-mesh =="
 
 BAG_NAME=${1:-desk1}
@@ -139,7 +139,7 @@ done
 
 # Once, not --loop: a looping bag replays header stamps a minute into the past at
 # every wrap, and fusion_node's pose lookup at the frame's own stamp then fails
-# for the rest of the run — so there would be nothing to mesh. See tools/replay.sh
+# for the rest of the run — so there would be nothing to mesh. See tools/view/replay.sh
 # for the mechanism. The redirect is for the same reason it is everywhere else: a
 # backgrounded player that can read its terminal is stopped by SIGTTIN, silently.
 timeout -s INT $(( CLIP_SECONDS + 20 )) ros2 bag play "$BAG" \
@@ -288,7 +288,7 @@ echo "-- offscreen renders --"
 renders=0
 worst_coverage=1.0
 if [[ -r $ply ]]; then
-    render_out=$(bash "$PIMESH_WS/tools/mesh-views.sh" "$ply" "$work/views" desk 2>&1) || true
+    render_out=$(bash "$PIMESH_WS/tools/eval/mesh-views.sh" "$ply" "$work/views" desk 2>&1) || true
     echo "$render_out"
     while read -r path coverage; do
         [[ -n $path ]] || continue
