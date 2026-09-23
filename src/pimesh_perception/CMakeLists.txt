@@ -75,6 +75,7 @@ add_library(perception_components SHARED
   src/keyframe_store.cpp
   src/keypoint_node.cpp
   src/odom_probe.cpp
+  src/odometry_node.cpp
   src/orb_tracker.cpp
   src/rgbd_odometry.cpp
   src/rotation_fit.cpp
@@ -165,9 +166,10 @@ rclcpp_components_register_nodes(perception_components
   "pimesh_perception::IpcProbe"
   "pimesh_perception::OdomProbe"
   "pimesh_perception::KeypointNode"
+  "pimesh_perception::OdometryNode"
 )
 
-foreach(node decode_node depth_node keypoint_node)
+foreach(node decode_node depth_node keypoint_node odometry_node)
   add_executable(${node} src/${node}_main.cpp)
   target_link_libraries(${node} PRIVATE perception_components rclcpp::rclcpp)
 endforeach()
@@ -192,7 +194,7 @@ install(TARGETS perception_components
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
-install(TARGETS decode_node depth_node keypoint_node keypoint_probe
+install(TARGETS decode_node depth_node keypoint_node odometry_node keypoint_probe
   DESTINATION lib/${PROJECT_NAME}
 )
 

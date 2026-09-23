@@ -10,29 +10,9 @@ See [docs/plans/README.md](../README.md) for the rules.
 
 ---
 
-## Pin `depth_scale` with a tape measure, and record `bags/scale1`
-
-**Trigger: a person, a tape measure and the camera in a room.** Nothing in
-software can do it.
-
-P5 carries this as "*needs a person*" and it is the one thing in that phase a
-script cannot close. Monocular depth is scale-ambiguous — the model says "twice
-as far", never "three metres" — so `depth_scale` is arbitrary today at 10.0 and
-every distance this pipeline reports is plausibly shaped and the wrong size. The
-predecessor's room came out at 2.69.
-
-The work: measure one flat surface at a known distance, read `/depth` at its
-centre, and set `depth_scale` so the two agree. **Make the recording while you
-are there** — `bash tools/record-clip.sh scale1 20` pointed at that surface from
-that distance — because one clip of a surface at a measured distance turns this
-into a replayable test forever after, and a second trip to the wall does not.
-
-The phase it becomes: a `depth_scale` in `config/pimesh.yaml` with the distance
-it was measured at written beside it, and an assertion in `tools/gates/depth.sh`
-that replaying `bags/scale1` reports that distance to within a few percent.
-
-**Until then**, every metre in `gates/fusion.sh` and `gates/mesh.sh` output is
-printed and not asserted on, and both say so.
+*Promoted 2026-09-23 to **P12** in [#10](https://github.com/bthek1/ros2_pi/issues/10) — its trigger was a
+person, a tape measure and the camera in a room, and milestone F is the
+visit. Deleted from here; the phase is the plan now.*
 
 ---
 
@@ -85,25 +65,9 @@ of ray-casting per frame.
 
 ---
 
-## Keep the frames, so a loop closure can rebuild the volume
-
-**Trigger: P7's keyframe store existing, and a pose-graph backend that moves past
-poses.**
-
-A TSDF bakes the pose it was given into every voxel it touches. A loop closure
-that corrects the trajectory therefore cannot move the surface that was already
-integrated — it moves the frames and leaves the room where it was, and the result
-is a map that is *more* wrong after the correction than before it.
-
-The fix the predecessor used: keep a thinned memory of every integrated frame
-(aligned depth as uint16 at reduced resolution, the JPEG bytes, and the odom pose
-it was integrated at, ~500 frames at about 250 MB) and rebuild the volume from
-that memory at the corrected poses when the per-frame correction passes a
-threshold. It measured ~10 ms a frame on the GPU, which is what makes it viable
-at all.
-
-Not executable now because there is nothing to rebuild *for*: `map -> odom` is a
-static identity and no backend moves it.
+*Promoted 2026-09-23 to **P18** in [#12](https://github.com/bthek1/ros2_pi/issues/12) — its trigger was P7's
+keyframe store existing **and** a pose-graph backend that moves past poses;
+P7 landed 2026-09-19 and P17 supplies the second. Deleted from here.*
 
 ---
 

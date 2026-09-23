@@ -65,12 +65,24 @@ TEST(OrbTracker, FirstFrameMatchesNothingAndInventsEverything)
   ASSERT_GT(frame.keypoints.size(), 100u);
   EXPECT_EQ(frame.matched(), 0u);
   EXPECT_DOUBLE_EQ(frame.matched_fraction(), 0.0);
-  EXPECT_TRUE(frame.consecutive_pairs.empty());
+  EXPECT_TRUE(frame.consecutive_pairs().empty());
 
-  // Every feature still gets an id, so the *next* frame has something to inherit.
-  // Published, though, they are all -1: this frame is the first sighting of each.
+  // Every feature gets an id, so the *next* frame has something to inherit, and
+  // `is_new` is what says this frame is the first sighting of each. The two were
+  // one field until 2026-09-23 — the id published as -1 on a first sighting — and
+  // odometry_node could not be split off until they came apart: it matches
+  // landmarks by id across two frames, so an id hidden on the frame a keyframe was
+  // taken from is a landmark that can never be matched again.
   for (std::int32_t id : frame.ids) {EXPECT_GE(id, 0);}
-  for (std::int32_t id : frame.published_track_ids()) {EXPECT_EQ(id, -1);}
+  for (bool fresh : frame.is_new) {EXPECT_TRUE(fresh);}
+  EXPECT_EQ(frame.is_new.size(), frame.keypoints.size());
+
+  // And the geometry's pairing is parallel to the keypoints, all holes on a first
+  // frame: there is no previous frame for any of them to have come from.
+  ASSERT_EQ(frame.previous_pixel.size(), frame.keypoints.size());
+  for (const cv::Point2f & p : frame.previous_pixel) {
+    EXPECT_FALSE(TrackedFrame::matched_previous(p));
+  }
 }
 
 TEST(OrbTracker, DescriptorsAreThirtyTwoByteRowsPerKeypoint)
@@ -98,7 +110,7 @@ TEST(OrbTracker, RecognisesMostCornersAfterASmallShift)
   // OpenCV's version.
   EXPECT_GT(second.matched_fraction(), 0.6)
     << second.matched() << " of " << second.keypoints.size() << " matched";
-  EXPECT_GE(second.consecutive_pairs.size(), 8u);
+  EXPECT_GE(second.consecutive_pairs().size(), 8u);
 }
 
 TEST(OrbTracker, PairsPointAtTheRealDisplacement)
@@ -112,9 +124,9 @@ TEST(OrbTracker, PairsPointAtTheRealDisplacement)
   tracker.process(first);
   const TrackedFrame second = tracker.process(shifted(first, 6.0, 0.0));
 
-  ASSERT_GE(second.consecutive_pairs.size(), 20u);
+  ASSERT_GE(second.consecutive_pairs().size(), 20u);
   std::vector<double> dx;
-  for (const auto & pair : second.consecutive_pairs) {
+  for (const auto & pair : second.consecutive_pairs()) {
     dx.push_back(static_cast<double>(pair.current.x - pair.previous.x));
   }
   std::sort(dx.begin(), dx.end());

@@ -53,9 +53,17 @@ public:
 
     rclcpp::QoS qos(rclcpp::KeepLast(1));
     qos.reliable();
+    // **A shared const pointer, not a unique_ptr, since 2026-09-23.** `/keypoints`
+    // used to have exactly one consumer — this probe — which is the configuration
+    // in which taking ownership is free. odometry_node is on it now, and rclcpp
+    // serves ownership-taking subscriptions by moving the buffer into the *last*
+    // one and copying it for every other. Two unique_ptr readers here would mean a
+    // per-frame copy of ~30 kB, and worse, it would mean this probe silently
+    // measuring a copy while claiming to measure the pipeline's own message. See
+    // tools/gates/ipc.sh and the note in keypoint_node.hpp.
     sub_ = create_subscription<pimesh_msgs::msg::Keypoints>(
       topic_, qos,
-      [this](pimesh_msgs::msg::Keypoints::UniquePtr msg) {this->on_msg(std::move(msg));});
+      [this](pimesh_msgs::msg::Keypoints::ConstSharedPtr msg) {this->on_msg(std::move(msg));});
 
     fprintf(
       stderr, "keypoint_probe: waiting for %s (%.1f s window, %zu warm-up frames)\n",
@@ -114,7 +122,7 @@ public:
   bool done() const {return done_;}
 
 private:
-  void on_msg(pimesh_msgs::msg::Keypoints::UniquePtr msg)
+  void on_msg(pimesh_msgs::msg::Keypoints::ConstSharedPtr msg)
   {
     const auto arrival = std::chrono::steady_clock::now();
     if (seen_++ < warmup_) {++skipped_; return;}
@@ -141,6 +149,7 @@ private:
     const bool consistent =
       msg->y.size() == n && msg->size.size() == n && msg->angle.size() == n &&
       msg->response.size() == n && msg->track_id.size() == n &&
+      msg->is_new.size() == n &&
       msg->descriptors.size() == n * msg->descriptor_bytes;
     if (!consistent) {++malformed_;}
 
@@ -158,8 +167,12 @@ private:
     // a clip that was fine.
     descriptor_bytes_ = msg->descriptor_bytes;
 
+    // `is_new`, not `track_id >= 0`. Until 2026-09-23 the id was -1 on a first
+    // sighting and this counted the rest; the two facts are separate fields now,
+    // and every id is >= 0, so the old test would count every feature as tracked
+    // and report a matched fraction of exactly 1.000 over any clip.
     std::size_t tracked = 0;
-    for (std::int32_t id : msg->track_id) {if (id >= 0) {++tracked;}}
+    for (bool fresh : msg->is_new) {if (!fresh) {++tracked;}}
 
     counts_.push_back(static_cast<double>(n));
     matched_.push_back(static_cast<double>(tracked) / static_cast<double>(n));

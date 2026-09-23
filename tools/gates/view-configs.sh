@@ -158,7 +158,7 @@ fi
 # checked what it could see and said nothing about the rest. Any key ending in
 # "Topic" is one.
 config_topics() {       # $1 = path to a .rviz
-    python3 - "$1" <<'PY'
+    /usr/bin/python3 - "$1" <<'PY'
 import sys
 import yaml
 

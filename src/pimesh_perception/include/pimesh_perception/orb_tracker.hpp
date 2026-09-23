@@ -1,6 +1,7 @@
 #ifndef PIMESH_PERCEPTION__ORB_TRACKER_HPP_
 #define PIMESH_PERCEPTION__ORB_TRACKER_HPP_
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -27,9 +28,11 @@ struct TrackedFrame
   /// Row i is the 32-byte descriptor of keypoints[i]. CV_8U, 32 columns.
   cv::Mat descriptors;
 
-  /// The track each feature belongs to. Always >= 0 — a feature seen for the
-  /// first time is given a fresh id here, because the *next* frame has to be able
-  /// to inherit it. This is not what goes on the wire; see published_track_ids().
+  /// The track each feature belongs to. Always >= 0, including on the frame where
+  /// a track is first seen — `is_new` below is what records that separately, and
+  /// what goes on the wire is both. They were one field until 2026-09-23, the id
+  /// published as -1 on a first sighting, which made a landmark unmatchable across
+  /// the keyframe it was introduced on.
   std::vector<std::int32_t> ids;
   /// True where this frame is the first sighting of that track.
   std::vector<bool> is_new;
@@ -42,18 +45,50 @@ struct TrackedFrame
   double detect_ms {0.0};
   double match_ms {0.0};
 
-  /// Pixel pairs matched against the *immediately previous* frame: where a corner
-  /// was, and where it is now. Separate from the ids above on purpose — see
-  /// OrbTracker's class comment.
+  /// Where feature `i` was in the *immediately previous* frame, or a NaN point
+  /// where it was not mutually matched to one. Parallel to `keypoints`, so it is
+  /// the same length as every other per-feature array here. Separate from the ids
+  /// above on purpose — see OrbTracker's class comment.
   ///
-  /// Pixels rather than a pair of indices, and that is not a convenience. An index
-  /// into the previous frame is only meaningful to a holder of that frame, so the
-  /// index form obliges every caller to keep its own copy of the last
+  /// **Pixels rather than a pair of indices, and that is not a convenience.** An
+  /// index into the previous frame is only meaningful to a holder of that frame,
+  /// so the index form obliges every caller to keep its own copy of the last
   /// TrackedFrame and to keep it in step with the tracker's window. Two copies of
   /// the same bookkeeping drift, and when they do the pairs silently refer to the
   /// wrong corners — a rotation fit on mismatched pairs does not fail, it returns
   /// a wrong answer with a plausible residual.
-  std::vector<PixelPair> consecutive_pairs;
+  ///
+  /// **Parallel-with-holes rather than a packed list of pairs, since 2026-09-23.**
+  /// The packed form loses which keypoint each pair belongs to, and
+  /// `pimesh_msgs/Keypoints` has to carry this across a topic now that
+  /// `odometry_node` is the consumer rather than the node that ran the detector.
+  /// A parallel array travels as two more per-feature columns in a
+  /// struct-of-arrays message; a packed one would need its own length and its own
+  /// index column to say the same thing. `consecutive_pairs()` below is the
+  /// packed view, derived rather than stored, so there is still exactly one copy
+  /// of this bookkeeping.
+  std::vector<cv::Point2f> previous_pixel;
+
+  /// True where `previous_pixel[i]` is a real match rather than the NaN hole.
+  static bool matched_previous(const cv::Point2f & p)
+  {
+    return !(std::isnan(p.x) || std::isnan(p.y));
+  }
+
+  /// The packed pair list: every feature that was mutually matched against the
+  /// previous frame, as (where it was, where it is). Derived from
+  /// `previous_pixel`, never stored beside it.
+  std::vector<PixelPair> consecutive_pairs() const
+  {
+    std::vector<PixelPair> pairs;
+    pairs.reserve(previous_pixel.size());
+    for (std::size_t i = 0; i < previous_pixel.size() && i < keypoints.size(); ++i) {
+      if (matched_previous(previous_pixel[i])) {
+        pairs.push_back(PixelPair{previous_pixel[i], keypoints[i].pt});
+      }
+    }
+    return pairs;
+  }
 
   std::size_t matched() const
   {
@@ -70,17 +105,6 @@ struct TrackedFrame
   {
     return keypoints.empty() ?
            0.0 : static_cast<double>(matched()) / static_cast<double>(keypoints.size());
-  }
-
-  /// Track ids in the convention pimesh_msgs/Keypoints documents: the track's id
-  /// for a feature that was already being followed, **-1 for one seen here for the
-  /// first time**. A consumer drawing tracks needs that distinction; the internal
-  /// `ids` vector cannot express it.
-  std::vector<std::int32_t> published_track_ids() const
-  {
-    std::vector<std::int32_t> out(ids.size());
-    for (std::size_t i = 0; i < ids.size(); ++i) {out[i] = is_new[i] ? -1 : ids[i];}
-    return out;
   }
 };
 

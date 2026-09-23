@@ -2,8 +2,15 @@
 
 **Everything this project set out to become, in one file.** Two halves: the
 **build order** (P0–P8, all done as of 2026-09-19, plus P9 and P10 promoted out of
-future files when their triggers fired) and the **deferred register** (work that is
-not executable yet, each entry with its trigger).
+future files when their triggers fired, and **P11–P20 added 2026-09-23** for the
+SLAM work) and the **deferred register** (work that is not executable yet, each
+entry with its trigger).
+
+**P0–P10 are described in full below; P11–P20 are one line each with a link.**
+That asymmetry is deliberate and it is the rule in [../README.md](../README.md):
+a plan is a GitHub issue. This file exists to hold the **shared numbering**, so
+that `P16` means place recognition everywhere, and the phases themselves live in
+issues [#10](https://github.com/bthek1/ros2_pi/issues/10)–[#13](https://github.com/bthek1/ros2_pi/issues/13).
 
 This replaces the bootstrap plan issue and its companion future file, which were
 combined here on 2026-09-09. Nothing was dropped in the merge — the phases below
@@ -28,11 +35,16 @@ date and what the test printed).
 
 ---
 
-## The five milestones
+## The milestones
 
-The nine phases are built as five milestone issues, each a **contiguous slice of
-the phase list below**. No issue renumbers from zero — `P4` means depth in every
-doc, commit and conversation.
+The phases are built as milestone issues, each a **contiguous slice of the phase
+list below**. No issue renumbers from zero — `P4` means depth in every doc,
+commit and conversation.
+
+**A–E built the pipeline and are closed. F–I turn it into SLAM**, and the
+dividing line between the two halves is not a feature — it is that nothing in
+A–E ever measured the pose against a truth. See
+[#10](https://github.com/bthek1/ros2_pi/issues/10).
 
 | | Issue | Phases | True when it closes |
 | --- | --- | --- | --- |
@@ -41,6 +53,10 @@ doc, commit and conversation.
 | C | [#6](https://github.com/bthek1/ros2_pi/issues/6) | P4 | Depth on the GPU at ≤ 80 ms, CUDA provider named in the log — ✓ **done 2026-09-15**, 55.10 ms mean |
 | D | [#7](https://github.com/bthek1/ros2_pi/issues/7) | P5–P6 | A triangle mesh you can recognise your room in — ✓ **closed 2026-09-16** |
 | E | [#8](https://github.com/bthek1/ros2_pi/issues/8) | P7–P8 (+P10) | ✓ **done 2026-09-19** — translation is visible and one tab shows the pipeline |
+| F | [#10](https://github.com/bthek1/ros2_pi/issues/10) | P11–P13 | ☐ An ATE against ground truth, a `depth_scale` somebody measured, and `bags/walk1` |
+| G | [#11](https://github.com/bthek1/ros2_pi/issues/11) | P14–P15 | ☐ Map points observed by many keyframes, and a bundle adjustment that lowers the ATE |
+| H | [#12](https://github.com/bthek1/ros2_pi/issues/12) | P16–P18 | ☐ A loop detected, a pose graph that corrects it, and a volume rebuilt at the corrected poses |
+| I | [#13](https://github.com/bthek1/ros2_pi/issues/13) | P19–P20 | ☐ The pipeline can say "I do not know where I am", stop fusing, and find out |
 
 Each issue also carries a **`just view-*` RViz recipe** — a viewer for a person,
 never the evidence. The gates below are what pass or fail a phase. The view
@@ -794,6 +810,48 @@ Full body, including the precondition that could make it non-executable (a
 
 ---
 
+## P11–P20 — the SLAM half *(filed 2026-09-23, issues [#10](https://github.com/bthek1/ros2_pi/issues/10)–[#13](https://github.com/bthek1/ros2_pi/issues/13))*
+
+**The phases live in the issues.** What lives here is the numbering, so that a
+phase number means one thing across every doc, commit and conversation — the
+same reason P0–P10 share one list across five issues.
+
+**Why there is a second half at all.** P0–P10 built a pipeline that estimates a
+pose and fuses a surface, and every claim it makes about that pose is internal:
+a reprojection residual and a paired-surface gap. P7 showed exactly what that is
+worth — the rotation had been composed **inverted since P3** and every number
+describing it was correct. Five things separate what exists from SLAM: a map of
+landmarks rather than a buffer of keyframes, a backend that revisits them, place
+recognition, a pose graph with a surface rebuilt behind it, and the ability to
+lose tracking and say so. All five are judged by the thing P11 adds.
+
+| Phase | | Issue |
+| --- | --- | --- |
+| ☐ P11 | A dataset source, a trajectory file, and ATE against TUM fr1/desk — `tools/gates/trajectory.sh` | [#10](https://github.com/bthek1/ros2_pi/issues/10) |
+| ☐ P12 | Pin `depth_scale` with a tape measure, record `bags/scale1` — `tools/gates/scale.sh` *(needs a person)* | [#10](https://github.com/bthek1/ros2_pi/issues/10) |
+| ☐ P13 | Record `bags/walk1`, settle whether 6-DoF beats rotation-only — `tools/gates/odom.sh walk1` *(needs a person)* | [#10](https://github.com/bthek1/ros2_pi/issues/10) |
+| ☐ P14 | Map points, covisibility, tracking against the local map — `tools/gates/map.sh` | [#11](https://github.com/bthek1/ros2_pi/issues/11) |
+| ☐ P15 | Local bundle adjustment on a niced backend thread — `tools/gates/ba.sh` | [#11](https://github.com/bthek1/ros2_pi/issues/11) |
+| ☐ P16 | Place recognition against the whole keyframe store — `tools/gates/place.sh` | [#12](https://github.com/bthek1/ros2_pi/issues/12) |
+| ☐ P17 | Pose graph; `map -> odom` stops being static identity — `tools/gates/loop.sh` | [#12](https://github.com/bthek1/ros2_pi/issues/12) |
+| ☐ P18 | Frame memory, and rebuilding the volume at corrected poses — `tools/gates/rebuild.sh` | [#12](https://github.com/bthek1/ros2_pi/issues/12) |
+| ☐ P19 | A tracking state, and refusing to fuse while `LOST` — `tools/gates/lost.sh` | [#13](https://github.com/bthek1/ros2_pi/issues/13) |
+| ☐ P20 | Relocalise from a persisted map — `tools/gates/relocalise.sh` | [#13](https://github.com/bthek1/ros2_pi/issues/13) |
+
+**One dependency was checked before these were filed, because it decides whether
+half of them are executable at all.** g2o ships **with ROS at both ends** —
+`ros-lyrical-libg2o` and `ros-jazzy-libg2o`, both 2020.5.29, both exporting
+`g2o::core`, `g2o::stuff`, `g2o::types_sba`, `g2o::types_sim3`,
+`g2o::types_slam3d` and `g2o::solver_eigen` under **identical** names from
+`<prefix>/lib/cmake/g2o/g2oTargets.cmake` (measured 2026-09-23). `types_sba` is
+P15's bundle adjustment and `types_sim3` is P17's pose graph. This is the one
+place in this project where the cross-distro tax came out at zero, so the SLAM
+package builds from source on both machines like every other one and needs no
+`depth_engine_null.cpp`-style conditional engine. **DBoW2 is in neither distro's
+apt** — P16 starts brute force, with the trigger written down.
+
+---
+
 # Part 2 — Deferred
 
 Everything here is **not executable yet**, which is why it is not a phase. Each
@@ -861,21 +919,11 @@ be part of the same change.
 
 ---
 
-## Loop closure, pose graph, and volume rebuild
-
-**What.** Always-on loop detection against the keyframe store, a pose-graph
-backend owning `map → odom`, and a TSDF rebuild from frame memory when the
-optimised trajectory moves the frames. The predecessor has all three, with
-numbers to compare against: 2.3 cm / 0.85° on its loop bag, fr1/desk ATE
-0.163 → 0.089 m, paired-surface gap 7.8 → 5.7 cm.
-
-**Why not now.** It needs a keyframe store that exists (P7) and a surface worth
-correcting (P6), and it is a plan of its own — four phases at least, with its own
-gates and its own reference bag.
-
-**Trigger.** P7 done **and** `bash tools/gates/odom.sh` showing drift over the 60 s clip
-that a closure could remove. At that point it becomes its own plan issue, not a
-phase appended here.
+*Promoted 2026-09-23 to **milestone H**, [#12](https://github.com/bthek1/ros2_pi/issues/12) — P16, P17 and P18. This
+entry said it would become "its own plan issue, not a phase appended here",
+and its trigger — P7 done **and** `gates/odom.sh` showing removable drift —
+fired on 2026-09-19 at 31.1 m of path against 4.87 m of net displacement.
+Deleted from here.*
 
 ---
 
@@ -914,17 +962,9 @@ an afternoon.
 
 ---
 
-## Relocalisation from a saved room map
-
-**What.** Persist the keyframe store to disk, load it at startup, and recover an
-absolute pose against a room seen in an earlier session.
-
-**Why not now.** The store lands in P7 because it is cheap to build alongside the
-6-DoF work, but nothing consumes it until there is a backend that can act on a
-recovered pose.
-
-**Trigger.** The loop-closure plan above existing as a plan. Relocalisation is a
-phase in that plan, not a phase in this one.
+*Promoted 2026-09-23 to **P20** in [#13](https://github.com/bthek1/ros2_pi/issues/13) — its trigger was "the
+loop-closure plan above existing as a plan", and [#12](https://github.com/bthek1/ros2_pi/issues/12) is that plan. Deleted from
+here.*
 
 ---
 

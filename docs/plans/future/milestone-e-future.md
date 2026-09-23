@@ -8,71 +8,16 @@ sits in both.
 
 ---
 
-## A clip with deliberate translation — `bags/walk1`
-
-**The trigger is a person and the camera.** Everything else here is software.
-
-P7 asks its gate to assert that 6-DoF odometry makes the paired-surface gap
-smaller than rotation-only odometry's. On `bags/desk1` it cannot be asserted,
-and `tools/gates/odom.sh` prints the comparison instead and says so in its own
-output. The reason is the clip rather than the estimator:
-
-- `desk1` is a **pan**. A hand sweep about the wrist carries ~0.9 m of arm arc
-  against 2-3 m of scene, so rotation already explains most of the frame motion
-  and the residue is small.
-- That residue is dominated by the depth network, not by the pose. Depth
-  Anything V2 estimates *relative* depth: its scale breathes a few percent a
-  frame — `fusion_node`'s aligner hits its own 15% clamp on one frame in seven of
-  this clip — and its *shape* changes with viewpoint, so the same wall comes back
-  at a different distance however well the camera is posed.
-
-A slow walk around the room, camera held level and moving metres rather than
-centimetres, is a clip rotation-only odometry has no way to explain. Record it
-the way every other clip here is recorded:
-
-```bash
-bash tools/record-clip.sh walk1 60
-```
-
-**When it exists**, the phase is: run `bash tools/gates/odom.sh walk1`, and if
-the 6-DoF run's median paired-surface gap is smaller than the control's, promote
-that from a printed comparison to an assertion — in `odom.sh`, keyed to the clip,
-with both numbers in the issue. If it is *not* smaller on a clip that carries
-real translation, that is a much more interesting result than the one `desk1`
-gives and it points at the depth network rather than at the pose.
-
-**Also record what the room really measures while you are there**, because the
-other deferred item that needs a person is in
-[milestone-d-future.md](milestone-d-future.md) and wants the same visit: a tape
-measure and a surface at a known distance, to pin `depth_scale`. Until that
-number exists every distance in this project — including the trajectory lengths
-P7 prints — is plausibly shaped and in an unknown unit.
+*Promoted 2026-09-23 to **P13** in [#10](https://github.com/bthek1/ros2_pi/issues/10) — the trigger was always
+a person and the camera. Deleted from here. **P12 wants the same visit**:
+the tape measure that pins `depth_scale`.*
 
 ---
 
-## Consume the keyframe store for loop closure
-
-**Trigger: `bags/walk1` above, or any clip where the camera returns to a place it
-has already been.** A pan from one spot never revisits anything, so there is no
-loop to close on `desk1` and a relocaliser could not be shown to work on it.
-
-P7 built the store and — contrary to the phase's own text, which said nothing
-would read it — the odometry now reads the newest keyframe as the view each frame
-is posed against. What is still missing is the *other* reader: matching a frame's
-descriptors against **every** keyframe rather than the newest, recognising a place
-seen minutes ago, and correcting `map -> odom` by the discrepancy.
-
-The store already holds what that needs: descriptors, bearing rays, 3D landmarks
-and the pose each was taken at, ~40 kB per keyframe. The pieces not yet written
-are a descriptor index (brute force over a few hundred keyframes is likely enough
-to start), a geometric check on the candidate match, and a pose-graph optimiser.
-`map -> odom` is published as static identity today precisely so that this can
-become real without moving the surface underneath the frames —
-`config/pimesh.yaml` says so where the edge is declared.
-
-Deferred rather than done because a loop closure that has never closed a loop is
-untestable, and this project's rule is that a phase ends in a command that exits
-non-zero.
+*Promoted 2026-09-23 to **P16** in [#12](https://github.com/bthek1/ros2_pi/issues/12), which is the whole
+loop-closure plan — place recognition, a pose graph that owns `map -> odom`,
+and a volume rebuilt at the corrected poses. Its trigger was a clip that
+revisits somewhere, which P13 records. Deleted from here.*
 
 ---
 

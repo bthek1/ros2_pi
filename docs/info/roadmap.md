@@ -1,20 +1,35 @@
 # Roadmap
 
-Status as of **2026-09-15** (M5 closed that day: depth on the GPU, measured
-through the real container rather than a standalone probe; M4 on 2026-09-13
-against the reference clip, M2.5 and M3 the day before). The build order and per-phase tests live in
+Status as of **2026-09-23**: M0–M9 done — that is the whole pipeline, one webcam
+to a live mesh — and **M10–M19 filed that day as issues #10–#13, none started**,
+which is the SLAM work. The last thing to close was M8 and M9 on 2026-09-19; M5
+on 2026-09-15, M4 on 2026-09-13, M2.5 and M3 the day before.
+
+The build order and per-phase tests live in
 [../plans/future/project_final_state.md](../plans/future/project_final_state.md);
 this page is the one-line status view. Milestones map to its phases: M1 = P0,
-M2 = P1, and so on through M9 = P8.
+M2 = P1, and so on through M9 = P8 — then M10 = P11 through M19 = P20, the two
+gaps being P9 (calibration, shown here as M2.5) and P10 (the Pi's stats row,
+folded into M9).
 
-Those phases are **built** as five milestone issues, each a contiguous slice:
+Those phases are **built** as milestone issues, each a contiguous slice:
 [#4 A](https://github.com/bthek1/ros2_pi/issues/4) = M1–M2,
 [#5 B](https://github.com/bthek1/ros2_pi/issues/5) = M3–M4,
 [#6 C](https://github.com/bthek1/ros2_pi/issues/6) = M5,
 [#7 D](https://github.com/bthek1/ros2_pi/issues/7) = M6–M7,
-[#8 E](https://github.com/bthek1/ros2_pi/issues/8) = M8–M9. Each carries a
-`just view-*` RViz recipe for watching that stage by eye — a viewer, never the
-evidence.
+[#8 E](https://github.com/bthek1/ros2_pi/issues/8) = M8–M9 — **all five closed,
+and that is the pipeline** — then, opened 2026-09-23 and **not started**,
+[#10 F](https://github.com/bthek1/ros2_pi/issues/10) = M10–M12,
+[#11 G](https://github.com/bthek1/ros2_pi/issues/11) = M13–M14,
+[#12 H](https://github.com/bthek1/ros2_pi/issues/12) = M15–M17,
+[#13 I](https://github.com/bthek1/ros2_pi/issues/13) = M18–M19, which turn it
+into **monocular visual SLAM**. Each carries a `just view-*` RViz recipe for
+watching that stage by eye — a viewer, never the evidence.
+
+**The dividing line between the two halves is not a feature.** A–E estimate a
+pose and fuse a surface; F–I add a map, a backend that revisits it, loop closure
+and the ability to say "I do not know where I am" — and, first of all, an
+outside opinion about whether any of it worked.
 
 | # | Milestone | Status |
 | --- | --- | --- |
@@ -30,7 +45,16 @@ evidence.
 | M7 | `mesh_node` — marching cubes, cleanup, Marker + PLY export | **done 2026-09-16** — [issue #7](https://github.com/bthek1/ros2_pi/issues/7) P6, `bash tools/gates/mesh.sh`: 790 668 triangles marched in 2.8 s and decimated to 120 000, boundary loops 5119 → 448 with the frontier still open, a 779 740-triangle PLY, and the worst integration gap 374.7 ms against a control's 401.3 ms — no dip |
 | M8 | 6-DoF odometry from RGB-D keypoints, so the surface stops smearing | **done 2026-09-19** — [issue #8](https://github.com/bthek1/ros2_pi/issues/8) P7, `bash tools/gates/odom.sh` over the whole of `bags/desk1`: **1.421 px** mean inlier reprojection over **97 inliers**, **79.9%** of depth frames posed, 1043 poses at **17.47 Hz**, a 31.1 m path and 4.87 m of net displacement against the control's identical zero, fastest published motion 1.9986 m/s against a 2.0 ceiling the node enforces itself. **The larger result is a bug it found on the way**: the rotation had been composed *inverted* since P3 — pan right, the published frame turns left — and correcting it is worth **3× on the paired-surface gap**, 1.3440 m → 0.4456 m, the first of those reproducing what M6 recorded. **The 6-DoF translation itself makes no measurable difference on this clip**, 0.4456 m against the control's 0.4471 m, and the gate prints that rather than asserting it: `desk1` is a pan, and what is left after the pose is the depth network's own shape error |
 | M9 | `dashboard_node` — the web view | **done 2026-09-19** — [issue #8](https://github.com/bthek1/ros2_pi/issues/8) P8 and P10, `bash tools/gates/dashboard.sh`. An HTTP and WebSocket server inside a ROS 2 node in its own process, no library and no three.js: five channels at 10.01 Hz stats / 9.16 Hz rgb / 4.47 Hz depth / 10.01 Hz pose / ~2.1 MB of mesh, the STALE flag 2.10 s after `/odom` stops against a 2.0 s threshold, and every stage of the pipeline — including `capture` from the Pi at 60.00 Hz — reporting itself on `/pipeline/stats`. Worst stage drift with a client attached: **0.77%**, against a **0.29%** floor measured between two runs with none — so P8's 2% bound is met. The gate states it as *floor plus slack* rather than a constant, because an earlier run of it saw 15% between two identical no-client runs and that was a `colcon build` sharing the box, not the pipeline |
-| M10 | Loop closure + pose graph + volume rebuild | not started — the first entry in the deferred register at the foot of [project_final_state.md](../plans/future/project_final_state.md). P7 built the keyframe store it needs; what is missing is the *other* reader, matching a frame against **every** keyframe rather than the newest, and a clip where the camera returns to somewhere it has been |
+| M10 | A trajectory measured against ground truth — ATE on TUM fr1/desk | not started — [#10](https://github.com/bthek1/ros2_pi/issues/10) P11, `bash tools/gates/trajectory.sh`. **The first number this project will have about its pose that this project did not produce.** Everything M1–M9 asserts about the trajectory is internal, and P7 showed what that is worth: the rotation was composed inverted from P3 to P7 and every number describing it was correct |
+| M11 | `depth_scale` pinned with a tape measure, `bags/scale1` recorded | not started — [#10](https://github.com/bthek1/ros2_pi/issues/10) P12, `bash tools/gates/scale.sh`. **Needs a human.** Until it happens every distance this pipeline reports is plausibly shaped and in an unknown unit |
+| M12 | `bags/walk1` — a clip with real translation | not started — [#10](https://github.com/bthek1/ros2_pi/issues/10) P13, `bash tools/gates/odom.sh walk1`. **Needs a human**, and the same visit to the room as M11. Settles the comparison `gates/odom.sh` currently prints rather than asserts |
+| M13 | Map points observed by many keyframes, tracking against the local map | not started — [#11](https://github.com/bthek1/ros2_pi/issues/11) P14, `bash tools/gates/map.sh`. A landmark stops dying with the keyframe that saw it, which is the noun SLAM has and this pipeline does not |
+| M14 | Local bundle adjustment | not started — [#11](https://github.com/bthek1/ros2_pi/issues/11) P15, `bash tools/gates/ba.sh`. g2o is already installed on both machines from ROS itself, with identical target names — measured 2026-09-23 |
+| M15 | Place recognition against the whole keyframe store | not started — [#12](https://github.com/bthek1/ros2_pi/issues/12) P16, `bash tools/gates/place.sh`. The store's second reader, which P7 built it for. **The control is the phase**: zero accepted closures on `bags/desk1`, which revisits nothing |
+| M16 | Pose graph — `map -> odom` stops being a static identity | not started — [#12](https://github.com/bthek1/ros2_pi/issues/12) P17, `bash tools/gates/loop.sh` |
+| M17 | Frame memory and a volume rebuilt at corrected poses | not started — [#12](https://github.com/bthek1/ros2_pi/issues/12) P18, `bash tools/gates/rebuild.sh`. Without it a closure corrects the trajectory and leaves the room where it was |
+| M18 | A `LOST` state that stops fusing | not started — [#13](https://github.com/bthek1/ros2_pi/issues/13) P19, `bash tools/gates/lost.sh`. Today a failed solve holds the last pose — 20.1% of `desk1`'s depth frames — and a held pose under a moving camera is permanent damage to the TSDF |
+| M19 | Relocalisation from a persisted map | not started — [#13](https://github.com/bthek1/ros2_pi/issues/13) P20, `bash tools/gates/relocalise.sh` |
 
 ## What "done" means here
 
@@ -75,9 +99,12 @@ Work that is real but not executable yet is **not** a phase. It sits in the
 deferred half of
 [../plans/future/project_final_state.md](../plans/future/project_final_state.md#part-2--deferred),
 each entry with the trigger that would make it executable — CUDA TSDF kernels,
-the TensorRT provider, relocalisation, a CUDA OpenCV build, the loop-closure work
-that becomes M10, and **re-calibrating on a flat mount** if the scale turns out to
-matter. That last one is the freshest and has the most concrete trigger: P9's `fx` is
+the TensorRT provider, a CUDA OpenCV build, and **re-calibrating on a flat
+mount** if the scale turns out to matter — plus one companion future file per
+milestone issue. **Two entries left that register on 2026-09-23** when their
+triggers fired: loop closure became issue
+[#12](https://github.com/bthek1/ros2_pi/issues/12) and relocalisation became
+P20 in [#13](https://github.com/bthek1/ros2_pi/issues/13). That last one is the freshest and has the most concrete trigger: P9's `fx` is
 pinned only to **±2.2%**, which is a ±2.2% slack in every distance this pipeline
 reports, and **M6's tape measure is the first thing that can check a scale
 independently of the calibration that produced it**. Disagreement beyond about 2% is

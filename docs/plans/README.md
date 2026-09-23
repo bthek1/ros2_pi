@@ -132,18 +132,28 @@ gh issue close 2 --reason completed --comment "All gates green; see body for mea
 | [#6 Milestone C](https://github.com/bthek1/ros2_pi/issues/6) | **Closed 2026-09-15** — `P4` done, `tools/gates/gpu-stack.sh` and `depth.sh` green (`CUDAExecutionProvider`, 55.10 ms mean per frame and 58.21 ms p95 against an 80 ms budget, 17.42 Hz, 1048/1048 `/depth/rgb` frames byte-identical, CPU control at 287.92 ms); kept as the build log. Its toolchain gate passed throughout a run in which the node was on the CPU at 517 ms — the instrument was an executable and the node is a component, which is a case that gate structurally cannot reach | [future/project_final_state.md](future/project_final_state.md) |
 | [#7 Milestone D](https://github.com/bthek1/ros2_pi/issues/7) | **Closed 2026-09-16** — `P5–P6` done, `tools/gates/fusion.sh` and `mesh.sh` green (15.3 ms per integration at 17.1 Hz with 0.19% displaced; 790 668 triangles marched in 2.8 s and decimated to 120 000, boundary loops 5119 → 448, worst integration gap 374.7 ms against a control's 401.3 ms); kept as the build log. **Both phases had their test re-scoped by measurement** — the scale aligner makes no measurable difference under rotation-only odometry, and the clip's own 400 ms stall makes P6's ratio unachievable, so each gate grew a control run instead | [future/milestone-d-future.md](future/milestone-d-future.md) |
 | [#8 Milestone E](https://github.com/bthek1/ros2_pi/issues/8) | Phases `P7–P8` of the pipeline, plus `P10` promoted out of milestone A's future file when its trigger fired — all three done 2026-09-19 | [future/project_final_state.md](future/project_final_state.md), [future/milestone-e-future.md](future/milestone-e-future.md) |
+| [#10 Milestone F](https://github.com/bthek1/ros2_pi/issues/10) | **Open 2026-09-23** — phases `P11–P13`: an ATE against TUM fr1/desk, `depth_scale` pinned with a tape measure, and `bags/walk1` recorded. The first milestone whose phases are judged by a number this project did not produce | [future/milestone-f-future.md](future/milestone-f-future.md) |
+| [#11 Milestone G](https://github.com/bthek1/ros2_pi/issues/11) | **Open 2026-09-23, `deferred`** — phases `P14–P15`: map points observed by many keyframes, and local bundle adjustment. Trigger: `tools/gates/trajectory.sh` green | [future/milestone-g-future.md](future/milestone-g-future.md) |
+| [#12 Milestone H](https://github.com/bthek1/ros2_pi/issues/12) | **Open 2026-09-23, `deferred`** — phases `P16–P18`: place recognition, a pose graph that owns `map -> odom`, and a volume rebuilt at the corrected poses. Absorbs the "Loop closure" entry from `project_final_state.md`, whose trigger fired on 2026-09-19. Trigger: `tools/gates/ba.sh` green and `bags/walk1` existing | [future/milestone-h-future.md](future/milestone-h-future.md) |
+| [#13 Milestone I](https://github.com/bthek1/ros2_pi/issues/13) | **Open 2026-09-23, `deferred`** — phases `P19–P20`: a `LOST` state that stops fusing, and relocalisation from a persisted map. Trigger: `tools/gates/loop.sh` green | [future/milestone-i-future.md](future/milestone-i-future.md) |
 
 This table is a convenience, not the source of truth —
 `gh issue list --label plan --state all` is.
 
-**The pipeline is split across five milestone issues, over one shared phase
+**The pipeline is split across nine milestone issues, over one shared phase
 list.** [future/project_final_state.md](future/project_final_state.md) holds the
-whole thing — phases P0–P8 followed by the deferred register — and issues #4–#8
+whole thing — phases P0–P20 followed by the deferred register — and issues
+#4–#8 (the pipeline, all closed) and #10–#13 (the SLAM half, opened 2026-09-23)
 each take a **contiguous slice** of it. This is the one place where a plan's
 phase list lives in the tree rather than in an issue body, and rule 1 is the
 reason for the arrangement rather than a casualty of it: one shared numbering
-means `P4` is depth in all five issues, where five separate plans would each
+means `P4` is depth in all nine issues, where nine separate plans would each
 have started at P0 and collided.
+
+**P0–P10 are written out in that file; P11–P20 are one line each with a link to
+the issue.** The file holds the numbering, not the plans — a plan is an issue.
+The older phases stay written out because they are now the **build log**, with
+what each test printed annotated into them.
 
 Promotion still works as described above — a fired trigger moves an entry out
 of the deferred half of that file and into the phase list as the next unused

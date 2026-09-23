@@ -37,7 +37,7 @@ just --justfile "$PIMESH_WS/justfile" --dump --dump-format json >"$dump"
 # `default` is exempt, and only `default`: it is the list itself, and filing
 # the map inside one of the territories it describes would be worse than
 # leaving it at the top.
-read -r n_recipes n_ungrouped <<<"$(python3 - "$dump" <<'PY'
+read -r n_recipes n_ungrouped <<<"$(/usr/bin/python3 - "$dump" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))["recipes"]
 ungrouped = [n for n, r in d.items()
@@ -49,7 +49,7 @@ PY
 )"
 [[ $n_ungrouped -eq 0 ]] || {
     note "${n_ungrouped} of ${n_recipes} recipes carry no [group(...)]"
-    python3 -c '
+    /usr/bin/python3 -c '
 import json, sys
 d = json.load(open(sys.argv[1]))["recipes"]
 for n, r in sorted(d.items()):
@@ -69,7 +69,7 @@ groups_seen=$(just --justfile "$PIMESH_WS/justfile" --groups |
 lines=$(wc -l <"$PIMESH_WS/justfile")
 (( lines < MAX_LINES )) || note "justfile is ${lines} lines, budget is < ${MAX_LINES}"
 
-read -r longest_name longest_len <<<"$(python3 - "$dump" <<'PY'
+read -r longest_name longest_len <<<"$(/usr/bin/python3 - "$dump" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))["recipes"]
 name, length = max(((n, len(r["body"])) for n, r in d.items()), key=lambda t: t[1])
@@ -87,7 +87,7 @@ PY
 # ssh options are what they are is the opposite of the problem, and grepping the
 # raw file cannot tell the two apart.
 bodies=$(mktemp)
-python3 - "$dump" >"$bodies" <<'PY'
+/usr/bin/python3 - "$dump" >"$bodies" <<'PY'
 import json, sys
 
 
@@ -181,7 +181,7 @@ while read -r name want; do
         printf '  just -n %s -> %s\n' "$name" "$line"
         missing_args=$(( missing_args + 1 ))
     fi
-done < <(python3 -c '
+done < <(/usr/bin/python3 -c '
 import json, sys
 recipes = json.load(open(sys.argv[1]))["recipes"]
 for name, recipe in sorted(recipes.items()):

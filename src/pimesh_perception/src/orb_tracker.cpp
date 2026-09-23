@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -139,6 +140,15 @@ TrackedFrame OrbTracker::process(const cv::Mat & gray)
   // the other's nearest. That is stricter than the pooled pass on purpose — a
   // wrong pair here does not cost a track id, it tilts a rotation estimate, and
   // the residual gate downstream cannot tell a wrong pair from real motion.
+  //
+  // The holes are filled first and overwritten where a match is found, so the
+  // array is parallel to `keypoints` whether or not there was a previous frame to
+  // match against — a shorter array would be a second thing every consumer has to
+  // check the length of.
+  const cv::Point2f unmatched(
+    std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN());
+  frame.previous_pixel.assign(count, unmatched);
+
   if (!window_.empty() && !frame.descriptors.empty() && !window_.back().descriptors.empty()) {
     const cv::Mat & prev = window_.back().descriptors;
 
@@ -154,10 +164,7 @@ TrackedFrame OrbTracker::process(const cv::Mat & gray)
       const std::size_t back = static_cast<std::size_t>(f.trainIdx);
       if (back >= backward.size() || backward[back].empty()) {continue;}
       if (backward[back][0].trainIdx != static_cast<int>(i)) {continue;}
-      frame.consecutive_pairs.push_back(
-        PixelPair{
-          window_.back().keypoints[back].pt,
-          frame.keypoints[i].pt});
+      frame.previous_pixel[i] = window_.back().keypoints[back].pt;
     }
   }
 
