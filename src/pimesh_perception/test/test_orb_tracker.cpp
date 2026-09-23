@@ -22,6 +22,7 @@
 
 using pimesh_perception::OrbTracker;
 using pimesh_perception::TrackedFrame;
+using pimesh_perception::PixelPair;
 
 namespace
 {
@@ -293,4 +294,76 @@ TEST(OrbTracker, SurvivesAFrameWithNoFeaturesAtAll)
   ASSERT_NO_THROW(tracker.process(textured()));
   const TrackedFrame after = tracker.process(shifted(textured(), 2.0, 0.0));
   EXPECT_GT(after.matched_fraction(), 0.5);
+}
+
+TEST(OrbTracker, ThePackedPairViewIsDerivedFromTheParallelArrayAndNothingElse)
+{
+  // `previous_pixel` is parallel to `keypoints` with a NaN where a corner was not
+  // mutually matched; `consecutive_pairs()` is the packed view of the same thing.
+  // They were one stored vector of pairs until 2026-09-23, when the geometry's
+  // pairing had to start travelling on a topic — a packed list loses which
+  // keypoint each pair belongs to, and pimesh_msgs/Keypoints is struct-of-arrays.
+  //
+  // The risk the change introduces is the one OrbTracker's comment has always
+  // warned about: two copies of this bookkeeping drifting apart, so that a pair's
+  // two halves come from different frames. A rotation fit on mismatched pairs does
+  // not fail — it returns a wrong answer with a plausible residual — so this
+  // asserts the derivation rather than trusting it.
+  OrbTracker tracker(default_config());
+  const cv::Mat first = textured();
+  tracker.process(first);
+  const TrackedFrame second = tracker.process(shifted(first, 6.0, 0.0));
+
+  ASSERT_EQ(second.previous_pixel.size(), second.keypoints.size());
+
+  std::size_t holes = 0;
+  for (const cv::Point2f & p : second.previous_pixel) {
+    if (!TrackedFrame::matched_previous(p)) {++holes;}
+  }
+  const std::vector<PixelPair> pairs = second.consecutive_pairs();
+  EXPECT_EQ(pairs.size(), second.previous_pixel.size() - holes)
+    << "the packed view must have exactly one entry per non-hole";
+  ASSERT_GT(pairs.size(), 20u) << "nothing is being tested if nothing matched";
+
+  // Every pair's `current` is the keypoint at the index its `previous` came from.
+  // Walking both in the same order is what catches an off-by-one between them.
+  std::size_t at = 0;
+  for (std::size_t i = 0; i < second.previous_pixel.size(); ++i) {
+    if (!TrackedFrame::matched_previous(second.previous_pixel[i])) {continue;}
+    ASSERT_LT(at, pairs.size());
+    EXPECT_FLOAT_EQ(pairs[at].current.x, second.keypoints[i].pt.x);
+    EXPECT_FLOAT_EQ(pairs[at].current.y, second.keypoints[i].pt.y);
+    EXPECT_FLOAT_EQ(pairs[at].previous.x, second.previous_pixel[i].x);
+    EXPECT_FLOAT_EQ(pairs[at].previous.y, second.previous_pixel[i].y);
+    ++at;
+  }
+  EXPECT_EQ(at, pairs.size());
+}
+
+TEST(OrbTracker, ATrackIdIsNeverHiddenOnTheFrameItIsFirstSeen)
+{
+  // The property odometry_node depends on, and the reason the published `-1`
+  // sentinel had to go. It matches landmarks between a keyframe and the current
+  // frame **by id**, so an id that is unavailable on a feature's first frame makes
+  // every landmark introduced on a keyframe unmatchable for that keyframe's whole
+  // life — silently, on the ~10% of features that are new in any given frame.
+  OrbTracker tracker(default_config());
+  const cv::Mat first = textured();
+  const TrackedFrame a = tracker.process(first);
+  const TrackedFrame b = tracker.process(shifted(first, 4.0, 0.0));
+
+  for (std::int32_t id : a.ids) {EXPECT_GE(id, 0);}
+  for (std::int32_t id : b.ids) {EXPECT_GE(id, 0);}
+  ASSERT_EQ(b.is_new.size(), b.ids.size());
+
+  // And an id that carried over is an id the first frame actually issued, which is
+  // what makes the intersection mean anything.
+  std::set<std::int32_t> issued(a.ids.begin(), a.ids.end());
+  std::size_t carried = 0;
+  for (std::size_t i = 0; i < b.ids.size(); ++i) {
+    if (b.is_new[i]) {continue;}
+    EXPECT_EQ(issued.count(b.ids[i]), 1u) << "id " << b.ids[i] << " was never issued";
+    ++carried;
+  }
+  EXPECT_GT(carried, 20u) << "nothing is being tested if nothing carried over";
 }
