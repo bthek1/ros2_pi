@@ -210,13 +210,13 @@ not always in the direction you expect: `ament_target_dependencies()` is gone in
 Lyrical and still present in Jazzy, so that one breaks *here* on CMake the Pi
 would accept.
 
-First-build times, measured 2026-09-08 on `pimesh_hello` (one small package, two
-components): **~9 s** on the dev box, **20.5 s** on the Pi.
+First-build times, measured 2026-09-08 on a single small two-component package:
+**~9 s** on the dev box, **20.5 s** on the Pi. The whole six-package workspace is
+several minutes at either end — `bash tools/gates/build.sh` prints both.
 
 ## Running
 
-`just` with no arguments lists what exists, by group. Today that is the
-scaffolding only:
+`just` with no arguments lists what exists, by group:
 
 <!-- gate-justfile keeps the block below equal to `just --list`. Edit the
      justfile, then re-run `bash tools/gates/justfile.sh`; do not edit by hand. -->
@@ -230,8 +230,6 @@ Available recipes:
 
     [run]
     dashboard seconds="600" bag="" port="8080"     # The whole pipeline in a browser tab: http://localhost:8080. Not evidence
-    hello-compose seconds="30"                     # Hello world, here: both components in one container. seconds = how long to run
-    hello-lan seconds="20"                         # Hello world, across the LAN: talker on the Pi, listener here
     replay bag seconds="600"                       # A recorded bag in RViz, looping. bag = a name under bags/, or a path to one
     view-camera seconds="600"                      # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
     view-depth seconds="600" bag=""                # The room as a depth cloud, in RViz. bag = optional, else the camera
@@ -242,30 +240,33 @@ Available recipes:
 
 That is the whole list, and the shortness is the point: `build` is how you
 build, `run` is what you start in order to *watch* something. If you have just
-cloned this, `just build && just hello-compose` is the entire getting-started
-path.
+cloned this, `just build && just view-camera` is the entire getting-started
+path — or `just dashboard` once the GPU stack is installed.
 
 **Everything else is a script in `tools/`, run directly.** The gates especially
-— there are eleven, they are run constantly, and as recipes they had buried
-`hello-compose` under an alphabetised wall of `gate-*`:
+— there are fifteen, they are run constantly, and as recipes they buried the
+handful of commands a person actually types under an alphabetised wall of
+`gate-*`:
 
 ```bash
 # The pipeline, phase by phase
 bash tools/gates/build.sh         # P0: one source tree, two distros, same messages
 bash tools/gates/capture.sh       # P1: 720p MJPEG on the LAN, stamped honestly
+bash tools/gates/ipc.sh           # P2: one reader, one decode, handed on as a pointer
+bash tools/gates/keypoints.sh     # P3: ORB against the reference implementation
+bash tools/gates/depth.sh         # P4: the depth network, on the GPU, in the container
+bash tools/gates/fusion.sh        # P5: the TSDF integrates every frame it is offered
+bash tools/gates/mesh.sh          # P6: marching cubes, off the integration path
+bash tools/gates/odom.sh          # P7: 6-DoF pose against a rotation-only control
+bash tools/gates/dashboard.sh     # P8: five channels, and 0 cost to the pipeline
 bash tools/gates/calibration.sh   # P9: the C922's real intrinsics, and that they straighten it
+bash tools/gates/gpu-stack.sh     # the GPU toolchain, before any node uses it
 
 # Across all phases
 bash tools/gates/test.sh          # the unit tests pass on both machines, and there are some
 bash tools/gates/view-configs.sh  # every .rviz topic is one src/ publishes
 bash tools/gates/justfile.sh      # the justfile's own shape, plus shellcheck over tools/
-
-# The scaffolding (gh issue #2), still asserted
-bash tools/gates/hello-build.sh   # one real package builds
-bash tools/gates/hello-talk.sh    # the talker honours its rate parameter
-bash tools/gates/hello-ipc.sh     # one process, message handed over as a pointer
-bash tools/gates/hello-lan.sh     # one source tree, two distros, over the LAN
-bash tools/gates/hello-clean.sh   # Ctrl-C, a closed terminal and a closed window
+bash tools/gates/teardown.sh      # Ctrl-C, a closed terminal and a closed window
                                   #   each leave nothing running, either machine,
                                   #   for every recipe in the justfile's `run` group
 
@@ -289,11 +290,11 @@ a second thing to keep true.
 
 - **Ctrl+Shift+B** builds (`tools/build.sh`), **Run Test Task** runs the unit
   suites (`tools/test.sh`), and a `gate: pick one` task runs any of the
-  seventeen gates. Every task runs under `bash -lc`, because a task shell that
+  fifteen gates. Every task runs under `bash -lc`, because a task shell that
   read no profile is on domain 0 with the wrong RMW.
-- **The Testing panel** shows all twenty suites once the two recommended
-  extensions are installed — VSCode offers them on first open. The sixteen gtest
-  ones come from `build/*/test_<name>`, and a run **builds first**: a stale
+- **The Testing panel** shows all twenty-seven suites once the two recommended
+  extensions are installed — VSCode offers them on first open. The twenty-two
+  gtest ones come from `build/*/test_<name>`, and a run **builds first**: a stale
   binary against edited source is a green test for code that does not exist.
 
 **Both halves need `.vscode/ros.env`, and it is generated.** The Python

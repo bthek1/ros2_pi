@@ -152,7 +152,7 @@ fi
 # the session died with "no bag at 'sixdof'". `dashboard` had it too, one
 # argument along: its port would have been read as the bag.
 #
-# **Nothing covered it, and the reason is worth keeping.** `gates/hello-clean.sh`
+# **Nothing covered it, and the reason is worth keeping.** `gates/teardown.sh`
 # exercises both recipes — and calls `tools/view-odom.sh` *directly*, with a bag
 # it names itself, because it needs the process group. So the one gate that
 # starts these recipes never goes through the justfile, and the justfile is the

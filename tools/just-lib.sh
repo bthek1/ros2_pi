@@ -125,13 +125,13 @@ PIMESH_VIEWER_PAT='^[r]viz2 -d .*pimesh_'
 # them out of this list cost an hour of confusion on 2026-09-09.
 #
 # Nine of them, from three separate sessions, were found still running while
-# `tools/stragglers.sh` reported 0 on both machines and `gates/hello-clean.sh`
+# `tools/stragglers.sh` reported 0 on both machines and `gates/teardown.sh`
 # had been printing `view-camera/SIGINT: 0/0`. Every pattern above matches a
 # path containing `pimesh_`, and these run out of `/opt/ros/*/lib/tf2_ros/`, so
 # nothing looked at them. The symptom was not subtle once seen — `ros2 node
-# list` warning about nodes sharing an exact name, three `/map_to_odom`s, and
-# `hello-lan` failing with `publisher count was 0` off the back of a graph that
-# had nine stale participants in it.
+# list` warning about nodes sharing an exact name, three `/map_to_odom`s, and a
+# cross-LAN gate failing with `publisher count was 0` off the back of a graph
+# that had nine stale participants in it.
 #
 # **Duplicate publishers on one TF edge is the specific failure this project
 # says makes a mesh smear and shows up in no single log.** So this pattern is
@@ -668,7 +668,7 @@ _pimesh_on_signal() {   # $1 = signal name
     trap - INT TERM HUP
     kill -"$1" $$
     # Only reached if the signal was inherited as SIG_IGN, which a shell cannot
-    # undo — see the comment on `set -m` in gates/hello-clean.sh.
+    # undo — see the comment on `set -m` in gates/teardown.sh.
     exit $(( 128 + $(kill -l "$1") ))
 }
 

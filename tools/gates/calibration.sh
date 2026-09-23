@@ -20,8 +20,8 @@
 #     all. The calibrated figure must be strictly better and under the budget.
 #
 #     A single straightness number proves nothing, for the same reason
-#     gates/hello-ipc.sh needs a with/without control: a board photographed near
-#     the optical axis is nearly straight before any correction. The claim is that
+#     gates/ipc.sh needs a with/without control: a board photographed near the
+#     optical axis is nearly straight before any correction. The claim is that
 #     it is straighter *and stops being so when the calibration is swapped out*.
 #
 #     **What this assertion does not catch, and it is worth knowing:** a degenerate

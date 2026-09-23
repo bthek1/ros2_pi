@@ -3,19 +3,19 @@
 # Teardown gate: Ctrl-C and a closed window both leave nothing running, on
 # either machine — for *every* recipe a person sits and watches.
 #
-# It was written as the hello-world plan's P4 and keeps that name, because the
-# name is what the closed issue's build log refers to. Its subject was never
-# hello-world though: it is the repo-wide rule that a session ends when you end
-# it. So the table below grows with the justfile's `run` group, and the reason
-# it must is the reason this gate exists in the first place. It passed for a
-# week over a broken `hello-compose` because it only ever signalled
-# `hello-lan` — a green gate over broken behaviour, which is worse than no gate,
-# because it is a false claim with a script's authority behind it. Every recipe
-# a person can Ctrl-C belongs here; the question to ask of this file is always
-# what it does *not* touch.
+# It was written as the hello-world plan's P4 and was called `hello-clean.sh`
+# until 2026-09-23; issue #2's build log refers to it by that name. Its subject
+# was never hello-world, which is why it outlived that package: it is the
+# repo-wide rule that a session ends when you end it. So the table below grows
+# with the justfile's `run` group, and the reason it must is the reason this
+# gate exists in the first place. It passed for a week over a broken
+# `hello-compose` because it only ever signalled `hello-lan` — a green gate over
+# broken behaviour, which is worse than no gate, because it is a false claim
+# with a script's authority behind it. Every recipe a person can Ctrl-C belongs
+# here; the question to ask of this file is always what it does *not* touch.
 
 source "$(dirname "${BASH_SOURCE[0]}")/../just-lib.sh" --overlay
-echo "== gate-hello-clean =="
+echo "== gate-teardown =="
 
 log=$(mktemp -d)/clean.log
 stragglers="$PIMESH_WS/tools/stragglers.sh"
@@ -48,22 +48,25 @@ fi
 # is not a workaround — it is the only spelling that tests the real case. (The
 # earlier version of this gate went through `just`, which reset the disposition
 # for its child as a side effect, and so passed for a reason it never stated.)
-# Both watchable recipes, because they fail differently and only one of them
-# was ever tested here. hello-lan.sh spans the LAN and backgrounds its timeout,
-# so its trap runs the moment the signal lands and the interesting question is
-# whether cleanup reaches the Pi. hello-compose.sh runs its launcher in the
-# *foreground*, where a plain `timeout` moves ros2 launch into a process group
-# of its own — outside the one a terminal signals — and bash will not run a trap
-# until its foreground child returns. Measured 2026-09-09: `just hello-compose`
-# ignored six Ctrl-Cs and ended on its own when the 30 s timer expired. This
-# gate said PASS throughout, because it only ever started the other script.
+# **Two teardown shapes fail differently, and this gate once covered only one.**
+# A recipe that backgrounds its timeout runs its trap the moment the signal
+# lands, and the interesting question is whether cleanup reaches the Pi. A
+# recipe that runs its launcher in the *foreground* is the harder case: a plain
+# `timeout` moves ros2 launch into a process group of its own — outside the one
+# a terminal signals — and bash will not run a trap until its foreground child
+# returns. Measured 2026-09-09 against the since-deleted `hello-compose`: it
+# ignored six Ctrl-Cs and ended on its own when the 30 s timer expired, while
+# this gate said PASS throughout, because it only ever started the other script.
+# That is what `run_for` exists for, and why every recipe below is started here
+# rather than trusted.
 #
-# view-camera is the third, and it is the one with the most to lose. It spans
-# both machines like hello-lan, runs its viewer in the foreground like
-# hello-compose, and — unlike either — the thing it leaves behind on the Pi
-# holds /dev/video0 *exclusively*. A leaked camera_node does not merely linger;
-# it makes every later session in this project die with "Device or resource
-# busy", including the ones that would have diagnosed it.
+# view-camera is the cheapest recipe that carries *both* shapes — it spans both
+# machines and runs its viewer in the foreground — which is why it is the one
+# that carries the extra endings below. It also has the most to lose: the thing
+# it leaves behind on the Pi holds /dev/video0 *exclusively*. A leaked
+# camera_node does not merely linger; it makes every later session in this
+# project die with "Device or resource busy", including the ones that would
+# have diagnosed it.
 
 # replay is the fourth, and it is here because of how its failure looks rather
 # than how expensive it is. What it leaves behind is a `ros2 bag play` on
@@ -84,7 +87,7 @@ fi
 # something. The camera path is covered by view-camera in the row above.
 
 # recipe -> the argv to run it with, and what "it is up" means for it.
-RECIPES=(lan compose view-camera replay view-keypoints view-depth view-mesh view-odom dashboard)
+RECIPES=(view-camera replay view-keypoints view-depth view-mesh view-odom dashboard)
 
 # `replay` is the only recipe here that takes an argument, and the bag it takes
 # has to be *this gate's own*. bags/ is git-ignored, so on a fresh clone there
@@ -192,16 +195,15 @@ argv_for() {                # $1 = recipe, $2 = seconds; prints one argv word pe
         # A port, not a window. The third argument keeps it off 8080 so a gate run
         # cannot collide with a dashboard somebody has open.
         dashboard)   printf '%s\n' "$PIMESH_WS/tools/dashboard.sh" "$2" "$GATE_BAG" 18080 ;;
-        *)           printf '%s\n' "$PIMESH_WS/tools/hello-$1.sh" "$2" ;;
+        # No fallback on purpose. A dispatch table that guesses an argv for a
+        # recipe nobody taught it is how a row gets added to RECIPES above and
+        # silently tested as something else.
+        *)           echo "argv_for: no argv for recipe '$1'" >&2; return 1 ;;
     esac
 }
 
 session_up() {              # $1 = recipe
     case $1 in
-        # Both ends, or killing them proves nothing.
-        lan)     pgrep -f "$PIMESH_NODE_PAT" >/dev/null 2>&1 &&
-                 pi_run "pgrep -f '$PIMESH_NODE_PAT'" >/dev/null 2>&1 ;;
-        compose) pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 ;;
         # The camera on the Pi *and* the viewer here. Waiting on only one of
         # them would signal the session before the other had started, and a
         # process that was never running is trivially not a straggler.
@@ -291,11 +293,11 @@ session_up() {              # $1 = recipe
 # with no far end to reach cannot exhibit the bug.
 hows_for() {                # $1 = recipe
     case $1 in
-        # No viewer window to close, so the CLOSE case does not apply: `dashboard`
-        # ends by a signal or by its own timer, exactly like the two hello
-        # recipes. Listing CLOSE for it would emulate closing an rviz2 that was
-        # never started, which is a case that passes for the wrong reason.
-        lan|compose|dashboard) echo "INT HUP" ;;
+        # No viewer window to close, so the CLOSE case does not apply:
+        # `dashboard` ends by a signal or by its own timer. Listing CLOSE for it
+        # would emulate closing an rviz2 that was never started, which is a case
+        # that passes for the wrong reason.
+        dashboard)   echo "INT HUP" ;;
         view-camera) echo "INT INT-TWICE HUP CLOSE CLOSE-EARLY" ;;
         *)           echo "INT HUP CLOSE" ;;
     esac
@@ -630,4 +632,4 @@ echo "                   (assert 0/0 after every ending, ${cases} cases over"
 echo "                    ${#RECIPES[@]} recipes: Ctrl-C, Ctrl-C twice with the second"
 echo "                    inside the teardown, a closed terminal, a closed window,"
 echo "                    and a window closed before the far end is up)"
-echo "PASS gate-hello-clean"
+echo "PASS gate-teardown"

@@ -2,7 +2,7 @@
 #
 # Assert nothing this workspace starts is still running, on either machine.
 # Prints a count per host and exits non-zero if any survived, which is what
-# makes it an assertion rather than a utility — gates/hello-clean.sh uses it as
+# makes it an assertion rather than a utility — gates/teardown.sh uses it as
 # its test, so it has to be runnable outside `just` and outside this box.
 
 source "$(dirname "${BASH_SOURCE[0]}")/just-lib.sh"

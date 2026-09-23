@@ -90,9 +90,8 @@
             "description": "Which gate?",
             "options": [
                 "build", "capture", "ipc", "keypoints", "depth", "fusion", "mesh",
-                "gpu-stack", "calibration",
-                "test", "view-configs", "justfile",
-                "hello-build", "hello-talk", "hello-ipc", "hello-lan", "hello-clean"
+                "odom", "dashboard", "gpu-stack", "calibration",
+                "test", "view-configs", "justfile", "teardown"
             ],
             "default": "test"
         }
