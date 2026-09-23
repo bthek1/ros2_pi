@@ -413,7 +413,7 @@ strong priors, re-verify before quoting a number as this project's own.
   corners reach only ~half way to the frame corner put the *uncalibrated*
   straightness at 0.52 px, inside the 1.0 px budget, while frames reaching ~98%
   put it at 1.4–2.1 px (synthetic sweep, 2026-09-12,
-  `src/pimesh_bringup/test/test_straightness.py`). So "cover the frame corners"
+  `src/pimesh_instruments/test/test_straightness.py`). So "cover the frame corners"
   is a precondition of the measurement rather than advice about technique, and
   `gates/calibration.sh` asserts a floor on coverage. A precondition that is not
   asserted is a comment.

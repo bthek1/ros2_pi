@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pimesh_instruments</name>
+  <version>0.1.0</version>
+  <description>
+    The tests for the Python instruments in tools/ that decide what a gate
+    prints.
+
+    Three gates are closed by a number a Python script computes rather than by a
+    node: gates/calibration.sh by tools/calib_straightness.py, gates/mesh.sh by
+    tools/mesh_render.py, and gates/keypoints.sh by tools/orb_reference.py —
+    which is the predecessor's ORB algorithm reimplemented, and therefore the
+    only outside opinion in this workspace about whether the corners mean
+    anything. A gate's instrument needs its own tests for the same reason the
+    gate does, and two of the ways orb_reference.py can be wrong move its number
+    *up*, so the failure is a gate that passes for the wrong reason.
+
+    It exists because those three suites were filed under pimesh_bringup until
+    #14's P5, where they had nothing to do with launch files, config or RViz —
+    they were there because bringup was the package with a Python test harness.
+    This package is that harness and nothing else: no nodes, no headers, no
+    install step. It builds on both machines so that gates/test.sh can go on
+    asserting the same suites at both ends, and it needs no camera, no bag and no
+    GPU — every one of these is synthetic by construction, which is what lets
+    them run at all.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>python3-numpy</test_depend>
+  <test_depend>python3-opencv</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

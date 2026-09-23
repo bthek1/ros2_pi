@@ -86,7 +86,18 @@ if [[ -s $work/suites.dev && -s $work/suites.pi ]]; then
 fi
 
 echo
-echo "tests            : dev=${dev_tests:-none}  pi=${pi_tests:-none}  (assert >= ${MIN_TESTS} on both)"
+# **The two counts must be equal, not merely both above the floor.** Same
+# sources, same suites, two machines: a difference means different tests ran,
+# and the suite-name comparison below cannot see it — stale result files carry
+# the same names as the suites that wrote them. Measured 2026-09-23 during #14's
+# P5, when three suites moved between packages and the Pi went on counting them
+# out of the old package's leftovers: this gate printed `dev=433 pi=490` and
+# PASS, because each was over the floor and the name lists matched exactly.
+if [[ -n ${dev_tests:-} && -n ${pi_tests:-} && ${dev_tests} -ne ${pi_tests} ]]; then
+    note "dev ran ${dev_tests} tests and pi ran ${pi_tests} — same sources and same suites, so different tests ran"
+fi
+
+echo "tests            : dev=${dev_tests:-none}  pi=${pi_tests:-none}  (assert >= ${MIN_TESTS} on both, and equal)"
 echo "failures/errors  : 0 required on both"
 echo "suites           : $(tr '\n' ' ' <"$work/suites.dev" 2>/dev/null)  (assert identical on both)"
 
