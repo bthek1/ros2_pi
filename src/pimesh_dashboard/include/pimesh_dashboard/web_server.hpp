@@ -30,7 +30,8 @@ enum class Channel : std::uint8_t
   Rgb = 2,     ///< JPEG bytes: the annotated keypoint frame.
   Depth = 3,   ///< JPEG bytes: the colour-mapped depth.
   Pose = 4,    ///< JSON: the current pose and a tail of the trajectory.
-  Mesh = 5,    ///< Binary: vertex, colour and index arrays, whole replacement.
+  Mesh = 5,    ///< Binary: vertex and colour arrays, whole replacement. **No
+               ///< indices** — see mesh_payload.hpp for the layout and why.
 };
 
 /// What a static request should be answered with.

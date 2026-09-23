@@ -385,4 +385,15 @@ cv::Affine3d change_basis(const cv::Affine3d & basis, const cv::Affine3d & motio
   return basis * motion * basis.inv();
 }
 
+std::array<double, 36> unconstrained_covariance()
+{
+  // Diagonal only. An off-diagonal term is a *correlation*, which is a claim
+  // about the estimator's error structure, and this one makes none.
+  std::array<double, 36> covariance {};
+  for (int i = 0; i < 6; ++i) {
+    covariance[static_cast<std::size_t>(i * 6 + i)] = kOdomUnconstrainedVariance;
+  }
+  return covariance;
+}
+
 }  // namespace pimesh_perception

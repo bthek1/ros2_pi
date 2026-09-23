@@ -1240,13 +1240,18 @@ void KeypointNode::publish_pose(const rclcpp::Time & stamp)
   odom->pose.pose.orientation.y = q[1];
   odom->pose.pose.orientation.z = q[2];
   odom->pose.pose.orientation.w = q[3];
-  // -1 in the first element is nav_msgs' documented way of saying "no covariance
-  // here", and it is the honest answer: this estimator has no uncertainty model at
-  // all. Leaving the block at zero would claim a perfectly certain pose, which is
-  // a stronger statement than a wrong one. `twist` is left zero for the same
-  // reason — nothing here estimates a velocity.
-  odom->pose.covariance[0] = -1.0;
-  odom->twist.covariance[0] = -1.0;
+  // A large diagonal, not a -1 and not zeros. This node published `-1` in
+  // element 0 from P7 until 2026-09-23, on the belief that nav_msgs documents it
+  // the way sensor_msgs/Imu does; it does not, and the result was a matrix that
+  // is not positive semidefinite, which RViz reported at the pose rate for the
+  // length of every session. See unconstrained_covariance() for the whole story
+  // and for why zeros is the worse of the two legal answers.
+  //
+  // `twist` stays zero-*valued* — nothing here estimates a velocity — and
+  // carries the same unconstrained covariance, which is what says so.
+  const auto covariance = unconstrained_covariance();
+  std::copy(covariance.begin(), covariance.end(), odom->pose.covariance.begin());
+  std::copy(covariance.begin(), covariance.end(), odom->twist.covariance.begin());
   odom_pub_->publish(std::move(odom));
 }
 

@@ -118,3 +118,27 @@ first version of it measured worse: publishing at the image rate with whatever
 the pose worker last wrote is smooth and wrong by one depth interval, which at a
 20 deg/s pan is 1.1 degrees of stale orientation — about 6 cm of surface error at
 3 m, larger than the translation P7 exists to add.
+
+---
+
+## A measured covariance on `/odom`
+
+`keypoint_node` publishes `unconstrained_covariance()` — a large diagonal that
+says "this dimension is unconstrained" and is deliberately an overstatement of
+ignorance. It is **not a measurement**, and the header says so. It replaced a
+`-1` sentinel borrowed from `sensor_msgs/Imu` that made the matrix invalid
+(2026-09-23); the large diagonal is the least-wrong of the three legal answers,
+not a right one.
+
+A real one is computable: PnP's covariance comes from the Jacobian of the
+reprojection residual at the solution, scaled by the inlier residual variance —
+`cv::solvePnPRansac` does not report it, but `cv::projectPoints` returns the
+Jacobian and the normal-equation inverse is a 6x6 solve over the inlier set.
+That would make the number mean something, and would let the two regimes be
+compared on their *confidence* as well as their trajectories.
+
+**Trigger: the first consumer that fuses `/odom` rather than drawing it.**
+Today RViz draws it, `odom_probe` measures the trajectory and the dashboard
+shows the pose — none of them reads the covariance, so a real one would be
+arithmetic nobody checks, which is how a wrong number survives. A fusion filter
+downstream is what makes it load-bearing and therefore testable.

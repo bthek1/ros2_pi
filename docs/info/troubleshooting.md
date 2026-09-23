@@ -284,6 +284,97 @@ With driver 595.84 it reports OpenGL 4.6 in hardware — the old software-GL
 workaround (`LIBGL_ALWAYS_SOFTWARE=1`) is obsolete and should not be
 reintroduced.
 
+## `rviz2` segfaults part-way through `gates/view-configs.sh`
+
+Symptom, measured 2026-09-21: stage 1 passes completely, then stage 2 gets
+through one or two configs and the run ends with
+`Segmentation fault (core dumped) run_for 45 rviz2 -d "$config"` and a gate that
+exits 1 with no verdict. On other runs the same stage prints *nothing at all*
+before the gate exits.
+
+**It is the desktop sharing the GPU, not the configs.** The same `rviz2` started
+by hand on the same config runs its full 40 s and reports `OpenGl version: 4.6`,
+and the `.rviz` files have not changed since 2026-09-19 when this gate was last
+green. The dev box's GTX 1660 SUPER is also carrying gnome-shell's compositor,
+Firefox and VS Code's GPU process — the same contention that puts
+`gates/dashboard.sh` an order of magnitude outside its recorded noise floor on
+the same afternoon.
+
+So: **close the browser and the editor before running any gate that starts a
+viewer**, the same rule CLAUDE.md states for builds. If it still crashes with
+the desktop quiet, that is a real regression and worth a core dump; until then
+the useful half of the gate is stage 1, which is hermetic, reads only source and
+`.rviz` YAML, and passes every time.
+
+## RViz warns `Negative eigenvalue found for position` under `just view-odom`
+
+Fixed 2026-09-23, and **it was not cosmetic** — this entry said it was for about
+an hour, on the strength of a code comment that turned out to be wrong.
+
+`keypoint_node` published `pose.covariance[0] = -1.0`. That sentinel is
+**`sensor_msgs/Imu`'s**, documented in that message and nowhere else:
+
+```
+$ cat /opt/ros/lyrical/share/sensor_msgs/msg/Imu.msg
+# ... please set element 0 of the associated covariance matrix to -1
+$ cat /opt/ros/lyrical/share/geometry_msgs/msg/PoseWithCovariance.msg
+# Row-major representation of the 6x6 covariance matrix     ← and nothing else
+```
+
+`nav_msgs/Odometry` documents no such convention, so what went on the wire was
+simply a matrix that is **not positive semidefinite**. RViz's Odometry display
+eigen-decomposes the position block on every message and was correctly reporting
+that — at the pose rate, ~17 Hz, for the length of the session, roughly five
+warnings a second.
+
+**Why that matters here and not only in the scrollback.** `RCUTILS_LOG_WARN`
+goes through rclcpp's process-global log mutex behind a synchronous terminal
+write. That is the same mechanism documented above for the TF_OLD_DATA flood,
+where a log line at frame rate stuttered RViz's render loop — a log line under a
+lock is a rate limit on everything that lock protects. Setting every
+`Covariance -> Value: false` in `rviz/odom.rviz` does **not** help; the
+decomposition happens on receipt, not on draw.
+
+The fix is `unconstrained_covariance()` in `pimesh_perception/rgbd_odometry.hpp`:
+a large diagonal, which is positive definite and is the conventional spelling of
+"this dimension is unconstrained". Not zeros — that is legal but reads to a
+fusion filter as a *perfectly certain* pose, which is the stronger false claim.
+Not a measured covariance either: `cv::solvePnPRansac` reports no Jacobian, and
+inventing the number would be what `camera_node` refuses to do for `latency_ms`.
+It overstates ignorance rather than confidence, which is the direction to err in,
+and `test_rgbd_odometry`'s `OdomCovariance` suite pins it — three of its four
+cases fail against the `-1` that shipped.
+
+Measured after the fix: **0 warnings over a 45 s run.**
+
+## `just view-odom` says `no bag at 'sixdof'`, and `just dashboard` says `'8080'`
+
+Fixed 2026-09-23; here because the message points at the wrong thing entirely.
+Neither string is a bag name anybody typed — they are the recipe's *next*
+argument, arriving where the bag was meant to be.
+
+A `{{ }}` in a recipe body is **text substitution, not an argument**. just pastes
+the value into the line and hands it to `sh`, so a parameter defaulting to `""`
+leaves nothing between two spaces, the shell collapses that to no word at all,
+and every argument after it shifts one place left:
+
+```
+view-odom seconds="600" bag="" regime="sixdof":
+    @bash "{{ ws }}/tools/view-odom.sh" {{ seconds }} {{ bag }} {{ regime }}
+                                        ↓        ↓         ↓
+                                       600                sixdof      ← $2
+```
+
+The fix is to quote every substitution — `"{{ bag }}"` — so an empty default
+stays an empty *argument*. A variadic `*args` must stay unquoted, or several
+arguments become one string.
+
+Three other recipes had the same defect harmlessly, because their empty
+parameter was last. That is a latent bug, not a safe pattern: `view-odom` was
+written by copying `view-mesh` and adding one parameter after `bag`.
+`bash tools/gates/justfile.sh` now dry-runs every recipe and asserts it passes
+as many arguments as it has parameters.
+
 ## `pkill -f` killed the shell that ran it
 
 `pkill -f` matches full command lines, and the command line running the `pkill`

@@ -1,6 +1,7 @@
 #ifndef PIMESH_PERCEPTION__RGBD_ODOMETRY_HPP_
 #define PIMESH_PERCEPTION__RGBD_ODOMETRY_HPP_
 
+#include <array>
 #include <cstddef>
 #include <vector>
 
@@ -310,6 +311,42 @@ cv::Matx33d camera_step(const cv::Matx33d & point_rotation);
 /// why this has to be right before it is ever mounted — an identity basis hides
 /// the mistake completely.
 cv::Affine3d change_basis(const cv::Affine3d & basis, const cv::Affine3d & motion);
+
+/// The 6x6 covariance `keypoint_node` publishes on `/odom`, row-major.
+///
+/// **A large diagonal, because this estimator has no uncertainty model and the
+/// message has no way to say so.** `sensor_msgs/Imu` documents a `-1` in element
+/// 0 meaning "no estimate"; `nav_msgs/Odometry` and `geometry_msgs/PoseWithCovariance`
+/// document **no such convention** — their comment says only "row-major
+/// representation of the 6x6 covariance matrix". This node published that `-1`
+/// anyway from P7 until 2026-09-23, attributing the Imu convention to nav_msgs in
+/// a comment, and the result was a matrix that is **not positive semidefinite**.
+///
+/// **RViz was right and the flood was the tell.** Its Odometry display
+/// eigen-decomposes the position block on every message and warns
+/// `Negative eigenvalue found for position` — at the pose rate, ~17 Hz, for the
+/// length of the session. That is not cosmetic in this project: `RCUTILS_LOG_WARN`
+/// goes through rclcpp's process-global log mutex behind a synchronous terminal
+/// write, which is exactly the mechanism that made the TF_OLD_DATA flood stutter
+/// RViz's render loop (see CLAUDE.md). Setting `Covariance -> Value: false` in the
+/// .rviz does not stop it; the decomposition happens on receipt.
+///
+/// **Why not zeros, and why not a real number.** Zeros is a legal matrix and the
+/// de-facto ROS spelling of "unknown", but it reads to a fusion filter as a
+/// *perfectly certain* pose, which is the stronger false claim — the objection
+/// the original comment correctly raised. A measured covariance would be the
+/// honest answer and this node cannot produce one: `cv::solvePnPRansac` reports
+/// no Jacobian, and a number invented for the field would be the thing
+/// `camera_node` refuses to do for `latency_ms`. A large diagonal is the
+/// conventional spelling of "this dimension is unconstrained", it is positive
+/// definite, and it overstates ignorance rather than confidence — the direction
+/// to err in. It is **not** a measurement and nothing should treat it as one.
+///
+/// The trigger for replacing it is the first consumer that fuses `/odom`; there
+/// is none today (RViz draws it, `odom_probe` measures it, the dashboard shows
+/// it). Recorded in docs/plans/future/milestone-e-future.md.
+constexpr double kOdomUnconstrainedVariance = 1.0e6;
+std::array<double, 36> unconstrained_covariance();
 
 }  // namespace pimesh_perception
 

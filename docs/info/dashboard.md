@@ -87,13 +87,21 @@ One connection, binary frames, each with a one-byte channel tag. Text JSON for
 anything small, binary for anything large — never base64, which costs 33% for
 nothing.
 
-| Channel | Payload | Rate | Notes |
-| --- | --- | --- | --- |
-| `stats` | JSON | **10.01 Hz measured** | Per-stage rate/latency/**two** drop counters/detail, plus uptime, client count and the server's own dropped-frame count |
-| `rgb` | JPEG bytes | **9.16 Hz measured**, capped at 10 | The annotated keypoint frame — one image, not two, since the keypoints are drawn on the RGB |
-| `depth` | JPEG bytes | **4.47 Hz measured**, capped at 5 | Colour-mapped in `depth_node` against a fixed `[0, max_range_m]`, so a colour is a distance across frames rather than within one |
-| `mesh` | binary: `u32` vertex count, then vertices `f32×3` and colours `u8×3` | on change, ~every 10 s | **No index array.** A `TRIANGLE_LIST` Marker is already three vertices per triangle with no reuse, so the indices would be 0,1,2,… — a third of the payload saying nothing. ~2.1 MB measured for a 120 k-triangle surface |
-| `pose` | JSON | **10.01 Hz measured** | Current camera pose, its staleness, and the trajectory tail |
+**The tag is numbered in two files that share no code** — `Channel` in
+`web_server.hpp` and `CH` in `web/app.js` — so the numbers are in the table
+below and `test_dashboard_contract` asserts the two agree. Swap a pair and JPEG
+bytes go through `JSON.parse`: two panels stop, the socket stays up, and nothing
+is logged at either end. They start at 1 because 0 is the value a byte has when
+nobody set it, which the page's `default: break` should treat as an unknown
+channel rather than as stats.
+
+| # | Channel | Payload | Rate | Notes |
+| --- | --- | --- | --- | --- |
+| 1 | `stats` | JSON | **10.01 Hz measured** | Per-stage rate/latency/**two** drop counters/detail, plus uptime, client count and the server's own dropped-frame count. Field names are a contract with `web/app.js` and with `dashboard_probe`, checked by `test_dashboard_contract` — a renamed field reads as `undefined`, which the page draws as an em dash, indistinguishable from a stage that has not reported yet |
+| 2 | `rgb` | JPEG bytes | **9.16 Hz measured**, capped at 10 | The annotated keypoint frame — one image, not two, since the keypoints are drawn on the RGB |
+| 3 | `depth` | JPEG bytes | **4.47 Hz measured**, capped at 5 | Colour-mapped in `depth_node` against a fixed `[0, max_range_m]`, so a colour is a distance across frames rather than within one |
+| 4 | `pose` | JSON | **10.01 Hz measured** | Current camera pose, its staleness, and the trajectory tail |
+| 5 | `mesh` | binary: `u32` vertex count, then vertices `f32×3` and colours `u8×3` | on change, ~every 10 s | **No index array.** A `TRIANGLE_LIST` Marker is already three vertices per triangle with no reuse, so the indices would be 0,1,2,… — a third of the payload saying nothing. **~2.1 MB measured** per extraction on `bags/desk1`, which at 15 bytes a vertex is ~140 k vertices and so ~47 k triangles — well under `mesh_node`'s 120 k cap. A surface that *did* reach the cap would be 360 k vertices and **5.4 MB**; the two figures were conflated here until 2026-09-21 |
 
 **Both image rates had to be fixed after they were first measured, and the bug is
 worth knowing.** `keypoint_node` already caps its preview at 10 Hz; a second 10 Hz
@@ -130,10 +138,27 @@ applied backpressure to the pipeline.** A deadlock is a loud bug; that would hav
 been a silent one. Actions are now parked by the handler and run outside the lock
 entirely.
 
-**Mesh transfer** is the one payload big enough to think about: 120 k triangles
-is ~4.3 MB raw (vertices + colours + indices). At every-10-s refresh that is
-~0.4 MB/s on a LAN, which is fine, and the browser rebuilds the
-`BufferGeometry` in one go. If it ever hurts: send only changed voxel blocks, or
+**Mesh transfer** is the one payload big enough to think about, and the figure
+here was wrong until 2026-09-21. `mesh_node` decimates to 120 k **triangles**,
+which is 360 k vertices; the wire format is 12 bytes of position and 3 bytes of
+colour per vertex behind a 4-byte count, and **no indices at all** — a
+TRIANGLE_LIST Marker is already three points per triangle with no reuse, so the
+indices would be 0,1,2,… and a third of the payload saying nothing. That is
+**5 400 004 bytes**, not the ~4.3 MB this file used to claim, which was the
+position array with the colour bytes forgotten. At every-10-s refresh it is
+~0.5 MB/s on a LAN, which is fine, and it is **64% of the server's 8 MiB
+`send_limit_bytes`** rather than the 51% the old figure implied — worth stating
+correctly, because exceeding that limit is a *silent* drop: the frame is counted
+in `ws_dropped` and discarded, and the page keeps the surface it already had.
+The browser rebuilds the `BufferGeometry` in one go.
+
+That layout is pinned at both ends. `pack_mesh` in
+`pimesh_dashboard/mesh_payload.hpp` writes it and `test_mesh_payload` asserts it
+byte for byte; `web/app.js` reads it back with hand-written offsets, and
+`test_dashboard_contract` is what checks the two agree. They share no code, and
+a stride read one byte out still yields floats — so the page would draw a
+triangle soup of believable magnitude in the wrong places, which looks like a
+poor reconstruction rather than like a bug. If it ever hurts: send only changed voxel blocks, or
 decimate harder for the web view than for RViz. Do not reach for Draco before
 measuring — it adds a decoder and a build step to save bandwidth that is not
 scarce here.

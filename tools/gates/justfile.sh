@@ -141,6 +141,60 @@ else
     fi
 fi
 
+# --- Every default argument survives the trip into the script ----------------
+#
+# **This is the check that was missing on 2026-09-23, and `just view-odom`
+# failed for a user because of it.** A recipe body writes
+# `{{ seconds }} {{ bag }} {{ regime }}`; just substitutes the text and hands the
+# line to sh, so a parameter defaulting to "" **vanishes from the word list**
+# and every argument after it shifts one place left. `just view-odom` therefore
+# ran `view-odom.sh 600 sixdof`, the script read `sixdof` as the bag name, and
+# the session died with "no bag at 'sixdof'". `dashboard` had it too, one
+# argument along: its port would have been read as the bag.
+#
+# **Nothing covered it, and the reason is worth keeping.** `gates/hello-clean.sh`
+# exercises both recipes — and calls `tools/view-odom.sh` *directly*, with a bag
+# it names itself, because it needs the process group. So the one gate that
+# starts these recipes never goes through the justfile, and the justfile is the
+# user-facing surface. Ask what the gate does **not** touch.
+#
+# `just -n` is the instrument rather than a regex over the body, because what is
+# being checked is *just's own substitution*, not our model of it. An empty
+# argument that survives prints as "" and counts as a word; one that vanished
+# does not.
+missing_args=0
+while read -r name want; do
+    # **2>&1, and the first version of this check had 2>/dev/null.** `just -n`
+    # echoes the command to *stderr*, so discarding stderr left $line empty, the
+    # loop skipped every recipe, and the gate printed "0 recipe(s) lose an
+    # argument" over the two that did. Verified against the broken justfile
+    # before being kept — which is the only reason that was found.
+    line=$(just --justfile "$PIMESH_WS/justfile" -n "$name" 2>&1 | head -1) || true
+    # A recipe with a required positional refuses to dry-run; nothing to check.
+    [[ $line == bash\ * ]] || continue
+    # The body is `bash <script> <args...>`, shell-quoted by just.
+    words=()
+    eval "words=( $line )" 2>/dev/null || continue
+    got=$(( ${#words[@]} - 2 ))
+    if (( got != want )); then
+        note "recipe '${name}' passes ${got} argument(s) where it has ${want} parameter(s) — an empty default vanished; quote the {{ ... }} in its body"
+        printf '  just -n %s -> %s\n' "$name" "$line"
+        missing_args=$(( missing_args + 1 ))
+    fi
+done < <(python3 -c '
+import json, sys
+recipes = json.load(open(sys.argv[1]))["recipes"]
+for name, recipe in sorted(recipes.items()):
+    params = recipe.get("parameters", [])
+    if not params:
+        continue
+    # A variadic parameter may legitimately expand to any number of words,
+    # itself included: that is the whole point of `build *args`.
+    if any(p.get("kind") != "singular" for p in params):
+        continue
+    print(name, len(params))
+' "$dump")
+
 echo
 echo "recipes          : ${n_recipes}"
 echo "ungrouped        : ${n_ungrouped} of ${n_recipes}  (assert 0; default exempt)"
@@ -148,6 +202,7 @@ echo "groups           : ${groups_seen% }  (assert ${WANT_GROUPS})"
 echo "justfile lines   : ${lines}  (assert < ${MAX_LINES})"
 echo "longest body     : ${longest_name}, ${longest_len} lines  (assert <= ${MAX_BODY})"
 echo "inlined shell    : ${inlined}  (assert 0)"
+echo "argument drift   : ${missing_args} recipe(s) lose an argument  (assert 0; just -n)"
 echo "setup.md drift   : ${doc_diff} line(s) vs just --list  (assert 0)"
 echo "shellcheck       : ${findings} finding(s) over $(find "$PIMESH_WS/tools" -name '*.sh' | wc -l) scripts  (assert 0)"
 

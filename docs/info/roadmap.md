@@ -41,14 +41,21 @@ prints the number it asserted on; the phase is then annotated with the date and
 what that recipe printed.
 
 Unit tests are a different instrument and do not close a milestone on their own.
-`bash tools/test.sh` runs **365 hermetic tests across twenty-four suites** on both
-machines — the stamp arithmetic, a matrix layout, the static-transform
+`bash tools/test.sh` runs **414 hermetic tests across twenty-seven suites** on
+both machines — the stamp arithmetic, a matrix layout, the static-transform
 quaternions, the arithmetic either side of the depth model, the bytes of a saved
-PLY, and the percentile and hash every probe reports its numbers through — and
-they catch the things that are wrong *silently*. Three of those suites exist to
-check a **gate's own instrument** rather than the pipeline: `test_straightness`,
-`test_mesh_render` and `test_orb_reference`, because a number asserted on by a
-gate is worth what the thing computing it is worth. A gate is what says the running system did the thing. Both are
+PLY, the JSON the dashboard is built out of, and the percentile and hash every
+probe reports its numbers through — and they catch the things that are wrong
+*silently*. Four of those suites exist to check a **gate's own instrument**
+rather than the pipeline: `test_straightness`, `test_mesh_render`,
+`test_orb_reference` and — since 2026-09-21 — `test_dashboard_contract`, which
+asserts that the fields `dashboard_probe` scrapes are fields something actually
+sends. That last one matters for the reason the others do and one more besides:
+the probe finds its numbers by string search, so a renamed field gives it a
+**zero rather than an error**, and `gates/dashboard.sh` would report
+`ws_dropped=0` — the pacing rule holding perfectly — while measuring nothing at
+all. A number asserted on by a gate is worth what the thing computing it is
+worth. A gate is what says the running system did the thing. Both are
 required; neither substitutes for the other.
 
 The division is about visibility rather than importance: if a mistake would

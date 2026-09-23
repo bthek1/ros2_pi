@@ -622,3 +622,73 @@ TEST(ScaleHandling, TheResidualIsMeasuredAgainstTheModelThatWasFitted)
       fit.pairs_in, fit.pairs_used, fit.refits}, world, breathed), 0.05)
     << "ignoring the scale in the residual would fail this fit";
 }
+
+// ---------------------------------------------------------------------------
+// The covariance published on /odom
+// ---------------------------------------------------------------------------
+//
+// **A value no test could reach, in a field nothing in this workspace reads.**
+// It was `-1` in element 0 from P7 until 2026-09-23 — sensor_msgs/Imu's
+// convention, attributed in a comment to nav_msgs, which documents nothing of
+// the kind. The consequence was invisible here and loud in the one place that
+// looks: RViz eigen-decomposes the position block on every message and warned
+// `Negative eigenvalue found for position` at ~17 Hz for the length of every
+// session, through the same process-global log mutex that made the TF_OLD_DATA
+// flood stutter the render loop.
+//
+// What follows is what RViz actually checks, written down so the -1 cannot come
+// back.
+
+TEST(OdomCovariance, IsSixBySixAndSymmetric)
+{
+  const auto c = pimesh_perception::unconstrained_covariance();
+  ASSERT_EQ(c.size(), 36u);
+  for (int r = 0; r < 6; ++r) {
+    for (int col = 0; col < 6; ++col) {
+      EXPECT_DOUBLE_EQ(c[r * 6 + col], c[col * 6 + r]) << "(" << r << "," << col << ")";
+    }
+  }
+}
+
+TEST(OdomCovariance, IsPositiveSemidefinite)
+{
+  // For a diagonal matrix that is exactly "no negative entry on the diagonal",
+  // which is the condition the -1 violated and the one RViz reports on. Checked
+  // as the general property rather than as "element 0 is not -1", so that a
+  // sentinel reinstated anywhere else fails too.
+  const auto c = pimesh_perception::unconstrained_covariance();
+  for (int i = 0; i < 6; ++i) {
+    EXPECT_GE(c[i * 6 + i], 0.0) << "diagonal " << i << " is negative — not a covariance";
+  }
+  // And the off-diagonals are zero, so the diagonal test above is sufficient:
+  // a correlation term would be a claim about error structure this estimator
+  // does not make, and would also make the PSD question a real eigenproblem.
+  for (int r = 0; r < 6; ++r) {
+    for (int col = 0; col < 6; ++col) {
+      if (r != col) {EXPECT_DOUBLE_EQ(c[r * 6 + col], 0.0) << "(" << r << "," << col << ")";}
+    }
+  }
+}
+
+TEST(OdomCovariance, CarriesNoSentinelValue)
+{
+  // The specific failure, named. `-1` is legal in sensor_msgs/Imu and meaningless
+  // in nav_msgs/Odometry, and it is the value somebody reaching for "we don't
+  // know" will reach for again.
+  const auto c = pimesh_perception::unconstrained_covariance();
+  for (std::size_t i = 0; i < c.size(); ++i) {
+    EXPECT_NE(c[i], -1.0) << "element " << i << " is Imu's sentinel, not a covariance";
+  }
+}
+
+TEST(OdomCovariance, ClaimsIgnoranceRatherThanCertainty)
+{
+  // Zeros is the other legal answer and is the worse one: a fusion filter reads
+  // an all-zero covariance as a *perfectly certain* pose. Erring toward "we know
+  // nothing" is the direction that cannot cause a downstream consumer to trust
+  // this estimator more than it should.
+  const auto c = pimesh_perception::unconstrained_covariance();
+  for (int i = 0; i < 6; ++i) {
+    EXPECT_GT(c[i * 6 + i], 1.0) << "diagonal " << i << " reads as near-certain";
+  }
+}
