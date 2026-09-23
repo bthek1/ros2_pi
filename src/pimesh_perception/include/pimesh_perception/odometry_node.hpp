@@ -326,6 +326,12 @@ private:
   // average in the stats line a mean over the wrong denominator. Measured once,
   // that turned a depth scale of 1.0 into a reported 0.18.
   std::atomic<std::uint64_t> keypoint_frames_ {0};
+  /// Keypoints messages refused because their parallel arrays disagreed. Counted
+  /// rather than merely warned about: nothing else in this workspace can produce
+  /// one, so a non-zero here means either a publisher this node does not know
+  /// about or a message contract that has drifted — and both of those are worth a
+  /// number rather than a log line somebody has to be watching for.
+  std::atomic<std::uint64_t> malformed_ {0};
   std::atomic<std::uint64_t> pose_ok_ {0};
   std::atomic<std::uint64_t> pose_held_ {0};
   std::atomic<std::uint64_t> shift_ok_ {0};

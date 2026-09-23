@@ -68,7 +68,8 @@ built in A and all of it failing a script when skipped:
 - the new `.rviz` goes into `tools/gates/view-configs.sh`'s reach (it globs
   `src/**/*.rviz`, so this is automatic — but its topics must be ones `src/`
   publishes);
-- the new `view-*` recipe goes into `RECIPES` in `tools/gates/hello-clean.sh`,
+- the new `view-*` recipe goes into `RECIPES` in `tools/gates/teardown.sh`
+  (named `hello-clean.sh` until 2026-09-23),
   or its teardown is untested — that gate found `view-camera` leaking RViz and
   the Pi's camera the day it was added to the list;
 - `MIN_TESTS` in `tools/gates/test.sh` goes up when unit tests are added;
@@ -165,7 +166,7 @@ A confident, contradictory number in a gate's output is worse than no number.
 `src/pimesh_bringup/rviz/camera.rviz`, and `bash tools/gates/view-configs.sh`,
 which parses every committed `.rviz` and asserts each display's topic is one
 `src/` actually publishes (verified by breaking it: a renamed topic exits 1).
-Extending `tools/gates/hello-clean.sh` to signal `view-camera` immediately
+Extending `tools/gates/hello-clean.sh` (now `teardown.sh`) to signal `view-camera` immediately
 caught that recipe leaking both RViz and the Pi's camera_node: bash will not run
 a trap while a foreground child is running, and an rviz2 signalled during its
 own startup never exits, so the trap that cleans up the Pi never fired. The

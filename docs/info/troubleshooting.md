@@ -414,12 +414,13 @@ grep -E '^Sig(Ign|Cgt):' /proc/<pid>/status
 The fix is to reset the disposition before exec'ing the thing under test:
 
 ```bash
-setsid env --default-signal=INT,TERM,HUP bash tools/hello-lan.sh 45 &
+setsid env --default-signal=INT,TERM,HUP bash tools/view-camera.sh 45 &
 ```
 
 That is also the *faithful* spelling, not a workaround: a terminal's Ctrl-C
 reaches a foreground job whose SIGINT is at its default. Measured 2026-09-09,
-when `gate-hello-clean` started launching the session directly instead of
+when `gate-teardown` (then named `gate-hello-clean`) started launching the
+session directly instead of
 through `just` — `just` had been resetting the disposition for its child as a
 side effect, so the gate had been passing for a reason it never stated.
 

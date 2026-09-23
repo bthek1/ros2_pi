@@ -221,6 +221,19 @@ if(BUILD_TESTING)
     target_include_directories(test_mailbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   endif()
 
+  # Reading a Keypoints message back into geometry. Header-only, no node, no ROS
+  # graph — and it is a header at all because it was three loops inside
+  # odometry_node's subscription callback, where nothing could call it. Two of
+  # those loops were bounded by one array's length while indexing another, so a
+  # message with ragged parallel arrays read past the end of a vector; that is the
+  # one assertion in this package about undefined behaviour rather than about a
+  # plausible wrong answer.
+  ament_add_gtest(test_keypoints_view test/test_keypoints_view.cpp)
+  if(TARGET test_keypoints_view)
+    target_include_directories(test_keypoints_view PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(test_keypoints_view ${pimesh_msgs_TARGETS} opencv_core)
+  endif()
+
   ament_add_gtest(test_image_buffer test/test_image_buffer.cpp)
   if(TARGET test_image_buffer)
     target_include_directories(test_image_buffer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

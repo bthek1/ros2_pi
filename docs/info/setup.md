@@ -292,8 +292,8 @@ a second thing to keep true.
   suites (`tools/test.sh`), and a `gate: pick one` task runs any of the
   fifteen gates. Every task runs under `bash -lc`, because a task shell that
   read no profile is on domain 0 with the wrong RMW.
-- **The Testing panel** shows all twenty-seven suites once the two recommended
-  extensions are installed — VSCode offers them on first open. The twenty-two
+- **The Testing panel** shows all twenty-eight suites once the two recommended
+  extensions are installed — VSCode offers them on first open. The twenty-three
   gtest ones come from `build/*/test_<name>`, and a run **builds first**: a stale
   binary against edited source is a green test for code that does not exist.
 
@@ -356,16 +356,18 @@ at all, so `colcon test-result --all` is what decides — which is why
 `tools/gates/test.sh` asserts on the counts rather than on the exit status.
 
 Each gate exits non-zero and prints the number it asserted on.
-[gh issue #2](https://github.com/bthek1/ros2_pi/issues/2) records what each
-`hello-*` gate measured, and `tools/gates/justfile.sh` is
-[#3](https://github.com/bthek1/ros2_pi/issues/3)'s.
+[gh issue #2](https://github.com/bthek1/ros2_pi/issues/2) records what the
+scaffolding's own `hello-*` gates measured — they and the `pimesh_hello` package
+were deleted on 2026-09-23, once `gates/build.sh`, `gates/ipc.sh` and
+`gates/capture.sh` covered the same claims on the real pipeline — and
+`tools/gates/justfile.sh` is [#3](https://github.com/bthek1/ros2_pi/issues/3)'s.
 
 **The justfile is the user-facing surface; the shell is in `tools/`.** Every
 recipe is one line that runs a script — `tools/build.sh` — because `just` gives a recipe body no way to share code with another recipe, so
 inlined bash gets copy-pasted and drifts. `tools/just-lib.sh` is what they all
 source: the prelude, the single spelling of the Pi's `ssh` invocation, the
 bracketed `pkill` patterns and `in_range`. Two consequences worth knowing:
-the scripts run without `just` (which is why `gate-hello-clean` can signal one
+the scripts run without `just` (which is why `gate-teardown` can signal one
 inside a bare `setsid` session), and they can be linted — `shellcheck` cannot
 parse `{{ }}`, so none of this bash was checked by anything until it moved.
 Install it with `uv tool install shellcheck-py` (no sudo needed) or

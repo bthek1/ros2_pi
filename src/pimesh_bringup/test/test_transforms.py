@@ -904,3 +904,76 @@ def test_no_parameter_in_the_yaml_is_read_by_nobody(config, launch_module, decla
     assert not orphans, (
         f'these parameters are set in config/pimesh.yaml and declared by no node, '
         f'so they silently apply nothing: {orphans}')
+
+
+def test_the_keypoints_stream_is_deep_at_both_ends():
+    """**A queue depth that is a correctness requirement, asserted because nothing
+    else would notice it changing.**
+
+    Every image topic in this workspace keeps 1 on purpose: the freshest frame is
+    the only one anybody wants, and a backlog is how this pipeline dies.
+    `/keypoints` is the exception. `odometry_node` looks each message up by its
+    *exact stamp* to pair it with a depth map, and in `rotation_only` composes a
+    rotation increment out of **every** one of them — the pairs in each message
+    span the detector's previous frame, so the chain only composes correctly if
+    none is skipped.
+
+    A RELIABLE writer at `KEEP_LAST(1)` holds only the newest sample for
+    retransmission, so a reader one frame behind loses that frame permanently.
+    **The failure is silent and it is not a dropped-frame counter anywhere**: it is
+    a rotation increment that never happened, and a pose that under-rotates by an
+    amount nobody can attribute. Both ends have to be deep, and the two numbers
+    live in two files with nothing relating them, which is the `volume_key` shape
+    of bug — see CLAUDE.md on pairs that have to hold the same value.
+
+    Read as text, like `test_dashboard_contract`: these are C++ literals in a
+    constructor and there is no hermetic way to ask a node what QoS it used
+    without standing one up, which would need a ROS graph this suite must not
+    have.
+    """
+    import re
+
+    src = os.path.join(_HERE, '..', '..', 'pimesh_perception', 'src')
+    floor = 30
+
+    def depths(filename, variable):
+        with open(os.path.join(src, filename)) as handle:
+            text = handle.read()
+        found = re.findall(
+            re.escape(variable) + r'\s*\(\s*rclcpp::KeepLast\s*\(\s*(\d+)\s*\)\s*\)', text)
+        assert found, (
+            f'{filename} no longer declares {variable} as a KeepLast QoS — this test '
+            'cannot see the depth any more and is asserting nothing')
+        return [int(n) for n in found]
+
+    publisher = depths('keypoint_node.cpp', 'keypoints_qos')
+    subscriber = depths('odometry_node.cpp', 'keypoints_qos')
+
+    for depth in publisher:
+        assert depth >= floor, (
+            f'keypoint_node publishes /keypoints at KeepLast({depth}); a reader one '
+            f'frame behind loses that frame for good (floor {floor})')
+    for depth in subscriber:
+        assert depth >= floor, (
+            f'odometry_node subscribes to /keypoints at KeepLast({depth}); every '
+            f'message it misses is a pose update that never happened (floor {floor})')
+
+
+def test_the_detector_and_the_estimator_agree_on_the_landmark_clip(config):
+    """`max_depth_m` bounds which landmarks the pose is fitted to, and
+    `match_window` bounds how far back a correspondence can come from. Both belong
+    to the tracking front end and they now live in two different nodes' parameter
+    blocks, so this is the pair the 2026-09-23 split created alongside
+    `keypoints_topic`.
+
+    A window shorter than the gap between two depth frames leaves the estimator
+    with no correspondences; that is asserted separately above. What this one adds
+    is the other direction: the history has to outlast the window, or a depth map
+    arrives to find the ORB output it needs already evicted — which shows up only
+    as `depth_lost` climbing in a stats line nobody is reading.
+    """
+    keypoints = config['/**/keypoint_node']['ros__parameters']
+    odometry = config['/**/odometry_node']['ros__parameters']
+    assert odometry['history_frames'] >= 4 * keypoints['match_window'], (
+        'history_frames={} is not comfortably longer than match_window={}'.format(
+            odometry['history_frames'], keypoints['match_window']))

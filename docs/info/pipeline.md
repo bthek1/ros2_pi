@@ -151,19 +151,34 @@ the mesh never sees. `decode_node`'s stats line counts inter-arrival gaps over
 ## Stage 3 — Keypoints (`keypoint_node`, dev box)
 
 **Built 2026-09-12** — P3, [#5](https://github.com/bthek1/ros2_pi/issues/5).
-**6-DoF added 2026-09-19** — P7, [#8](https://github.com/bthek1/ros2_pi/issues/8).
-Both regimes are built and `odometry: sixdof` is the default; `rotation_only` is
-P3's estimator, kept as the control `tools/gates/odom.sh` measures against.
+**The pose left this stage on 2026-09-23** for `odometry_node`, which is stage 3b
+below: this node had published *two* `/pipeline/stats` rows since P7 — ORB at the
+camera's rate on one thread, the pose solve at the depth rate on another — because
+it was two stages wearing one name, and the pipeline table here had listed them as
+two since then. Nothing about either estimator changed in the move.
 
-**Job:** find repeatable corners, match them across frames, and turn the matches
-into camera motion.
+**Job:** find repeatable corners and say who each one is, frame after frame.
 
 **Measured** (`bash tools/gates/keypoints.sh`, over all 3489 frames of
-`bags/desk1`): **6.54 ms/frame** mean against an 8 ms budget, on the node's own
-clock — **4.02 ms** of detection and **2.39 ms** of matching — sustaining
-**57.8 Hz**, re-measured 2026-09-19 with P7's pose worker in the same process
-(P3 measured 5.99 ms with nothing but decode beside it), with a matched-keypoint fraction of **0.9063** against the
-predecessor's algorithm at **0.9065** on the same frames. The annotated preview
+`bags/desk1`): **6.82 ms/frame** mean against an 8 ms budget, on the node's own
+clock — **4.16 ms** of detection and **2.51 ms** of matching — sustaining
+**57.8 Hz** with depth and odometry in the same process, with a matched-keypoint
+fraction of **0.9062** against the predecessor's algorithm at **0.9065** on the
+same frames. (P3 measured 5.99 ms with nothing but decode beside it, and 6.54 ms
+with P7's pose worker there too; the split left the fraction at 0.9062 against the
+0.9063 recorded before it, which is the number that says the move changed
+nothing.)
+
+**Two matchings leave this node and they are not interchangeable.** Track ids come
+from a *pooled* pass over a ten-frame window, which forgives detection churn —
+strict frame-to-frame matching loses ~25% of keypoints to it rather than to
+motion. `prev_x`/`prev_y` come from a *mutual-best* pass against the previous frame
+alone, which is stricter and is what the geometry needs: a match five frames back
+spans five times the motion and would be weighted as though it spanned one. Both
+go on `/keypoints`, because since the split the node that fits a rotation to those
+pairs is no longer the node that ran the matcher — and a consumer reconstructing
+them by intersecting two frames' track ids would get the looser pairing and a
+plausible, wrong residual. The annotated preview
 costs a further **2.2 ms** and is capped at ~10 Hz, which is why it is accounted
 separately: it is an output for a person, and folding it into the pipeline's cost
 would make that number depend on whether anybody was watching.
@@ -291,6 +306,90 @@ once.
 between 4.6 and 4.10.** `ORB::create`, `BFMatcher` and `knnMatch` are identical on
 both; the calibration work of P9 has the long version of why that matters.
 
+## Stage 3b — Pose (`odometry_node`, dev box)
+
+**Built 2026-09-19** as part of `keypoint_node` — P7,
+[#8](https://github.com/bthek1/ros2_pi/issues/8) — and **split into its own node
+2026-09-23**. This is the **tracking front end**: the half of a SLAM system that
+answers *where is the camera*, with the mapping half downstream of it.
+
+**Job:** turn corners and a depth map into a 6-DoF pose, and refuse to answer when
+it cannot.
+
+**Measured** (`bash tools/gates/odom.sh`, over `bags/desk1`): **1.370 px** mean
+inlier reprojection over **94 inliers**, **81.6%** of depth frames posed rather
+than held, **991 poses at 16.60 Hz**, a **28.39 m** path with **4.56 m** of net
+displacement, and a fastest published motion of **1.98 m/s** against the 2.0 m/s
+ceiling the node enforces on itself. The `rotation_only` control publishes
+translation **identically zero** over the same clip, which is what makes it a
+control.
+
+**How it works, and the three things measurement overruled.**
+
+- **PnP against a keyframe, not a fit between two depth maps.** The obvious RGB-D
+  odometry is to unproject two frames and fit a rigid transform between the
+  clouds. It does not work here, and not because of the estimator: Depth Anything
+  V2 estimates *relative* depth, so both clouds carry an error that is a smooth
+  **warp** rather than per-pixel noise — it does not average down over three
+  hundred landmarks — and the overall scale breathes a few percent a frame, which
+  a rigid fit can only absorb as translation along the view axis. Measured in
+  order: rigid frame-to-frame reported an **89.5 m** path over a 45 s desk sweep;
+  dividing the scale out left it at 117 m; measuring against a keyframe brought it
+  to 44 m; a low-pass brought it to 8.4 m. All four were worse than publishing no
+  translation at all. PnP works because it changes *what is measured*: the
+  keyframe's 3D landmarks against **this frame's pixels**, so one depth map is
+  involved instead of two, there is no scale ratio between them, and the residual
+  comes out in pixels — a unit this project has a calibration for.
+- **Set from a keyframe, never accumulated.** Frame-to-frame chaining is a random
+  walk whose per-step error is the size of one step's real motion. Measuring each
+  frame against the newest keyframe and *setting* the pose from it gives a
+  simulated final position error of **0.106 m** against **2.70 m**.
+- **A confident fit is not a correct one, and a residual cannot tell you.** PnP
+  reports how well a pose explains the pixels it was handed and has no opinion
+  about whether the 3D points behind them are where the depth network said.
+  Measured: a single step of **9.4 m** between two depth frames at **1.23 px** mean
+  inlier reprojection, which then became the reference every later frame was posed
+  against. The plausibility of the *motion* is a separate question and gets a
+  separate refusal — `max_speed_m_s`, and `gates/odom.sh` asserts on the fastest
+  published motion rather than on the residual.
+
+**The rotation had been composed inverted since P3**, and nothing could see it. A
+fit answers `P_cur = M · P_prev` for a point seen twice; the camera composes with
+`M⁻¹`, because the point did not move. Publishing `M` itself turns the frame
+**left** when the camera pans right — and a frame that moves when you pan looks
+correct in RViz, the residual gate is indifferent to the sign, and a TSDF built
+from consistently mirrored poses still produces a surface. Correcting it was worth
+**3× on the paired-surface gap**: 1.3440 m to 0.4456 m. `camera_step()` is that
+inverse, named, and `test_rgbd_odometry`'s **CameraStep** suite closes the loop by
+simulating a camera with a known trajectory and asserting the pose that comes out
+is the trajectory that went in.
+
+**What is not here is the rest of SLAM.** The keyframe store is built as P7
+specifies — descriptors, bearing rays and 3D landmarks, ~37 kB each — and has
+exactly one reader: *the newest keyframe*. The second reader, matching a frame
+against **every** keyframe to recognise a place seen minutes ago, is loop closure,
+and with it a pose graph and the ability to rebuild the volume. Until that exists
+drift is bounded per step and unbounded over a session. See
+[roadmap.md](roadmap.md) M10–M19.
+
+**A malformed message is refused whole, and counted.** `pimesh_msgs/Keypoints`
+documents every per-feature array as the same length and nothing enforces it at
+runtime, so `odometry_node` checks it (`keypoints_well_formed`) and drops the
+message rather than converting as far as it goes — a half-read frame pairs corners
+with the wrong track ids, which is a plausible wrong answer. The count appears as
+`malformed=` in the stats line rather than only in a throttled warning, because
+nothing in this workspace can produce one: a non-zero there means either a
+publisher this node does not know about or a message contract that has drifted.
+Measured **0** over `bags/desk1`.
+
+**Threading.** The depth path runs on its own thread behind a one-slot mailbox,
+because a pose solve costs milliseconds. `/keypoints` is deliberately *not* behind
+a mailbox: a mailbox is newest-wins, and every dropped keypoints message is a frame
+whose ORB output the depth rendezvous can never find — plus, in `rotation_only`, a
+rotation increment silently missing from a chain. Its callback does a bounded copy
+and, in the control regime only, the rotation fit itself, measured at **0.12 ms**
+per frame at 56.6 Hz against the 6.8 ms ORB spends on the same frame.
+
 ## Stage 4 — Depth (`depth_node`, dev box, GPU)
 
 **Job:** one RGB frame in, one metric depth map out.
@@ -402,7 +501,8 @@ without a pose at their own stamp and **0** without their colour twin.
   aligner is not broken; `test_scale_aligner` pins its properties, including the
   one that matters most (a constant bias produces corrections whose product is
   exactly 1, so it never pushes the map). It is correcting the smaller error:
-  `keypoint_node` published **rotation only** until P7, and a hand-held sweep's ~0.9 m of
+  `keypoint_node` published **rotation only** until P7 (the pose is `odometry_node`'s
+  since 2026-09-23), and a hand-held sweep's ~0.9 m of
   unmodelled arm arc is a 30-45% geometric error at 2-3 m against a scale wobble
   clamped at 15%. What is measured is that it does not make things worse:
   203 300 blocks with it against 221 918 without.
@@ -539,6 +639,8 @@ threshold.
 | --- | --- | --- | --- |
 | Pi | dev box | JPEG, ~100–200 kB | up to 60 Hz, ~2–12 MB/s |
 | `decode` | `keypoint`, `depth` | `cv::Mat` pointer | intra-process, zero copy |
+| `keypoint` | `odometry` | ~500 corners, ids, descriptors, prev pixels (~36 kB) | 57.8 Hz, intra-process |
+| `odometry` | `fusion` (via TF), RViz, dashboard | `odom -> base_link` + `/odom` | **16.6 Hz measured** |
 | `depth` | `fusion` | 3.7 MB float depth + its RGB frame | **17.4 Hz measured**, intra-process |
 | `fusion` | `mesh` | TSDF snapshot | every ~10 s |
 | `mesh` | RViz, dashboard | ~120 k triangles | every ~10 s |

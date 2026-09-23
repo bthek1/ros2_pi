@@ -19,6 +19,7 @@
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "pimesh_perception/image_buffer.hpp"
 #include "pimesh_perception/keyframe_store.hpp"
+#include "pimesh_perception/keypoints_view.hpp"
 #include "rcl_interfaces/msg/floating_point_range.hpp"
 #include "rcl_interfaces/msg/integer_range.hpp"
 #include "rcl_interfaces/msg/parameter_descriptor.hpp"
@@ -427,7 +428,25 @@ void OdometryNode::on_keypoints(pimesh_msgs::msg::Keypoints::ConstSharedPtr msg)
 {
   ++keypoint_frames_;
 
-  const std::size_t count = msg->x.size();
+  // --- Refuse a message whose parallel arrays disagree ------------------------
+  //
+  // The message documents every per-feature array as the same length and nothing
+  // enforces it at runtime, so this is the one place it is checked. Refused
+  // whole rather than converted as far as it goes: a half-read frame produces
+  // corners paired with the wrong track ids, which is a plausible wrong answer,
+  // and the accessors in keypoints_view.hpp clamp only so that a caller who
+  // forgot this check cannot read off the end.
+  if (!keypoints_well_formed(*msg)) {
+    ++malformed_;
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "keypoints message with mismatched array lengths (x=%zu y=%zu ids=%zu "
+      "prev_x=%zu descriptors=%zu for %u bytes each) — refused. %lu so far.",
+      msg->x.size(), msg->y.size(), msg->track_id.size(), msg->prev_x.size(),
+      msg->descriptors.size(), msg->descriptor_bytes,
+      static_cast<unsigned long>(malformed_.load()));
+    return;
+  }
 
   // --- The bounded copy ------------------------------------------------------
   //
@@ -437,27 +456,16 @@ void OdometryNode::on_keypoints(pimesh_msgs::msg::Keypoints::ConstSharedPtr msg)
   // alternative — a mailbox and a thread — would be *worse than slow*, because a
   // mailbox is newest-wins: every message it dropped would be a frame whose ORB
   // output the depth rendezvous below can never find.
+  //
+  // The conversions themselves are in keypoints_view.hpp so that a test can call
+  // them; they were three loops here, and two of them read past the end of a
+  // vector on a ragged message.
   auto record = std::make_shared<FrameRecord>();
   record->stamp_ns = stamp_ns(msg->header.stamp);
   record->optical_frame = msg->header.frame_id;
-  record->pixels.resize(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    record->pixels[i] = cv::Point2f(msg->x[i], msg->y[i]);
-  }
+  record->pixels = keypoint_pixels(*msg);
   record->ids = msg->track_id;
-
-  // A cv::Mat over its **own** storage, not over the message's. The message is a
-  // shared const pointer that goes out of scope when this callback returns, and a
-  // Mat header over its bytes would outlive them in the history — a use-after-free
-  // that reads as plausible descriptors for as long as the allocator leaves the
-  // page alone. `mat_over` exists for the case where the message *is* kept; this
-  // is the case where it is not.
-  const std::uint32_t stride = msg->descriptor_bytes;
-  if (stride > 0 && msg->descriptors.size() == count * stride) {
-    record->descriptors = cv::Mat(
-      static_cast<int>(count), static_cast<int>(stride), CV_8U);
-    std::memcpy(record->descriptors.data, msg->descriptors.data(), msg->descriptors.size());
-  }
+  record->descriptors = copy_keypoint_descriptors(*msg);
 
   {
     std::lock_guard<std::mutex> lock(history_mutex_);
@@ -487,15 +495,7 @@ void OdometryNode::on_keypoints(pimesh_msgs::msg::Keypoints::ConstSharedPtr msg)
   // It is also the regime nothing but tools/gates/odom.sh runs.
   const auto start = std::chrono::steady_clock::now();
 
-  std::vector<PixelPair> pairs;
-  pairs.reserve(count);
-  for (std::size_t i = 0; i < count && i < msg->prev_x.size(); ++i) {
-    const cv::Point2f previous(msg->prev_x[i], msg->prev_y[i]);
-    if (!TrackedFrame::matched_previous(previous)) {continue;}
-    pairs.push_back(PixelPair{previous, cv::Point2f(msg->x[i], msg->y[i])});
-  }
-
-  update_pose(pairs, msg->header.frame_id);
+  update_pose(keypoint_consecutive_pairs(*msg), msg->header.frame_id);
   publish_pose(rclcpp::Time(msg->header.stamp, RCL_ROS_TIME));
 
   rotation_cost_sum_ms_ = rotation_cost_sum_ms_.load() +
@@ -1168,7 +1168,7 @@ void OdometryNode::log_stats()
     "depth_lost=%lu shift_ok=%lu shift_held=%lu landmarks=%.0f shared=%.0f "
     "inliers=%.0f reproj_px=%.3f point_residual=%.4fm depth_scale=%.4f "
     "pose_cost=%.2fms keyframes=%zu keyframe_kb=%.1f kf_on_loss=%lu kf_on_stall=%lu "
-    "implausible=%lu",
+    "implausible=%lu malformed=%lu",
     regime_name(regime_),
     pose_rate_hz,
     static_cast<double>(keypoints_delta) / span_s,
@@ -1192,7 +1192,8 @@ void OdometryNode::log_stats()
     static_cast<double>(keyframes_.bytes()) / 1024.0,
     static_cast<unsigned long>(keyframes_on_loss_.load()),
     static_cast<unsigned long>(keyframes_on_stall_.load()),
-    static_cast<unsigned long>(implausible_.load()));
+    static_cast<unsigned long>(implausible_.load()),
+    static_cast<unsigned long>(malformed_.load()));
 
   // --- The same numbers, on a topic, for P8's dashboard ------------------------
   //

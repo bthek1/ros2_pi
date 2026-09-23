@@ -1,12 +1,26 @@
-# ros2_pi — a live 3D mesh of a room, from one webcam
+# ros2_pi — monocular visual SLAM from one moving webcam
 
-A Raspberry Pi 5 with a single USB webcam, an Ubuntu dev box with a GPU, and
-ROS 2 in between. The camera is the only sensor; everything the system knows
-about the room's shape is inferred from one moving view.
+**The goal: estimate the camera's pose and build a 3D map of the room, from a
+single moving RGB camera and nothing else.** A Raspberry Pi 5 with a USB webcam,
+an Ubuntu dev box with a GPU, and ROS 2 in between. No depth sensor, no IMU, no
+wheel odometry — everything the system knows about where it is and what the room
+looks like is inferred from one moving view.
 
 ```
-RGB frame → keypoints (ORB) → monocular depth (Depth Anything V2) → TSDF fusion → triangle mesh → dashboard
+RGB frame → keypoints (ORB) → pose (PnP vs keyframe) → monocular depth (Depth Anything V2) → TSDF fusion → triangle mesh → dashboard
+             └──────── tracking front end ────────┘    └──────────── mapping back end ────────────┘
 ```
+
+**What is built is the front end and the map; what is missing is the loop.** The
+tracking half estimates a 6-DoF pose per frame and the mapping half fuses depth
+into a surface, which is *visual odometry plus dense mapping* — a SLAM system's
+two halves without the part that makes the acronym honest. There is no loop
+closure, no pose graph and no relocalisation, so drift is never corrected and a
+room re-entered is a room seen for the first time. The keyframe store those need
+is built and has one reader; the second reader — matching a frame against *every*
+keyframe rather than the newest — is the next piece of work, and it is named as
+such in [docs/info/roadmap.md](docs/info/roadmap.md). Calling this SLAM today
+would be claiming the half that is not there.
 
 **Written in C++.** The Pi is a sensor head — it captures, stamps and ships
 JPEG, and nothing else. Every expensive stage runs on the dev box, on the GPU
@@ -14,9 +28,9 @@ where it pays.
 
 ## Status
 
-**The whole pipeline runs, end to end.** As of **2026-09-19** the repository holds
-seven packages, and a webcam on a Pi becomes a triangle surface on the dev box
-with a browser tab watching it. The surface does not look like a room yet, for a
+**The whole pipeline runs, end to end.** As of **2026-09-23** the repository holds
+six packages, and a webcam on a Pi becomes a triangle surface on the dev box with
+a browser tab watching it. The surface does not look like a room yet, for a
 reason given below:
 
 - **Capture** (`pimesh_camera`, on the Pi) — 1280×720 MJPEG stamped with the
@@ -28,9 +42,16 @@ reason given below:
   2.7 MB frame to its consumers as a pointer: **504/504** buffer addresses matched
   with intra-process comms on against **0/395** with it off.
 - **Keypoints** (`pimesh_perception`, here) — ORB at 500 features with pooled
-  matching over a 10-frame window, **57.9 Hz sustained at 5.75 ms/frame** with
-  depth running beside it, and a rotation-only `odom → base_link` that holds its
-  last pose rather than guessing when its gates fail.
+  matching over a 10-frame window, **57.8 Hz sustained at 6.82 ms/frame** with
+  depth and odometry running beside it, publishing corners, track ids and each
+  corner's position one frame earlier.
+- **Pose** (`pimesh_perception`, here) — **the tracking front end**, `odometry_node`:
+  `cv::solvePnPRansac` against the newest keyframe's 3D landmarks, **1.37 px mean
+  inlier reprojection over 94 inliers on 81.6% of depth frames**, 16.6 Hz. It
+  holds its last pose rather than guessing when its gates fail, and refuses a fit
+  whose *motion* is implausible even when the fit itself is confident — a
+  reprojection error cannot tell you the 3D points were where the depth network
+  claimed. `rotation_only` stays selectable as the control run.
 - **Depth** (`pimesh_perception`, here, on the GPU) — Depth Anything V2 Small at
   518² through ONNX Runtime's CUDA execution provider, **55.1 ms/frame and
   17.4 Hz** against an 80 ms budget, publishing `/depth` in metres alongside
@@ -102,7 +123,7 @@ that uses it.
 | OS | Ubuntu 26.04, x86_64 | Ubuntu 24.04, aarch64 (Pi 5, 8 GB) |
 | ROS | Lyrical | Jazzy |
 | GPU | GTX 1660 SUPER, 6 GB | — |
-| Runs | decode, keypoints, depth, fusion, meshing, dashboard | capture only |
+| Runs | decode, keypoints, odometry, depth, fusion, meshing, dashboard | capture only |
 
 Two different ROS distros, deliberately — there is no ABI compatibility across
 them, so every package builds from source on the machine that runs it.
@@ -135,7 +156,7 @@ queues.
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause |
 | [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones |
 | [docs/plans/README.md](docs/plans/README.md) | How plans are written here: a GitHub issue of stable phases, a command for a test, executable phases only |
-| [Issue #2 — hello-world plan](https://github.com/bthek1/ros2_pi/issues/2) | Closed 2026-09-08: the scaffolding that exists, and what each gate measured |
+| [Issue #2 — hello-world plan](https://github.com/bthek1/ros2_pi/issues/2) | Closed 2026-09-08: the scaffolding, and what each of its gates measured. The `pimesh_hello` package and its five gates were deleted on 2026-09-23, once the real pipeline's gates covered the same claims |
 | [Issue #3 — justfile plan](https://github.com/bthek1/ros2_pi/issues/3) | Closed 2026-09-09: grouped recipes, gate bodies in `tools/`, and the first shellcheck run over this repo's shell |
 | [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this went.** The build order P0–P8, each ending in a `tools/gates/*.sh` test and each annotated with what that test printed, followed by the deferred register — each entry with the trigger that would make it a phase |
 
@@ -143,8 +164,17 @@ Plans live in the issue tracker, not in this tree: `gh issue list --label plan`.
 
 ## What one webcam can honestly do
 
-Monocular depth is **relative**, not metric — one measured distance fixes the
-scale, and the model's output still wobbles ~4% frame to frame on a static
-scene. Per-frame scale alignment against the volume already built is what keeps
-that wobble from thickening every surface. Anything beyond ~6 m is a guess and
-is clipped. The mesh this produces is a good room; it is not a survey.
+**Monocular depth is relative, not metric.** One measured distance fixes the
+scale, and until a tape measure supplies it every distance this reports is
+plausibly shaped and the wrong size. The model's output also wobbles ~4% frame to
+frame on a static scene; per-frame scale alignment against the volume already
+built is what keeps that wobble from thickening every surface. Anything beyond
+~6 m is a guess and is clipped.
+
+**And a monocular system has no absolute reference for where it is.** The pose is
+measured against keyframes, which bounds the per-step error but not the
+accumulated one — nothing here ever recognises a place it has been, so the map
+drifts without limit over a long enough session. That is the loop closure named
+at the top of this file, and it is the difference between what is built and SLAM.
+
+The mesh this produces is a good room; it is not a survey.
