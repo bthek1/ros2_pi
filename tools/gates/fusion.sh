@@ -50,7 +50,7 @@
 # The reason is not that the aligner is broken — `test_scale_aligner` pins its
 # properties, including the one that matters most (a constant bias produces
 # corrections whose product is exactly 1, so it never pushes the map) — it is
-# that on this clip the aligner is correcting the smaller error. `keypoint_node`
+# that on this clip the aligner is correcting the smaller error. `odometry_node`
 # publishes **rotation only**, and a hand-held sweep carries ~0.9 m of real arm
 # arc that the pose says is zero; at 2-3 m that is a 30-45% geometric error,
 # against a scale wobble the aligner clamps at 15% and which hits that clamp on a
@@ -101,7 +101,7 @@ MIN_INTEGRATED=700
 # number and not the largest one seen.
 MAX_LAG_MS=57.0
 # What fraction of depth frames may fail to find a pose at their own stamp.
-# Measured 0 on this clip — keypoint_node holds its pose on ~8% of frames and
+# Measured 0 on this clip — odometry_node holds its pose on ~8% of frames and
 # tf2 interpolates across those — so this is headroom, not an expectation.
 MAX_NO_POSE_PCT=5
 # Colourless frames. Measured 0 after the subscription order was fixed; it was
@@ -179,7 +179,8 @@ echo "model: ${MODEL}"
 # --- One run of the real pipeline against the clip ---------------------------
 #
 # The real launch file, so what is measured is the configuration that runs: one
-# container, intra-process comms on, decode_node, keypoint_node and depth_node
+# container, intra-process comms on, decode_node, keypoint_node, odometry_node
+# and depth_node
 # beside fusion_node, and the three static edges.
 #
 # **No probe is loaded, and that is deliberate rather than an omission.** The
@@ -213,7 +214,7 @@ run_pipeline() {        # $1 = log path, $2 = window seconds, $3 = true|false (a
     }
 
     # Once, not --loop. A looping bag replays header stamps ~60 s into the past at
-    # every wrap; keypoint_node stamps the pose with the frame's own stamp, and
+    # every wrap; odometry_node stamps the pose with the frame's own stamp, and
     # tf2 refuses any transform older than the newest it holds — so after the
     # first wrap every pose lookup in this node would fail and it would integrate
     # nothing at all. Both halves of the terminal handling are here for the reason
@@ -474,7 +475,7 @@ echo "  ... integrate     : ${integrate_mean} ms aligned vs ${c_integrate:-?} ms
 echo
 echo "  P5 asks this gate to assert the aligned gap is smaller. Measured"
 echo "  2026-09-16 it was not: the two runs were a coin flip on both the gap"
-echo "  and the agreement, because keypoint_node published rotation only —"
+echo "  and the agreement, because odometry_node published rotation only —"
 echo "  and, as P7 later found, published it turning the wrong way — so a"
 echo "  hand-held sweep's unmodelled arm arc was a far larger error than the"
 echo "  scale wobble the aligner clamps at 15%."

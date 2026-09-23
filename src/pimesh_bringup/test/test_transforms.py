@@ -546,7 +546,7 @@ def test_the_overrides_are_the_ones_the_gates_actually_pass(launch_module):
 
     `use_cuda` is a bool in depth_node, `duration_s` a double in depth_probe,
     `log_payloads` a bool in decode_node, `align` a bool in fusion_node,
-    `remesh_period_s` a double in mesh_node, `odometry` a string in keypoint_node.
+    `remesh_period_s` a double in mesh_node, `odometry` a string in odometry_node.
     A `value_type` that disagrees with the declaration is the same silent no-op as
     having none.
     """
@@ -675,10 +675,10 @@ def test_keypoints_reads_the_depth_topic_depth_publishes(config):
     runs with no hardware.
     """
     depth = config['/**/depth_node']['ros__parameters']
-    keypoints = config['/**/keypoint_node']['ros__parameters']
-    assert keypoints['depth_topic'] == depth['depth_topic'], (
-        'keypoint_node reads {} and depth_node publishes {}'.format(
-            keypoints['depth_topic'], depth['depth_topic']))
+    odometry = config['/**/odometry_node']['ros__parameters']
+    assert odometry['depth_topic'] == depth['depth_topic'], (
+        'odometry_node reads {} and depth_node publishes {}'.format(
+            odometry['depth_topic'], depth['depth_topic']))
 
 
 def test_keypoints_and_depth_agree_on_where_the_far_clip_is(config):
@@ -691,11 +691,31 @@ def test_keypoints_and_depth_agree_on_where_the_far_clip_is(config):
     contributes a cluster of landmarks at exactly 6 m that appear not to move.
     """
     depth = config['/**/depth_node']['ros__parameters']
-    keypoints = config['/**/keypoint_node']['ros__parameters']
-    assert keypoints['max_depth_m'] == depth['max_range_m'], (
-        'keypoint_node accepts landmarks to {} m and depth clips at {} m'.format(
-            keypoints['max_depth_m'], depth['max_range_m']))
-    assert keypoints['min_depth_m'] < keypoints['max_depth_m']
+    odometry = config['/**/odometry_node']['ros__parameters']
+    assert odometry['max_depth_m'] == depth['max_range_m'], (
+        'odometry_node accepts landmarks to {} m and depth clips at {} m'.format(
+            odometry['max_depth_m'], depth['max_range_m']))
+    assert odometry['min_depth_m'] < odometry['max_depth_m']
+
+
+def test_odometry_reads_the_keypoints_topic_the_detector_publishes(config):
+    """The pair the 2026-09-23 split created, and it fails the same quiet way.
+
+    `keypoint_node` publishes corners and `odometry_node` subscribes to them by
+    name. Nothing relates the two keys but this assertion: a mismatch leaves a
+    node that never sees a corner, holds its pose forever, and publishes an
+    `odom -> base_link` that never moves — which is indistinguishable from a
+    camera sitting still, and produces exactly the mesh a working rotation-only
+    run produces.
+
+    The topic the detector publishes is a string literal in its source rather than
+    a parameter, so this is asserted against the literal: making it configurable on
+    one side only would be a third way for the two to disagree.
+    """
+    odometry = config['/**/odometry_node']['ros__parameters']
+    assert odometry['keypoints_topic'] == '/keypoints', (
+        'odometry_node reads {} and keypoint_node publishes /keypoints'.format(
+            odometry['keypoints_topic']))
 
 
 def test_the_matching_window_spans_the_gap_between_two_depth_frames(config):
@@ -712,14 +732,22 @@ def test_the_matching_window_spans_the_gap_between_two_depth_frames(config):
     room's lighting: the camera drops to ~45 Hz under a manual exposure and depth
     does not, which makes the gap smaller, but a slower GPU or a bigger model
     makes it larger.
+
+    **It spans two nodes since the 2026-09-23 split**, which is what makes it one
+    of the pairs this file exists for rather than a bound on one node's own
+    config: the window belongs to the detector and the history it has to reach
+    across belongs to the estimator, and nothing but this relates them.
     """
     keypoints = config['/**/keypoint_node']['ros__parameters']
-    if keypoints['odometry'] != 'sixdof':
+    odometry = config['/**/odometry_node']['ros__parameters']
+    if odometry['odometry'] != 'sixdof':
         return
     assert keypoints['match_window'] >= 4, (
         'match_window is {} — two depth frames are ~3 camera frames apart'.format(
             keypoints['match_window']))
-    assert keypoints['history_frames'] > keypoints['match_window']
+    assert odometry['history_frames'] > keypoints['match_window'], (
+        'odometry_node keeps {} frames of history and keypoint_node matches over '
+        '{}'.format(odometry['history_frames'], keypoints['match_window']))
 
 
 def test_the_odometry_regime_is_one_of_the_two_that_exist(config):
@@ -730,8 +758,8 @@ def test_the_odometry_regime_is_one_of_the_two_that_exist(config):
     container running, and the committed default is what every gate and every
     viewer picks up.
     """
-    keypoints = config['/**/keypoint_node']['ros__parameters']
-    assert keypoints['odometry'] in ('sixdof', 'rotation_only')
+    odometry = config['/**/odometry_node']['ros__parameters']
+    assert odometry['odometry'] in ('sixdof', 'rotation_only')
 
 
 def test_the_two_world_nodes_agree_on_the_volume_key(config):

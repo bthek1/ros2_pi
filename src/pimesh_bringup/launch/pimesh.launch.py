@@ -94,8 +94,14 @@ COMPONENTS = [
     # The container's one network subscriber. Everything else here reads its
     # output in-process, by pointer.
     ('decode_node', 'pimesh_perception', 'pimesh_perception::DecodeNode'),
-    # ORB on every decoded frame, plus the rotation-only pose.
+    # ORB on every decoded frame: corners, track ids, and each corner's position
+    # one frame earlier.
     ('keypoint_node', 'pimesh_perception', 'pimesh_perception::KeypointNode'),
+    # The pose, from those corners and the depth map below. Split out of
+    # keypoint_node on 2026-09-23 — that node had published two /pipeline/stats
+    # rows since P7 because it was two stages wearing one name. It reads
+    # `/keypoints` in-process, so the split costs a pointer rather than a copy.
+    ('odometry_node', 'pimesh_perception', 'pimesh_perception::OdometryNode'),
     # Monocular depth on the GPU. **This is the pipeline's clock** — a frame costs
     # ~55 ms against a ~17 ms frame interval, measured at 17.42 Hz out of 59 Hz, so
     # it keeps roughly one frame in three and drops the rest through its own
@@ -372,7 +378,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             'odom_regime',
             default_value='sixdof',
-            description="keypoint_node's estimator: sixdof fits a rigid "
+            description="odometry_node's estimator: sixdof fits a rigid "
                         'transform to depth-backed landmarks, rotation_only '
                         'fits bearing rays and publishes zero translation. The '
                         'second is P3\'s estimator, kept as the control run in '

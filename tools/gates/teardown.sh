@@ -113,7 +113,7 @@ RECIPES=(view-camera replay view-keypoints view-depth view-mesh view-odom dashbo
 # to outlive all of that with room to spare.
 #
 # `view-keypoints` plays a bag **once** rather than on a loop (a looping bag
-# replays header stamps minutes into the past, and keypoint_node's pose is then
+# replays header stamps minutes into the past, and odometry_node's pose is then
 # rejected by every TF listener in the domain — tools/replay.sh's header has the
 # measurement). `session_up` for that recipe requires the player, the container
 # *and* the viewer to be running at the same moment, and rviz2 takes several

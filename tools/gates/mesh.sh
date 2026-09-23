@@ -379,7 +379,7 @@ if (( renders > 0 )); then
     ls -1 "$work/views"/*.png 2>/dev/null | sed 's/^/  /'
 fi
 echo
-echo "  What they will *not* show is a room. keypoint_node publishes rotation"
+echo "  What they will *not* show is a room. odometry_node publishes rotation"
 echo "  only, so a hand-held sweep's ~0.9 m of real arm arc is modelled as zero"
 echo "  and the same wall is integrated at a different distance every time the"
 echo "  camera moves — the surface is a shell at roughly constant radius rather"

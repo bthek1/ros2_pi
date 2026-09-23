@@ -21,7 +21,7 @@
 #
 # **A bag plays once here, not on a loop, and that is the one thing about this
 # recipe worth reading.** This view exists to show the pose moving, and a pose
-# and a looping bag are mutually exclusive. `keypoint_node` stamps
+# and a looping bag are mutually exclusive. `odometry_node` stamps
 # `odom -> base_link` with the frame's own stamp, as it must; `--loop` sends
 # those stamps ~60 s into the past at every wrap; and `tf2::BufferCore` rejects
 # any transform older than the newest it holds. Measured 2026-09-13 with
@@ -102,8 +102,9 @@ else
     pi_run_for "$SECONDS_LIMIT" "ros2 run pimesh_camera camera_node" &
 fi
 
-# The container: decode_node and keypoint_node in one process, intra-process comms
-# on, plus the static frame tree keypoint_node takes its optical-to-body basis from.
+# The container: decode_node, keypoint_node and odometry_node in one process,
+# intra-process comms on, plus the static frame tree odometry_node takes its
+# optical-to-body basis from.
 ros2 launch pimesh_bringup pimesh.launch.py >/dev/null 2>&1 &
 
 sleep 3

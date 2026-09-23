@@ -369,7 +369,7 @@ assert_no_session() {   # $1 = this recipe's name, for the message
         echo
         echo "One ROS domain, one pipeline. A second session puts a second publisher on"
         echo "/image_raw/compressed — the Pi's live camera beside a bag's minutes-old"
-        echo "frames — and keypoint_node decodes the mixture and publishes a pose whose"
+        echo "frames — the container decodes the mixture and publishes a pose whose"
         echo "stamps jump back and forth, which floods every TF listener and stutters"
         echo "every viewer. A gate run beside another session measures that mixture and"
         echo "prints a number with nothing in it saying so."

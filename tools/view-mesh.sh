@@ -83,7 +83,7 @@ What you should see, and what each part of it tells you:
   Fixed Frame is **map**, not base_link: the mesh lives in the map frame, and
   viewing it from a camera-attached frame makes a static room appear to swim.
 
-**What this will not look like yet, and why.** keypoint_node publishes rotation
+**What this will not look like yet, and why.** odometry_node publishes rotation
 only — the translation is identically zero — so a hand-held sweep's ~0.9 m of real
 arm arc is modelled as no motion at all. The same wall therefore lands at a
 different distance every time the camera moves, and the volume fills with layers

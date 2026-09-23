@@ -99,26 +99,27 @@
     # forgives detection churn, which strict frame-to-frame matching counts as
     # ~25% of keypoints lost; 64 of 256 Hamming bits is already generous, since
     # unrelated ORB descriptors sit near 128 apart.
+    #
+    # The window is also what spans the gap between two depth frames: at 59 Hz in
+    # and 17 Hz out, consecutive depth maps are ~3 frames apart, so a window under
+    # 4 would leave odometry_node with no correspondences at all.
     max_features: 500
     match_window: 10
     match_max_distance: 64
-    # The pose gates. Failing either means *hold the last pose* — never publish a
-    # guess, because a wrong orientation folds the mesh around it and nothing
-    # downstream can tell which frames were guesses.
-    #
-    # 0.03 rad is 1.7 degrees, ~28 px at fx=953. Note it is not equally sharp in
-    # all three axes: the ray residual of a roll about the optical axis is about a
-    # third of the same angle in pan or tilt, because rays near the axis of
-    # rotation barely move (test_rotation_fit has the measurement).
-    min_matched_pairs: 8
-    max_residual_rad: 0.03
-    reject_fraction: 0.2
     # For a person, not for the pipeline: ~10 Hz of annotated JPEG. Encoding it
     # costs more than detecting the features does, which is why it is capped and
     # why its cost is reported separately in the stats line.
     preview_rate_hz: 10.0
     preview_quality: 80
-    # --- P7: which estimator drives the pose -----------------------------------
+    stats_period_s: 5.0
+
+/**/odometry_node:
+  ros__parameters:
+    # **This block was part of keypoint_node's until 2026-09-23.** That node
+    # published two /pipeline/stats rows because it was two stages wearing one
+    # name; they are two nodes now, and every parameter below moved unchanged.
+    #
+    # --- Which estimator drives the pose (P7) ----------------------------------
     #
     # sixdof pairs each frame's corners with its own depth map and fits a rigid
     # transform to the landmarks; rotation_only is P3's bearing-ray fit, which
@@ -127,11 +128,24 @@
     # that translation improves the surface needs a run without it. Reached
     # through the `odom_regime:=` launch argument rather than by editing this file.
     odometry: sixdof
-    # **Must name depth_node's own depth_topic below.** A mismatch is not a
-    # partial failure: this node would never see a depth map, hold its pose for
-    # the whole session, and look exactly like a camera that is not moving.
-    # test_transforms asserts the pair.
+    # **Must name keypoint_node's published topic and depth_node's own
+    # depth_topic.** A mismatch is not a partial failure: this node would never
+    # see a corner or never see a depth map, hold its pose for the whole session,
+    # and look exactly like a camera that is not moving. test_transforms asserts
+    # both pairs.
+    keypoints_topic: /keypoints
     depth_topic: /depth
+    # The rotation gates. Failing either means *hold the last pose* — never
+    # publish a guess, because a wrong orientation folds the mesh around it and
+    # nothing downstream can tell which frames were guesses.
+    #
+    # 0.03 rad is 1.7 degrees, ~28 px at fx=953. Note it is not equally sharp in
+    # all three axes: the ray residual of a roll about the optical axis is about a
+    # third of the same angle in pan or tilt, because rays near the axis of
+    # rotation barely move (test_rotation_fit has the measurement).
+    min_matched_pairs: 8
+    max_residual_rad: 0.03
+    reject_fraction: 0.2
     # The 6-DoF gates, and they are the point-cloud versions of the three above.
     # 12 pairs rather than 8 because three points already determine a rigid
     # transform exactly, so a handful of them fits its own noise perfectly and
@@ -139,6 +153,7 @@
     # reason the residual is measured in metres: a ray can be at most 180 degrees
     # wrong, while a depth reading off the far side of an occlusion edge is metres
     # out and drags the translation with it.
+    #
     # Estimate the scale difference between two frames' landmarks and throw it
     # away. **Measured, not reasoned**: with it off the estimator reported an
     # 89.5 m path over a 45 s desk sweep and a surface *worse* than rotation-only
@@ -147,12 +162,6 @@
     # fusion_node's aligner exists for the same wobble and hits its 15% clamp on
     # one frame in seven of this clip.
     divide_out_depth_scale: true
-    # Fit the rotation from bearing rays and the translation from the landmarks,
-    # rather than both from the landmarks at once. A pixel is exact to a fraction
-    # of one and a monocular depth reading is not, and solving them together lets
-    # the depth noise into the rotation as well as letting the fit trade one
-    # against the other: measured over a simulated sweep, 0.051 m of per-step
-    # translation error together against 0.016 m apart.
     # pnp | points. pnp poses each frame from the keyframe's 3D landmarks and this
     # frame's *pixels*, so only one depth map is involved and the translation comes
     # from reprojection geometry rather than from differencing two noisy depth maps.
@@ -174,12 +183,6 @@
     # until it does not, and its last surviving correspondences sit in one corner
     # of the frame — the one geometry a translation fit is genuinely bad on.
     keyframe_min_shared: 60
-    # Consecutive depth frames without a usable fit before the reference view is
-    # replaced at the held pose. Without it, losing track once loses it for the
-    # rest of the session: the first version only replaced the reference on a
-    # *successful* fit, and measured on bags/desk1 that froze pose_ok at 188 while
-    # held climbed past 560. Replacing it bakes in the drift of the lost stretch,
-    # which is the better of the two.
     # **The gate a reprojection error cannot supply.** PnP reports how well its
     # pose explains the pixels it was given and has no opinion about whether the
     # 3D points behind them are where the depth network said. Measured on
@@ -189,6 +192,12 @@
     # max_depth_m, so 2.0 m/s is about a third of the visible depth per second.
     max_speed_m_s: 2.0
     max_turn_rad_s: 6.0
+    # Consecutive depth frames without a usable fit before the reference view is
+    # replaced at the held pose. Without it, losing track once loses it for the
+    # rest of the session: the first version only replaced the reference on a
+    # *successful* fit, and measured on bags/desk1 that froze pose_ok at 188 while
+    # held climbed past 560. Replacing it bakes in the drift of the lost stretch,
+    # which is the better of the two.
     max_hold_frames: 5
     # A low-pass on the measured position, in seconds. The one filter in this
     # pipeline, and it is here because the signal and the noise sit in different

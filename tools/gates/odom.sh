@@ -207,7 +207,7 @@ run_regime() {           # $1 = log path, $2 = window seconds, $3 = regime
     }
 
     # Once, not --loop. A looping bag replays header stamps ~60 s into the past at
-    # every wrap; keypoint_node stamps the pose with the frame's own stamp, and
+    # every wrap; odometry_node stamps the pose with the frame's own stamp, and
     # tf2 refuses any transform older than the newest it holds. Both halves of the
     # terminal handling are here for the reason tools/replay.sh documents: a
     # backgrounded `ros2 bag play` that can read its controlling TTY is sent
@@ -233,11 +233,16 @@ probe_value() {          # $1 = log, $2 = key
         } END { print (last == "") ? "" : last }'
 }
 
-# The last keypoint_node window that had frames in it. `rate > 0` is not enough —
+# The last odometry_node window that had frames in it. `rate > 0` is not enough —
 # the last window of a run covers the idle seconds after the clip ended — so this
 # filters on a running rate, the correction gates/fusion.sh paid for.
+#
+# **odometry_node, not keypoint_node, since the 2026-09-23 split.** Every field
+# this reads — regime, traj, shift_ok, reproj_px — was in keypoint_node's line
+# until the pose moved to its own node; the line is otherwise unchanged, which is
+# why only the node name here had to.
 keypoint_value() {       # $1 = log, $2 = key
-    grep -h 'keypoint_node' "$1" | grep -o 'stats regime=.*' |
+    grep -h 'odometry_node' "$1" | grep -o 'stats regime=.*' |
         awk -v key="$2" '{
             delete v
             for (i = 1; i <= NF; ++i) { split($i, kv, "="); v[kv[1]] = kv[2] }

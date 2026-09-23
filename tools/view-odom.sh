@@ -25,7 +25,7 @@
 # startup never returns.
 #
 # **A bag plays once here, not on a loop.** `--loop` sends every header stamp ~60 s
-# into the past at each wrap; keypoint_node stamps the pose with the frame's own
+# into the past at each wrap; odometry_node stamps the pose with the frame's own
 # stamp and tf2 refuses anything older than the newest it holds, so after the first
 # wrap the pose would freeze at the bag's final stamp for the rest of the run. See
 # tools/replay.sh for the measurement.

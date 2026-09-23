@@ -19,7 +19,7 @@
 # desk1`. With no bag it uses the Pi's live camera.
 #
 # **A bag plays once here, not on a loop**, for the reason tools/replay.sh
-# documents at length: keypoint_node is in this container too and stamps
+# documents at length: odometry_node is in this container too and stamps
 # `odom -> base_link` with the frame's own stamp, `--loop` sends those stamps
 # ~60 s into the past at every wrap, and tf2 rejects any transform older than the
 # newest it holds — so the pose freezes and every listener in the domain logs

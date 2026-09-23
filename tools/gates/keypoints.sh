@@ -181,18 +181,26 @@ run_for $(( MEASURE_S + 30 )) ros2 run pimesh_perception keypoint_probe --ros-ar
 # the cost is asserted to be **greater than zero** below, because a per-frame cost
 # of exactly zero is not a measurement of anything.
 #
-# **And the prefix it matches on is `stats regime=`, not `stats rate=`, because
-# P7 put a field in front of the rate.** That is the same lesson from the other
-# side: the first grep was keyed on the *shape* of a log line that a later phase
-# was free to change, and changing it made this gate exit with four lines of
-# output and no verdict at all. `regime=` is first in that line precisely so a
-# reader never has to infer which estimator produced the numbers after it — which
-# makes it a stable thing to key on, but the general point stands: a gate that
-# parses another component's log is coupled to its format, and the coupling is
-# only visible when it breaks.
-stats=$(grep -h 'keypoint_node.*stats regime=' "$work/launch.log" |
+# **The prefix has now changed under this gate twice, which is the finding.** It
+# was `stats rate=`; P7 put `regime=` in front of the rate and the gate exited
+# with four lines of output and no verdict; it became `stats regime=`; and the
+# 2026-09-23 split moved `regime=` out of this node altogether, into
+# odometry_node's own line, leaving `stats rate=` again. A gate that parses
+# another component's log is coupled to that component's *formatting*, and the
+# coupling is invisible until it breaks — twice here, in opposite directions.
+#
+# What makes `stats rate=` safe to key on now is the thing that was missing the
+# first time: the **node name** qualifies it, so a second node logging the same
+# prefix cannot be picked up. That is the part worth carrying; the prefix itself
+# was never the fix.
+stats=$(grep -h 'keypoint_node.*stats rate=' "$work/launch.log" |
         grep -v 'rate=0\.0Hz' | tail -1 | sed 's/.*keypoint_node]: //')
-regime=$(sed -n 's/.*regime=\([a-z_]*\).*/\1/p' <<<"$stats")
+# The regime belongs to odometry_node now, and this gate reports it only to say
+# which estimator's numbers the pose lines below describe.
+regime=$(grep -h 'odometry_node.*stats regime=' "$work/launch.log" |
+         tail -1 | sed -n 's/.*regime=\([a-z_]*\).*/\1/p')
+odom_stats=$(grep -h 'odometry_node.*stats regime=' "$work/launch.log" |
+             grep -v 'rate=0\.0Hz' | tail -1 | sed 's/.*odometry_node]: //')
 
 kill_local
 sleep 1
@@ -227,9 +235,13 @@ cost=$(stat_value cost_mean)
 detect=$(stat_value detect)
 match_ms=$(stat_value match)
 preview=$(stat_value preview)
-reject_rate=$(stat_value reject_rate)
-residual=$(stat_value residual)
 dropped=$(stat_value dropped)
+# From odometry_node's line, not this node's: the rotation chain moved there.
+odom_value() {          # $1 = key -> the value of key=… in odometry_node's line
+    sed -n "s/.*[[:space:]]$1=\([0-9.]*\).*/\1/p" <<<"$odom_stats"
+}
+reject_rate=$(odom_value reject_rate)
+residual=$(odom_value residual)
 
 # --- Did both sides see the same clip? ---------------------------------------
 coverage_pct=$(awk -v seen="${messages:-0}" -v total="$CLIP_FRAMES" \

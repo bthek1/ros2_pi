@@ -35,7 +35,7 @@
 #     that is what made this window flicker.** The comment above said the launch
 #     was started "for the static transforms and nothing else"; it had been true
 #     when it was written and stopped being true when P2 and P3 put decode_node
-#     and keypoint_node into that launch. `keypoint_node` stamps
+#     and odometry_node into that launch. `odometry_node` stamps
 #     `odom -> base_link` with the frame's own stamp, as it must, and `--loop`
 #     sends the frame stamps ~60 s into the past every time the bag restarts.
 #     `tf2::BufferCore::setTransform` then rejects every one of them, because
@@ -145,7 +145,7 @@ What you should see:
 
   map and odom are in the tree with no edge to base_link, and RViz says so.
   That is correct here and not a fault: the edge odom -> base_link is
-  keypoint_node's, and nothing downstream of capture runs in this recipe —
+  odometry_node's, and nothing downstream of capture runs in this recipe —
   a looping bag replays old stamps, and a pose published from them floods
   every TF listener in the domain. The pipeline on this clip is
   \`bash tools/view-keypoints.sh ${SECONDS_LIMIT} $(basename "$BAG")\`.
