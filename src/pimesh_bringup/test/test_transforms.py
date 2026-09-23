@@ -466,7 +466,7 @@ def _override_values(launch_module):
     thing being tested.
     """
     component = launch_module._component(
-        'depth_node', 'pimesh_perception', 'x::Y', '/tmp/params.yaml', [])
+        'depth_node', 'pimesh_frontend', 'x::Y', '/tmp/params.yaml', [])
     overrides = [p for p in component.parameters if isinstance(p, dict)]
     assert len(overrides) == 1, 'the override dict is the second parameters entry'
 
@@ -766,7 +766,7 @@ def test_the_two_world_nodes_agree_on_the_volume_key(config):
     """**The sharpest of these, because it fails completely and says nothing.**
 
     `fusion_node` and `mesh_node` share the TSDF through a process-local registry
-    keyed by this string — see `pimesh_world/shared_volume.hpp` for why it is
+    keyed by this string — see `pimesh_mapping/shared_volume.hpp` for why it is
     shared memory rather than a topic. A mismatch is not a partial failure: it is
     two separate volumes, one of which is filled and never meshed and one of which
     is meshed and never filled. `/world/mesh` then stays empty for the life of the
@@ -838,10 +838,15 @@ def test_the_marker_cap_is_a_cap_and_not_a_target(config):
 # Every package pimesh.launch.py composes a component from. A second package
 # joined this list at P5 and the fixture below silently stopped covering half the
 # parameters until it did — which is the very failure that fixture exists to
-# catch, one level up.
+# catch, one level up. **A third joined at #14's P2**, when depth split out of
+# the perception package into pimesh_depth, and this list is what noticed: with
+# depth_node's declare_parameter calls no longer under any scanned directory,
+# every one of its YAML keys read as a parameter nobody declares. That is the
+# check working, and it is the only thing in the suite that saw the split at all.
 _COMPONENT_SRC = [
-    os.path.join(_HERE, '..', '..', 'pimesh_perception', 'src'),
-    os.path.join(_HERE, '..', '..', 'pimesh_world', 'src'),
+    os.path.join(_HERE, '..', '..', 'pimesh_frontend', 'src'),
+    os.path.join(_HERE, '..', '..', 'pimesh_depth', 'src'),
+    os.path.join(_HERE, '..', '..', 'pimesh_mapping', 'src'),
 ]
 
 
@@ -933,7 +938,7 @@ def test_the_keypoints_stream_is_deep_at_both_ends():
     """
     import re
 
-    src = os.path.join(_HERE, '..', '..', 'pimesh_perception', 'src')
+    src = os.path.join(_HERE, '..', '..', 'pimesh_frontend', 'src')
     floor = 30
 
     def depths(filename, variable):

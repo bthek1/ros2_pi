@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pimesh_core</name>
+  <version>0.1.0</version>
+  <description>
+    The three helpers more than one stage needs: a single-slot mailbox, a cv::Mat
+    header laid over a ROS image without copying it, and the percentile and hash
+    every probe reports its numbers through.
+
+    It exists because they were already crossing a package boundary. Before #14's
+    P2 they lived in pimesh_perception, and pimesh_world — which has nothing else
+    to do with perception — included all three of them: a mapping package
+    depending on a perception one for a percentile. Splitting depth out of
+    perception would have made that three consumers across three boundaries, so
+    the question "do these have a home of their own" stopped being a preference
+    and got answered by the include graph.
+
+    Header-only on purpose. There is no library target here, only headers and
+    their tests: nothing in it needs linking, and a package that cannot fail to
+    link is one fewer thing for the two distros to disagree about.
+
+    pimesh_camera keeps its own copy of the percentile and the hash rather than
+    depending on this. That is deliberate and written down in its header: the Pi's
+    package pointing at a dev-box one would be an edge running the wrong way down
+    the pipeline for the sake of twelve lines.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>sensor_msgs</depend>
+  <depend>libopencv-dev</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

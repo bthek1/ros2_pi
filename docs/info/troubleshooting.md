@@ -150,7 +150,7 @@ Four causes, in the order they have actually happened:
    libcublasLt.so.13: cannot open shared object file
    ```
 
-   The fix is in `preload_cuda_provider()` (`src/pimesh_perception/src/depth_engine_ort.cpp`):
+   The fix is in `preload_cuda_provider()` (`src/pimesh_depth/src/depth_engine_ort.cpp`):
    load the CUDA libraries **by absolute path** before ONNX Runtime asks for them,
    so its `DT_NEEDED` entries are satisfied from what is already in the process and
    no search happens at all. `LD_LIBRARY_PATH` is not an option — it is read once
@@ -335,7 +335,7 @@ lock is a rate limit on everything that lock protects. Setting every
 `Covariance -> Value: false` in `rviz/odom.rviz` does **not** help; the
 decomposition happens on receipt, not on draw.
 
-The fix is `unconstrained_covariance()` in `pimesh_perception/rgbd_odometry.hpp`:
+The fix is `unconstrained_covariance()` in `pimesh_frontend/rgbd_odometry.hpp`:
 a large diagonal, which is positive definite and is the conventional spelling of
 "this dimension is unconstrained". Not zeros — that is legal but reads to a
 fusion filter as a *perfectly certain* pose, which is the stronger false claim.
@@ -669,7 +669,7 @@ outside:
   two separate volumes, one filled and never meshed;
 - `mesh_node` is in a **different process** — started with `ros2 run`, or loaded
   into a second container. The registry is process-local by construction; see
-  `pimesh_world/shared_volume.hpp` for why the volume is shared by pointer rather
+  `pimesh_mapping/shared_volume.hpp` for why the volume is shared by pointer rather
   than published, and why this limitation is deliberate rather than an oversight;
 - `mesh_min_weight` is above `max_weight`, so no voxel can ever reach it.
 

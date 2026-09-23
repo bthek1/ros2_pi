@@ -36,7 +36,7 @@ import numpy as np
 
 
 def read_ply(path):
-    """Read the binary little-endian PLY that pimesh_world writes.
+    """Read the binary little-endian PLY that pimesh_mapping writes.
 
     Deliberately narrow: it reads what `write_ply` produces and refuses anything
     else. A forgiving reader that silently mis-parses another dialect would make

@@ -80,7 +80,7 @@ STATIC_TRANSFORMS = ['map_to_odom', 'base_to_camera', 'camera_to_optical']
 # mis-keyed parameter silently applies nothing, and a mis-spelled plugin fails at
 # launch.
 #
-# **The package was a hard-coded 'pimesh_perception' until P5**, which was correct
+# **The package was a hard-coded 'pimesh_frontend' until P5**, which was correct
 # for exactly as long as one package supplied every component. It is in the tuple
 # now because the alternative — deriving it from the plugin's namespace — is a
 # convention nothing enforces, and the failure it would hide is a container
@@ -93,15 +93,15 @@ STATIC_TRANSFORMS = ['map_to_odom', 'base_to_camera', 'camera_to_optical']
 COMPONENTS = [
     # The container's one network subscriber. Everything else here reads its
     # output in-process, by pointer.
-    ('decode_node', 'pimesh_perception', 'pimesh_perception::DecodeNode'),
+    ('decode_node', 'pimesh_frontend', 'pimesh_frontend::DecodeNode'),
     # ORB on every decoded frame: corners, track ids, and each corner's position
     # one frame earlier.
-    ('keypoint_node', 'pimesh_perception', 'pimesh_perception::KeypointNode'),
+    ('keypoint_node', 'pimesh_frontend', 'pimesh_frontend::KeypointNode'),
     # The pose, from those corners and the depth map below. Split out of
     # keypoint_node on 2026-09-23 — that node had published two /pipeline/stats
     # rows since P7 because it was two stages wearing one name. It reads
     # `/keypoints` in-process, so the split costs a pointer rather than a copy.
-    ('odometry_node', 'pimesh_perception', 'pimesh_perception::OdometryNode'),
+    ('odometry_node', 'pimesh_frontend', 'pimesh_frontend::OdometryNode'),
     # Monocular depth on the GPU. **This is the pipeline's clock** — a frame costs
     # ~55 ms against a ~17 ms frame interval, measured at 17.42 Hz out of 59 Hz, so
     # it keeps roughly one frame in three and drops the rest through its own
@@ -109,17 +109,17 @@ COMPONENTS = [
     # unconditionally, like everything else here, because the container is
     # everything or nothing: the components share one process precisely so that a
     # 2.7 MB frame reaches all three of them as a pointer.
-    ('depth_node', 'pimesh_perception', 'pimesh_perception::DepthNode'),
+    ('depth_node', 'pimesh_depth', 'pimesh_depth::DepthNode'),
     # The TSDF. **This is where the pipeline stops being a stream and starts
     # remembering** — and it is in this container rather than a process of its own
     # for a reason one size up from the frame handover: what it produces is a
     # volume of hundreds of megabytes whose only consumer is mesh_node, in this
-    # same process. See pimesh_world/shared_volume.hpp.
-    ('fusion_node', 'pimesh_world', 'pimesh_world::FusionNode'),
+    # same process. See pimesh_mapping/shared_volume.hpp.
+    ('fusion_node', 'pimesh_mapping', 'pimesh_mapping::FusionNode'),
     # Marching cubes over a snapshot of that volume, on a timer. In this container
     # because it has to be: it reads the volume by pointer, and a mesh_node in
     # another process finds no volume at all and says so.
-    ('mesh_node', 'pimesh_world', 'pimesh_world::MeshNode'),
+    ('mesh_node', 'pimesh_mapping', 'pimesh_mapping::MeshNode'),
 ]
 
 # Nodes that run as their own process rather than in the container, as
@@ -158,14 +158,14 @@ STANDALONE_NODES = [
 PROBE_COMPONENTS = [
     # tools/gates/ipc.sh: compares the buffer address decode_node published
     # against the one a subscriber received.
-    ('ipc_probe', 'pimesh_perception', 'pimesh_perception::IpcProbe'),
+    ('ipc_probe', 'pimesh_frontend', 'pimesh_frontend::IpcProbe'),
     # tools/gates/depth.sh: the depth rate on its own steady clock, and whether
     # /depth/rgb is byte-identical to the frame each depth map was inferred on.
-    ('depth_probe', 'pimesh_perception', 'pimesh_perception::DepthProbe'),
+    ('depth_probe', 'pimesh_depth', 'pimesh_depth::DepthProbe'),
     # tools/gates/odom.sh: the trajectory as published, off /odom — the path
     # length, the net displacement, and above all the largest single step, which
     # is the number a mean hides.
-    ('odom_probe', 'pimesh_perception', 'pimesh_perception::OdomProbe'),
+    ('odom_probe', 'pimesh_frontend', 'pimesh_frontend::OdomProbe'),
 ]
 
 

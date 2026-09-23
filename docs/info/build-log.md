@@ -60,7 +60,7 @@ which is the assertion that `usb_cam` 0.8.1 fails by hundreds of milliseconds.
 
 **Decode and keypoints are built, and milestone B is closed as of 2026-09-13** —
 P2 and P3, [gh issue #5](https://github.com/bthek1/ros2_pi/issues/5).
-`pimesh_perception` joins the four packages: one container, one network subscriber,
+`pimesh_frontend` joins the four packages: one container, one network subscriber,
 `cv::imdecode` at **1.87–1.93 ms/frame** keeping up with the Pi's full 59.4 Hz, and
 the decoded 2.7 MB buffer reaching its consumers at the address it was published
 from — **529/529** with intra-process comms on against **0/387** with it off
@@ -163,7 +163,7 @@ being correct and irrelevant once the code moved into a container.
 
 **Milestone D is closed as of 2026-09-16 — the room is a triangle surface.**
 P5 and P6, [gh issue #7](https://github.com/bthek1/ros2_pi/issues/7).
-`pimesh_world` joins the workspace: a spatially hashed TSDF at 15 mm voxels with
+`pimesh_mapping` joins the workspace: a spatially hashed TSDF at 15 mm voxels with
 4 voxels of truncation and a weight threshold of 3, the predecessor's high-pass
 scale aligner ported to C++, and marching cubes over a snapshot of the volume.
 `bash tools/gates/fusion.sh` reports **15.3 ms per integration** against a 20 ms

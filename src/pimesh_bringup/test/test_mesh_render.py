@@ -101,7 +101,7 @@ def _cube(half=0.5):
 
 
 def _ply_bytes(vertices, colours, triangles):
-    """The exact binary layout `pimesh_world::write_ply` produces.
+    """The exact binary layout `pimesh_mapping::write_ply` produces.
 
     Written out here from the format rather than produced by the C++ writer,
     because a Python test that shelled out to a C++ binary would be testing the
@@ -112,7 +112,7 @@ def _ply_bytes(vertices, colours, triangles):
     header = (
         'ply\n'
         'format binary_little_endian 1.0\n'
-        'comment written by pimesh_world\n'
+        'comment written by pimesh_mapping\n'
         f'element vertex {len(vertices)}\n'
         'property float x\nproperty float y\nproperty float z\n'
         'property uchar red\nproperty uchar green\nproperty uchar blue\n'

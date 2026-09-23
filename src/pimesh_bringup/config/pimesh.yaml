@@ -320,7 +320,7 @@
     world_frame: map
     optical_frame: camera_optical_frame
     # Which process-local volume this fills. mesh_node reads the same key and a
-    # mismatch is two volumes and an empty mesh — see pimesh_world/shared_volume.hpp
+    # mismatch is two volumes and an empty mesh — see pimesh_mapping/shared_volume.hpp
     # for why the two nodes share memory rather than a topic.
     volume_key: world
     # P5's numbers. 15 mm voxels keep a desk edge; 4 voxels of truncation is 6 cm
@@ -387,7 +387,7 @@
     mesh_topic: /world/mesh
     world_frame: map
     # Must match fusion_node's volume_key above. A mismatch is two volumes and a
-    # mesh that is silently always empty — see pimesh_world/shared_volume.hpp for
+    # mesh that is silently always empty — see pimesh_mapping/shared_volume.hpp for
     # why these two nodes share memory rather than a topic.
     volume_key: world
     marker_ns: world_mesh

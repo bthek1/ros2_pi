@@ -701,7 +701,7 @@ strong priors, re-verify before quoting a number as this project's own.
   FNV-1a twice, each in an anonymous namespace inside a file with a ROS node in it
   — unreachable by any test and free to drift apart. Every gate in this project
   prints a number that comes out of one of them. They now live in
-  `pimesh_perception/stats.hpp` with `test_stats` behind them; `pimesh_camera`
+  `pimesh_core/stats.hpp` with `test_stats` behind them; `pimesh_camera`
   keeps its own copy on purpose, because a dependency edge from the Pi's package to
   a dev-box one would point the wrong way down the pipeline for the sake of twelve
   lines, and that cost is written down in the header rather than discovered later.
@@ -910,8 +910,18 @@ strong priors, re-verify before quoting a number as this project's own.
 ## Conventions
 
 - **This repo is the colcon workspace.** Packages go in `src/`, named
-  `pimesh_<thing>` — six exist: `pimesh_msgs`, `pimesh_bringup`, `pimesh_camera`,
-  `pimesh_perception`, `pimesh_world` and, since 2026-09-19, `pimesh_dashboard`.
+  `pimesh_<thing>` — eight exist: `pimesh_msgs`, `pimesh_bringup`,
+  `pimesh_camera`, `pimesh_dashboard`, and — since #14's P2 on 2026-09-23 —
+  `pimesh_core`, `pimesh_frontend`, `pimesh_depth` and `pimesh_mapping`, which
+  are `pimesh_perception` split in two and `pimesh_world` renamed. **The prefix
+  stays and the suffix has to say what is inside**: `pimesh_perception` was four
+  stages in one package and `pimesh_world` said nothing at all, while
+  `pimesh_camera` and `pimesh_dashboard` already named their contents and were
+  left alone. `pimesh_core` is the three helpers more than one stage needs —
+  `Mailbox`, the `cv::Mat` view over a message, and the percentile — and it
+  exists because the include graph said so rather than because symmetry did:
+  `pimesh_world` was already reaching into `pimesh_perception` for all three, a
+  mapping package depending on a perception one for a percentile.
   A seventh, `pimesh_hello`, was the scaffolding reference and was **deleted
   2026-09-23** along with four of its five gates, once `gates/build.sh`,
   `gates/ipc.sh` and `gates/capture.sh` covered the same claims on the real
@@ -924,7 +934,7 @@ strong priors, re-verify before quoting a number as this project's own.
   C++20 spelling or a Lyrical-only header slipping into it. Its node is also the
   one dev-box node outside the container, because the promise it makes is *it
   must be able to die* and a component there would take the TSDF with it.
-  **`pimesh_perception` builds on the Pi too, and the GPU code
+  **`pimesh_depth` builds on the Pi too, and the GPU code
   inside it is why that took arranging**: `depth_node`, its registration and its
   parameters are identical on both machines, and only the inference engine behind
   a `DepthEngine` interface is conditional — `depth_engine_ort.cpp` where CMake

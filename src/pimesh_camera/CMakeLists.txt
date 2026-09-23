@@ -22,7 +22,7 @@ find_package(sensor_msgs REQUIRED)
 # **The one dependency this package has on something the dev box also needs**, and
 # it is an interface package rather than a library, which is the whole distinction.
 # `pimesh_camera` deliberately keeps its own copy of small helpers rather than
-# depending on `pimesh_perception` — a code edge from the Pi's package to a
+# depending on `pimesh_frontend` — a code edge from the Pi's package to a
 # dev-box one points the wrong way down the pipeline. A `.msg` is different: it is
 # the *contract* the dashboard reads, the Pi already builds this package (a
 # generated typesupport .so is not portable across distros, which is why), and

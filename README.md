@@ -37,33 +37,33 @@ reason given below:
   kernel's capture time, **44–59 Hz received on the dev box**, serving real
   intrinsics on `/camera_info` (fx=953.4, fy=957.6, held-out reprojection
   0.4955 px).
-- **Decode** (`pimesh_perception`, here) — the container's *one* subscriber on the
+- **Decode** (`pimesh_frontend`, here) — the container's *one* subscriber on the
   only topic that crosses Wi-Fi, `cv::imdecode` at **1.90 ms/frame**, handing the
   2.7 MB frame to its consumers as a pointer: **504/504** buffer addresses matched
   with intra-process comms on against **0/395** with it off.
-- **Keypoints** (`pimesh_perception`, here) — ORB at 500 features with pooled
+- **Keypoints** (`pimesh_frontend`, here) — ORB at 500 features with pooled
   matching over a 10-frame window, **57.8 Hz sustained at 6.82 ms/frame** with
   depth and odometry running beside it, publishing corners, track ids and each
   corner's position one frame earlier.
-- **Pose** (`pimesh_perception`, here) — **the tracking front end**, `odometry_node`:
+- **Pose** (`pimesh_frontend`, here) — **the tracking front end**, `odometry_node`:
   `cv::solvePnPRansac` against the newest keyframe's 3D landmarks, **1.37 px mean
   inlier reprojection over 94 inliers on 81.6% of depth frames**, 16.6 Hz. It
   holds its last pose rather than guessing when its gates fail, and refuses a fit
   whose *motion* is implausible even when the fit itself is confident — a
   reprojection error cannot tell you the 3D points were where the depth network
   claimed. `rotation_only` stays selectable as the control run.
-- **Depth** (`pimesh_perception`, here, on the GPU) — Depth Anything V2 Small at
+- **Depth** (`pimesh_depth`, here, on the GPU) — Depth Anything V2 Small at
   518² through ONNX Runtime's CUDA execution provider, **55.1 ms/frame and
   17.4 Hz** against an 80 ms budget, publishing `/depth` in metres alongside
   `/depth/rgb` — the exact frame each map was inferred on, **1048/1048 measured
   byte-identical**. The metres are the right *shape* and an arbitrary *size*:
   monocular depth is scale-ambiguous until something measures a known distance.
-- **Fusion** (`pimesh_world`, here) — a spatially hashed TSDF at 15 mm voxels,
+- **Fusion** (`pimesh_mapping`, here) — a spatially hashed TSDF at 15 mm voxels,
   **15.3 ms per integration** against a 20 ms budget and **17.1 Hz** sustained,
   with every frame posed at its own capture stamp and paired with the exact colour
   frame its depth was inferred on: 1030 of 1030 frames offered actually
   integrated, 0.19% displaced, 0 without a pose, 0 without a colour twin.
-- **Surface** (`pimesh_world`, here) — marching cubes over a chunked snapshot of
+- **Surface** (`pimesh_mapping`, here) — marching cubes over a chunked snapshot of
   the volume every ten seconds, on a niced thread: **790 668 triangles in 2.8 s**,
   debris pruned, interior holes fanned shut with **every component's frontier left
   open**, decimated to **120 000** for `/world/mesh` and written full-detail as a

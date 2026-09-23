@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pimesh_depth</name>
+  <version>0.1.0</version>
+  <description>
+    Monocular depth on the GPU: Depth Anything V2 Small at 518², publishing
+    metres on /depth and the colour frame it was inferred from on /depth/rgb.
+    This is the pipeline's clock — ~55 ms a frame against a ~17 ms frame
+    interval, so it keeps roughly one frame in three and drops the rest through
+    its own one-slot mailbox.
+
+    It builds on the Pi, where it can never run, and that is deliberate rather
+    than sloppy. depth_node, its registration and its parameters are identical on
+    both machines; only the engine behind the DepthEngine interface is
+    conditional — depth_engine_ort.cpp where CMake found ONNX Runtime,
+    depth_engine_null.cpp where it did not. So the Pi builds a depth_node that
+    refuses to start with a message saying why, which is correct for a node that
+    machine must never run, and pimesh_bringup's test_transforms can go on
+    asserting that every plugin string in the launch file resolves in the ament
+    index *at both ends*. Building it only where the GPU stack exists would
+    weaken that check on the machine where it matters least, by weakening it
+    everywhere.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>sensor_msgs</depend>
+  <depend>pimesh_msgs</depend>
+  <depend>pimesh_core</depend>
+  <depend>libopencv-dev</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

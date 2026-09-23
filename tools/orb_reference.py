@@ -107,7 +107,7 @@ class PooledTracker:
     would in a node. It holds no image and no bag: `observe` takes descriptors and
     returns who each one turned out to be.
 
-    Deliberately *not* shared with `pimesh_perception/orb_tracker.hpp`. The gate
+    Deliberately *not* shared with `pimesh_frontend/orb_tracker.hpp`. The gate
     compares the two, and two implementations sharing their matching code agree
     with each other whatever either of them does.
     """

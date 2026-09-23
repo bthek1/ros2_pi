@@ -159,7 +159,7 @@ timeout -s INT $(( MEASURE_S + 30 )) ros2 bag play "$BAG" \
     --disable-keyboard-controls </dev/null >"$work/play.log" 2>&1 &
 
 # Claim 1 and 3, from the messages themselves.
-run_for $(( MEASURE_S + 30 )) ros2 run pimesh_perception keypoint_probe --ros-args \
+run_for $(( MEASURE_S + 30 )) ros2 run pimesh_frontend keypoint_probe --ros-args \
     -p duration_s:="${MEASURE_S}.0" -p warmup_frames:="$WARMUP_FRAMES" \
     >"$work/probe.out" 2>"$work/probe.err" || true
 

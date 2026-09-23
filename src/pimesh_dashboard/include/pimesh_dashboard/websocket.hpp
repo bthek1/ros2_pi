@@ -10,7 +10,7 @@
 /// The wire format, with no ROS and no sockets in it.
 ///
 /// **Hand-written rather than vendored, and the reason is the same one that keeps
-/// `cv::aruco` out of `pimesh_perception`.** A single-header WebSocket library
+/// `cv::aruco` out of `pimesh_frontend`.** A single-header WebSocket library
 /// would be a third dependency that has to exist, behave identically and be
 /// packaged on **both** Ubuntu 24.04/Jazzy and 26.04/Lyrical — and this workspace
 /// has already lost an afternoon to an API that existed at both ends and meant

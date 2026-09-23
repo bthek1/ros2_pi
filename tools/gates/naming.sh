@@ -88,12 +88,32 @@ for cls, where in sorted(reg.items()):
         continue
     bad.append((cls, where))
 
+# **The package field and the plugin's namespace must agree**, and nothing but
+# this says so. The container looks the class up in the ament index of the
+# package the *second* field names, so a plugin string that is right beside a
+# package field that is wrong fails at launch with "could not find class" and
+# builds perfectly. This is not deriving one from the other — the launch file
+# explains at length why it does not do that — it is checking that the two
+# things somebody typed twice still say the same thing.
+#
+# Added 2026-09-23 after #14's P2 produced exactly that pair: splitting depth out
+# left ('depth_node', 'pimesh_frontend', 'pimesh_depth::DepthNode') behind, and
+# the first version of this check passed over it, because every registered class
+# was named by a launch list. Ask what the gate does not touch.
+mismatched = [(n, pkg, plug) for n, pkg, plug in tuples
+              if '::' in plug and plug.split('::')[0] != pkg]
+
 print(f"   {len(reg)} registered components, {len(plugins)} plugin strings in the launch lists")
 for cls, reason in sorted(EXEMPT.items()):
     print(f"   exempt: {cls} — {reason}")
 for cls, where in bad:
     print(f"   DANGLING: {cls} registered in {where}, named by no launch list and not exempt")
-sys.exit(1 if bad else 0)
+for n, pkg, plug in mismatched:
+    print(f"   MISMATCH: {n} is listed under package '{pkg}' but its plugin is '{plug}' — "
+          f"the container will look for it in the wrong package's index")
+print(f"   {len(tuples)} launch entries, {len(mismatched)} with a package that "
+      f"disagrees with the plugin namespace")
+sys.exit(1 if bad or mismatched else 0)
 PYA
 [[ $? -eq 0 ]] || note "a registered component is reachable from no launch list"
 

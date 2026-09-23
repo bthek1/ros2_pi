@@ -88,7 +88,7 @@ loader chain of its own. Same libraries, same flags, one container apart:
 
 So `depth_node` loads the CUDA libraries itself, by absolute path, before ONNX
 Runtime asks for them — `preload_cuda_provider()` in
-`src/pimesh_perception/src/depth_engine_ort.cpp`. Their `DT_NEEDED` entries are
+`src/pimesh_depth/src/depth_engine_ort.cpp`. Their `DT_NEEDED` entries are
 then satisfied from what is already in the process and no search happens.
 `bash tools/gates/depth.sh` is what covers this, because `gates/gpu-stack.sh`
 structurally cannot: its instrument is an executable.
