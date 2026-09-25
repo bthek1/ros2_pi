@@ -56,10 +56,21 @@ TumPose sample()
   return p;
 }
 
+/// A path in the temp directory, **guaranteed not to exist yet**.
+///
+/// The guarantee is the point. Three cases below assert that a *refused*
+/// trajectory leaves no file behind, and `::rand()` is not seeded — so the same
+/// name comes back on every run of this binary, and a file left there by anything
+/// earlier would make those assertions pass or fail for a reason that has nothing
+/// to do with the code. Found 2026-09-25, when a mutation run left one behind and
+/// the next clean run of this suite reported two failures over correct code.
 std::string temp_path()
 {
-  return (std::filesystem::temp_directory_path() /
-         ("pimesh_traj_" + std::to_string(::rand()) + ".tum")).string();
+  const std::string path =
+    (std::filesystem::temp_directory_path() /
+    ("pimesh_traj_" + std::to_string(::rand()) + ".tum")).string();
+  std::filesystem::remove(path);
+  return path;
 }
 
 std::vector<std::string> lines_of(const std::string & path)

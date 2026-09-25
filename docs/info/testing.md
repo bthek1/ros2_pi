@@ -52,12 +52,12 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 477 tests across thirty-one suites, identical on both distros**
+**Status: 478 tests across thirty-one suites, identical on both distros**
 (`bash tools/gates/test.sh`, 2026-09-25).
 
 ## The suites
 
-477 across thirty-one suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+478 across thirty-one suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
 
 **`test_depth_patch`** (added 2026-09-25, #10's P12) covers the statistic this
 project's *unit* comes out of. `tools/gates/scale.sh` divides a tape measure by
@@ -153,7 +153,70 @@ A check nobody has seen fail is not an assertion. Every suite added since
 21 deliberate breakages for the dashboard's three, six for `test_orb_reference`,
 two for `test_orb_tracker`'s parallel-array pair, three for `test_keypoints_view`
 (restore the unclamped loops, alias the descriptors instead of copying them, stop
-skipping the NaN holes) and one for the `/keypoints` queue depth. Twice this has caught a *check*
-that could not fail: `gates/justfile.sh`'s argument check captured stdout when
-`just -n` writes to stderr, and reported "0 recipes lose an argument" over five
-that did.
+skipping the NaN holes) and one for the `/keypoints` queue depth.
+
+**It keeps catching *checks* that could not fail**, which is the return that
+justifies the practice. `gates/justfile.sh`'s argument check captured stdout when
+`just -n` writes to stderr, and printed "0 recipes lose an argument" over five
+that did. The 2026-09-25 sweep below found the first one that was a **unit test**
+rather than a gate's instrument.
+
+**Milestone F's four suites were swept on 2026-09-25: 55 deliberate breakages,
+all caught** — 36 mutations of the code, 17 of the YAML (10 malformed markers and
+7 mis-keyed pairs), and 2 divergences between the two copies of the marker's
+grammar. The breakdown is 8 for
+`test_tum_trajectory`, 10 for `test_depth_patch`, 12 for `test_dataset_reader` and
+6 for the `quartiles` additions to `test_stats`. Every one of the obvious wrong
+versions is in there — the quaternion written `w x y z`, `%g` on the timestamp,
+`std::stod(text) * 1e9`, far-clip values counted as distances, the patch anchored
+at the origin, the clip boundary made exclusive, equal timestamps allowed through.
+
+**And it found four things, which is the return on doing it.**
+
+**A third check that could not fail, and this time a unit test.**
+`Percentile.DoesNotDisturbTheCallersVector` has been in this suite since it was
+written, with a comment claiming to be "the test that keeps it that way" about the
+by-value signature. It is not: changing the parameter to `std::vector<double> &`
+does not fail that test, it fails to *compile*, at five other cases in the same
+file that pass a temporary. A reference overload is ambiguous at the same places.
+So the property was enforced — but by an accident of which cases happen to exist,
+which a future refactor could remove without noticing. The contract is now a
+`static_assert` on each signature, carrying its own message, and the two runtime
+tests say what they actually cover: a body that reaches around the parameter.
+**The comment was the problem as much as the gap** — this project has been here
+before, with `sensor_msgs/Imu`'s covariance sentinel attributed to `nav_msgs` in a
+code comment that was taken as a citation.
+
+**A test whose subject is a file, asserting a file cannot exist.**
+`test_tum_trajectory` checks that a *refused* trajectory leaves no file behind,
+using a temp path built from an unseeded `::rand()` — so the same name every run.
+A mutation deliberately left a file there, and the next clean run reported two
+failures over correct code. `temp_path()` now removes the path before returning
+it, which makes the precondition part of the fixture instead of part of the
+weather.
+
+**Two copies of one grammar, with nothing relating them.** The
+`depth_scale_reference` comment is parsed by `tools/gates/scale.sh` and validated
+by `test_transforms`, in two regexes that agreed only because one person wrote
+both. A divergence is quiet in the worse direction: a test looser than the gate
+accepts a marker the gate then cannot find, and the gate refuses with "no measured
+distance recorded" about a line sitting right there. `test_transforms` now reads
+the gate's regex out of the shell script and asserts it is the same string —
+`test_dashboard_contract`'s method, applied to a second pair.
+
+**The seven YAML-pair cases in `test_transforms` were swept the same way** — each
+key mutated to a plausible wrong value — and all seven were caught by the test
+that claims them: a probe reading a topic nobody publishes, a probe told a
+different far clip from the map it is reading, a dataset publishing where nothing
+decodes, one stamping the body frame instead of the optical one, one serving the
+C922's calibration, and a trajectory written in a frame the tree does not publish.
+None of those is a loud failure at runtime; each is a pipeline that runs and a
+number that means something else.
+
+**And one thing that is correct and reads as a gap.**
+`Quartiles.AgreeWithPercentileAtEverySampleCount` cannot catch a wrong
+`percentile_index`, because both sides call it and a wrong rank moves them
+together. That is what sharing the formula is *for*; the `Percentile.*` cases
+cover it, and clamping the index one rank low fails three of them while the
+agreement test passes. It is written into the test, because "the two agree" reads
+like it covers more than it does.

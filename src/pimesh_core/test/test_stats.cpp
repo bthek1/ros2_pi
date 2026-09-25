@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <numeric>
+#include <type_traits>
 #include <utility>
 #include <random>
 #include <vector>
@@ -28,6 +29,30 @@ using pimesh_core::fnv1a;
 using pimesh_core::percentile;
 
 // --- percentile: the edges ---------------------------------------------------
+
+// --- The by-value signatures, asserted at compile time -----------------------
+//
+// **Both helpers take their vector by value, and until 2026-09-25 the tests that
+// claimed to keep it that way could not fail.** The claim is real — callers hand
+// these live accumulators they go on appending to, and a reference parameter
+// would partially sort a probe's sample buffer on every report — but mutating
+// either signature to `std::vector<double> &` does not produce a failing test. It
+// produces a *compile error*, because other cases in this file pass rvalues, and
+// `Quartiles.DoNotReorderTheCallersVector` likewise cannot fire: an overload
+// taking a reference is ambiguous at those same call sites.
+//
+// That protection is an accident of which cases happen to exist here. Deleting an
+// unrelated test that passes a temporary would quietly remove it. So the contract
+// is stated directly, where breaking it names itself:
+static_assert(
+  std::is_same<decltype(pimesh_core::percentile), double(std::vector<double>, double)>::value,
+  "percentile must take its vector BY VALUE — callers pass live accumulators they "
+  "go on appending to, and a reference would partially sort a probe's samples on "
+  "every report");
+static_assert(
+  std::is_same<decltype(pimesh_core::quartiles),
+    pimesh_core::Quartiles(std::vector<double>)>::value,
+  "quartiles must take its vector BY VALUE, for percentile's reason");
 
 TEST(Percentile, EmptyIsZeroRatherThanNaN)
 {
@@ -71,12 +96,18 @@ TEST(Percentile, DoesNotDependOnTheInputOrder)
 
 TEST(Percentile, DoesNotDisturbTheCallersVector)
 {
-  // **Taken by value on purpose, and this is the test that keeps it that way.**
-  // The callers hand it live accumulators they go on appending to between reports
-  // — depth_probe's intervals_, keypoint_probe's matched_. Changing the signature
-  // to a reference is a one-character tidy-up that would partially sort a probe's
-  // sample buffer on every report, quietly reordering data that later reports are
-  // still measuring.
+  // The callers hand this live accumulators they go on appending to between
+  // reports — depth_probe's intervals_, scale_probe's medians_ — so a partial sort
+  // of the caller's buffer would quietly reorder data that later reports are still
+  // measuring.
+  //
+  // **This is not the test that keeps the signature by value; the static_assert
+  // above is.** Measured 2026-09-25: changing the parameter to
+  // `std::vector<double> &` does not fail here, it fails to *compile*, at the five
+  // other cases in this file that pass a temporary. What this covers is the
+  // remaining way the property can break while still compiling — a body that
+  // reaches around the parameter, with a `const_cast` or a static scratch buffer.
+  // Narrow, and worth one assertion.
   std::vector<double> values{5.0, 1.0, 9.0, 3.0, 7.0};
   const std::vector<double> before = values;
 
@@ -228,6 +259,14 @@ TEST(Quartiles, AgreeWithPercentileAtEverySampleCount)
   // integer), so a reimplementation agrees on most counts and disagrees on a few.
   // n = 4, 8, 12, 20, 100 are exactly the ones where `fraction * n` is an integer
   // for at least one quartile.
+  //
+  // **What this test cannot catch, by construction: a change to
+  // `percentile_index` itself.** Both sides call it, so a wrong rank moves them
+  // together and they go on agreeing. That is not a gap — it is the point of
+  // sharing the formula — and the `Percentile.*` cases above are what cover it.
+  // Measured 2026-09-25 by clamping `percentile_index` one rank low: this test
+  // passed and three of those failed. Worth stating, because "the two agree" reads
+  // like it covers more than it does.
   for (std::size_t n = 1; n <= 200; ++n) {
     std::vector<double> values;
     values.reserve(n);
@@ -256,10 +295,11 @@ TEST(Quartiles, AgreeWithPercentileAtEverySampleCount)
 
 TEST(Quartiles, DoNotReorderTheCallersVector)
 {
-  // Same contract as `percentile`: taken by value, because the callers hand it
-  // live accumulators they go on using. A reference here would shuffle a probe's
-  // sample buffer between reports, which is the kind of change that looks like a
-  // tidy-up.
+  // Same contract as `percentile`, and the same division of labour: the
+  // static_assert at the top of this file is what holds the signature, and this
+  // covers a body that disturbs its caller some other way. Stated for both rather
+  // than only for `percentile`, because the two are meant to be interchangeable
+  // and a contract asserted on one of a pair is the half somebody reads.
   std::vector<double> values{5.0, 1.0, 4.0, 2.0, 3.0};
   const std::vector<double> before = values;
   (void)pimesh_core::quartiles(values);

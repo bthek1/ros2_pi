@@ -774,6 +774,49 @@ def test_the_scale_probe_and_depth_agree_on_where_the_far_clip_is(config):
         config['/**/depth_node']['ros__parameters']['max_range_m']
 
 
+# The grammar of the `depth_scale_reference` comment, in one place.
+#
+# **It is typed twice in this repository — here and inside
+# `tools/gates/scale.sh` — and nothing but the test below relates them.** That is
+# the `volume_key` trap in its usual shape: the two agree because one person wrote
+# both, and a divergence does not fail loudly. It produces a gate that refuses
+# with "no measured distance recorded" over a marker sitting right there in the
+# file, or a test that accepts one the gate cannot read. Found 2026-09-25 while
+# mutation-checking this test, which is the only reason it is checked at all.
+_MARKER_PATTERN = (r'^\s*#\s*depth_scale_reference:\s*([0-9]+(?:\.[0-9]+)?)\s*m,\s*(\S+),'
+                   r'\s*measured\s+(\d{4}-\d{2}-\d{2})\s*$')
+
+
+def test_the_gate_reads_the_marker_with_the_same_grammar_this_test_writes():
+    """**Two copies of one grammar, related by nothing.**
+
+    `tools/gates/scale.sh` parses the `depth_scale_reference` comment to find the
+    tape figure; the test below decides whether that comment is well formed. They
+    are two regexes in two languages' worth of quoting, and they agree only
+    because somebody typed both — the same shape as the five channel numbers
+    `test_dashboard_contract` checks across the C++/JavaScript boundary, and
+    checked the same way, by reading the other file as text.
+
+    A divergence is not a loud failure. A test that is stricter than the gate
+    rejects markers that work; a test that is *looser* is worse, because it
+    accepts a marker the gate then cannot find, and the gate's refusal says "no
+    measured distance recorded" about a line that is plainly there.
+    """
+    import re
+
+    source = open(os.path.join(_HERE, '..', '..', '..',
+                               'tools', 'gates', 'scale.sh')).read()
+    # The gate's copy is a two-line raw-string literal; join the pieces back up.
+    found = re.search(r"marker = re\.compile\((.*?)\)\n", source, re.S)
+    assert found, "tools/gates/scale.sh no longer compiles a `marker` regex — if it " \
+                  "has stopped reading the comment, this test and the one below are " \
+                  "describing a contract nobody enforces"
+    theirs = ''.join(re.findall(r"r'((?:[^'\\]|\\.)*)'", found.group(1)))
+    assert theirs == _MARKER_PATTERN, (
+        'the gate and this test disagree about what a depth_scale_reference looks '
+        f'like:\n  gate: {theirs}\n  test: {_MARKER_PATTERN}')
+
+
 def test_the_depth_scale_reference_marker_is_well_formed_if_it_exists(config):
     """**The comment `tools/gates/scale.sh` parses, and the reason it is allowed
     to be a comment.**
@@ -803,9 +846,7 @@ def test_the_depth_scale_reference_marker_is_well_formed_if_it_exists(config):
     with open(_CONFIG) as handle:
         lines = handle.read().split('\n')
 
-    marker = re.compile(r'^\s*#\s*depth_scale_reference:\s*'
-                        r'([0-9]+(?:\.[0-9]+)?)\s*m,\s*(\S+),\s*measured\s+'
-                        r'(\d{4}-\d{2}-\d{2})\s*$')
+    marker = re.compile(_MARKER_PATTERN)
     # Anything that looks like an attempt at the marker, so a typo is caught as a
     # malformed marker rather than passing as an ordinary comment.
     #
