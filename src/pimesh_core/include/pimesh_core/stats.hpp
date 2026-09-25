@@ -57,6 +57,19 @@ namespace pimesh_core
 ///    `matched_p05`, `offset_p95_ms` — was measured with this convention, and
 ///    silently changing it would move published figures without moving anything
 ///    real.
+/// The rank `percentile` and `quartiles` both take, as one expression.
+///
+/// **It is a function so that there is one of it.** Two places computing
+/// `floor(fraction * n)` agree until somebody clamps one of them differently, and
+/// the symptom is two figures in the same gate's output that disagree by one
+/// sample in the tail — which reads as noise. Every convention described above is
+/// this line.
+inline std::size_t percentile_index(std::size_t count, double fraction)
+{
+  return std::min(
+    count - 1, static_cast<std::size_t>(fraction * static_cast<double>(count)));
+}
+
 inline double percentile(std::vector<double> values, double fraction)
 {
   // Empty is 0.0 rather than NaN because every caller prints this straight into a
@@ -64,12 +77,45 @@ inline double percentile(std::vector<double> values, double fraction)
   // that reads as a broken gate rather than as an empty window. The callers that
   // could legitimately see an empty window guard it themselves.
   if (values.empty()) {return 0.0;}
-  const std::size_t index = std::min(
-    values.size() - 1,
-    static_cast<std::size_t>(fraction * static_cast<double>(values.size())));
+  const std::size_t index = percentile_index(values.size(), fraction);
   std::nth_element(
     values.begin(), values.begin() + static_cast<std::ptrdiff_t>(index), values.end());
   return values[index];
+}
+
+/// The three quartiles at once, from one sort.
+///
+/// **Not a convenience.** Three `percentile` calls over the same samples take
+/// three copies of the vector, because `percentile` takes its argument by value
+/// for the reason stated above — and `centred_patch_stats` calls it three times
+/// per frame over tens of thousands of depth samples at the depth rate. This
+/// sorts once and indexes three times.
+///
+/// It uses `percentile_index`, so it cannot drift from `percentile`: whatever the
+/// convention is, both spell it the same way. `test_stats` asserts the two agree
+/// across a range of sample counts rather than trusting that they do, because
+/// "these two functions compute the same rank" is exactly the claim that is true
+/// when it is written and false a year later.
+///
+/// `q1`, `median` and `q3` are all 0.0 on an empty input, for `percentile`'s
+/// reason — and a caller that could see an empty input has to branch on the
+/// count, not on the value.
+struct Quartiles
+{
+  double q1 {0.0};
+  double median {0.0};
+  double q3 {0.0};
+};
+
+inline Quartiles quartiles(std::vector<double> values)
+{
+  Quartiles out;
+  if (values.empty()) {return out;}
+  std::sort(values.begin(), values.end());
+  out.q1 = values[percentile_index(values.size(), 0.25)];
+  out.median = values[percentile_index(values.size(), 0.5)];
+  out.q3 = values[percentile_index(values.size(), 0.75)];
+  return out;
 }
 
 /// FNV-1a over a byte range: a cheap 64-bit summary that differs when any byte

@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <numeric>
+#include <utility>
 #include <random>
 #include <vector>
 
@@ -209,4 +210,82 @@ TEST(Fnv1a, ThePointerOverloadAgreesWithTheVectorOne)
   // must get the same answer or the two could never be compared.
   const std::vector<std::uint8_t> bytes{9, 8, 7, 6, 5};
   EXPECT_EQ(fnv1a(bytes.data(), bytes.size()), fnv1a(bytes));
+}
+
+// --- quartiles ---------------------------------------------------------------
+
+TEST(Quartiles, AgreeWithPercentileAtEverySampleCount)
+{
+  // **The pair that would otherwise be true when written and false a year
+  // later.** `quartiles` exists because three `percentile` calls take three
+  // copies of the vector, and `centred_patch_stats` makes them per frame over
+  // tens of thousands of depth samples. The two must return the same ranks —
+  // both spell the convention with `percentile_index`, and this is what says so
+  // out loud rather than trusting the reader to notice.
+  //
+  // Swept across sizes on purpose: the convention has an off-by-one character to
+  // it (`floor(fraction * n)`, one rank above nearest-rank when the product is an
+  // integer), so a reimplementation agrees on most counts and disagrees on a few.
+  // n = 4, 8, 12, 20, 100 are exactly the ones where `fraction * n` is an integer
+  // for at least one quartile.
+  for (std::size_t n = 1; n <= 200; ++n) {
+    std::vector<double> values;
+    values.reserve(n);
+    // Deliberately unsorted, and not a permutation of 0..n-1: a helper that
+    // happened to return the index rather than the value would pass over
+    // 0, 1, 2, ...
+    for (std::size_t i = 0; i < n; ++i) {
+      values.push_back(static_cast<double>(((i * 37) % n) * 3 + 1));
+    }
+    // Moved in from an explicit copy rather than passed by value directly: GCC
+    // 15 at -O2 emits a spurious -Wfree-nonheap-object for the copy it would
+    // otherwise construct and destroy inside this loop's inlined body, and a
+    // warning nobody can act on is a warning everybody learns to scroll past.
+    // That `quartiles` does not disturb a caller's vector is asserted on its own
+    // below, where it is the claim rather than an incidental.
+    std::vector<double> scratch = values;
+    const pimesh_core::Quartiles q = pimesh_core::quartiles(std::move(scratch));
+    const double p25 = percentile(values, 0.25);
+    const double p50 = percentile(values, 0.5);
+    const double p75 = percentile(values, 0.75);
+    EXPECT_DOUBLE_EQ(q.q1, p25) << "n = " << n;
+    EXPECT_DOUBLE_EQ(q.median, p50) << "n = " << n;
+    EXPECT_DOUBLE_EQ(q.q3, p75) << "n = " << n;
+  }
+}
+
+TEST(Quartiles, DoNotReorderTheCallersVector)
+{
+  // Same contract as `percentile`: taken by value, because the callers hand it
+  // live accumulators they go on using. A reference here would shuffle a probe's
+  // sample buffer between reports, which is the kind of change that looks like a
+  // tidy-up.
+  std::vector<double> values{5.0, 1.0, 4.0, 2.0, 3.0};
+  const std::vector<double> before = values;
+  (void)pimesh_core::quartiles(values);
+  EXPECT_EQ(values, before);
+}
+
+TEST(Quartiles, AreAllZeroOnAnEmptyInput)
+{
+  // `percentile`'s reason, and the same warning attaches: a caller that could see
+  // an empty input has to branch on the *count*, because 0.0 is a plausible
+  // value for every quantity this project measures.
+  const pimesh_core::Quartiles q = pimesh_core::quartiles({});
+  EXPECT_DOUBLE_EQ(q.q1, 0.0);
+  EXPECT_DOUBLE_EQ(q.median, 0.0);
+  EXPECT_DOUBLE_EQ(q.q3, 0.0);
+}
+
+TEST(Quartiles, OrderTheThreeTheWayTheirNamesSay)
+{
+  // q1 <= median <= q3, which a transposed pair of indices would break while
+  // every individual value stayed a real sample. An IQR computed as q3 - q1 would
+  // then come out negative, and a spread that is negative reads as zero spread to
+  // anything comparing it against a ceiling.
+  std::vector<double> values;
+  for (int i = 0; i < 37; ++i) {values.push_back(static_cast<double>((i * 11) % 37));}
+  const pimesh_core::Quartiles q = pimesh_core::quartiles(values);
+  EXPECT_LE(q.q1, q.median);
+  EXPECT_LE(q.median, q.q3);
 }

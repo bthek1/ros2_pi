@@ -75,12 +75,21 @@ surface does not look like a room yet, for a reason given below:
 - **Truth** (`pimesh_dataset` + `evo`, offline) — TUM RGB-D fr1/desk, 613 frames
   with a 100 Hz motion-capture trajectory, replayed through the real container at
   its own stamps with its own intrinsics: **Sim(3)-aligned ATE RMSE 0.27–0.36 m**
-  over six runs of ~350 poses, **100%** of them associated against the truth, RPE **0.15 m** over a
+  over seven runs of ~350 poses, **100%** of them associated against the truth, RPE **0.15 m** over a
   1 s window, with the `rotation_only` control unable to be aligned at all. It is
   the first figure in this project about the pose that this project did not
   produce, and it was worth having: everything above is internal, and P7 is what
   that is worth — the rotation was composed inverted for six days and every
   internal number describing it was right. `bash tools/gates/trajectory.sh`.
+
+- **Unit** (`pimesh_depth`, here) — **written and waiting on a person.**
+  `bash tools/gates/scale.sh` compares the median of `/depth` over a centred patch
+  against a tape measure, so that `depth_scale` stops being 10.0 because somebody
+  typed it. Every path through it is exercised except the one that needs a flat
+  wall at a measured distance — including both refusal budgets, which
+  `bags/desk1` fails at **0.30 of the patch clipped** while reporting a
+  plausible 4.42 m. The checklist for the visit is in
+  [docs/info/setup.md](docs/info/setup.md#the-visit-to-the-room).
 
 `just build` then `just view-mesh` shows it running; `just --list` is the
 whole of what you type on a normal day. The tests are the `tools/gates/*.sh`
@@ -111,7 +120,7 @@ measure that pins `depth_scale`.
 
 **P11 has since bounded that second number without a tape measure.** Fitting a
 Sim(3) between our trajectory and TUM's metric ground truth gives a scale of
-0.46–0.52 over six runs, so that sequence says `depth_scale` should be **4.6–5.2** against the
+0.46–0.52 over seven runs, so that sequence says `depth_scale` should be **4.6–5.2** against the
 10.0 in the YAML. It does not transfer — different camera, different scene, and
 Depth Anything's scale is per-image — so the visit to the room still has to
 happen. What changed is that it is now a *check* on a figure that exists rather

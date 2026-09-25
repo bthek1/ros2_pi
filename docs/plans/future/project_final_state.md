@@ -53,7 +53,7 @@ A–E ever measured the pose against a truth. See
 | C | [#6](https://github.com/bthek1/ros2_pi/issues/6) | P4 | Depth on the GPU at ≤ 80 ms, CUDA provider named in the log — ✓ **done 2026-09-15**, 55.10 ms mean |
 | D | [#7](https://github.com/bthek1/ros2_pi/issues/7) | P5–P6 | A triangle mesh you can recognise your room in — ✓ **closed 2026-09-16** |
 | E | [#8](https://github.com/bthek1/ros2_pi/issues/8) | P7–P8 (+P10) | ✓ **done 2026-09-19** — translation is visible and one tab shows the pipeline |
-| F | [#10](https://github.com/bthek1/ros2_pi/issues/10) | P11–P13 | An ATE against ground truth — ✓ **P11 done 2026-09-25**, 0.27–0.36 m Sim(3)-aligned on TUM fr1/desk. ☐ P12–P13 are a `depth_scale` somebody measured and `bags/walk1`, and both need a person in the room |
+| F | [#10](https://github.com/bthek1/ros2_pi/issues/10) | P11–P13 | An ATE against ground truth — ✓ **P11 done 2026-09-25**, 0.27–0.36 m Sim(3)-aligned on TUM fr1/desk. ☐ P12–P13 are a `depth_scale` somebody measured and `bags/walk1`; **their software is written and exercised as of 2026-09-25, and what is left is one visit to a room** |
 | G | [#11](https://github.com/bthek1/ros2_pi/issues/11) | P14–P15 | ☐ Map points observed by many keyframes, and a bundle adjustment that lowers the ATE |
 | H | [#12](https://github.com/bthek1/ros2_pi/issues/12) | P16–P18 | ☐ A loop detected, a pose graph that corrects it, and a volume rebuilt at the corrected poses |
 | I | [#13](https://github.com/bthek1/ros2_pi/issues/13) | P19–P20 | ☐ The pipeline can say "I do not know where I am", stop fusing, and find out |
@@ -828,9 +828,9 @@ lose tracking and say so. All five are judged by the thing P11 adds.
 
 | Phase | | Issue |
 | --- | --- | --- |
-| ✓ P11 | A dataset source, a trajectory file, and ATE against TUM fr1/desk — `tools/gates/trajectory.sh`. **Done 2026-09-25**: ATE RMSE **0.27–0.36 m** Sim(3)-aligned over six runs, 100% associated, RPE 0.14–0.15 m over 1 s, fitted scale 0.455–0.517 (so `depth_scale` ≈ 4.6–5.2). The finding was the *frame*: the trajectory has to be the camera's optical pose, and an ATE cannot see the difference — rotating TUM's own truth by that constant scores 0.654 m RPE against itself | [#10](https://github.com/bthek1/ros2_pi/issues/10) |
-| ☐ P12 | Pin `depth_scale` with a tape measure, record `bags/scale1` — `tools/gates/scale.sh` *(needs a person)* | [#10](https://github.com/bthek1/ros2_pi/issues/10) |
-| ☐ P13 | Record `bags/walk1`, settle whether 6-DoF beats rotation-only — `tools/gates/odom.sh walk1` *(needs a person)* | [#10](https://github.com/bthek1/ros2_pi/issues/10) |
+| ✓ P11 | A dataset source, a trajectory file, and ATE against TUM fr1/desk — `tools/gates/trajectory.sh`. **Done 2026-09-25**: ATE RMSE **0.27–0.36 m** Sim(3)-aligned over seven runs, 100% associated, RPE 0.14–0.15 m over 1 s, fitted scale 0.455–0.517 (so `depth_scale` ≈ 4.6–5.2). The finding was the *frame*: the trajectory has to be the camera's optical pose, and an ATE cannot see the difference — rotating TUM's own truth by that constant scores 0.654 m RPE against itself | [#10](https://github.com/bthek1/ros2_pi/issues/10) |
+| ☐ P12 | Pin `depth_scale` with a tape measure, record `bags/scale1` — `tools/gates/scale.sh`. **The gate, `scale_probe` and `test_depth_patch` were written 2026-09-25 and every path through them exercised except the one that needs the clip**; `bags/desk1` fails both refusal budgets at 0.30 of the patch clipped while reporting a plausible 4.42 m. *(Needs a person: [the checklist](../../info/setup.md#the-visit-to-the-room))* | [#10](https://github.com/bthek1/ros2_pi/issues/10) |
+| ☐ P13 | Record `bags/walk1`, settle whether 6-DoF beats rotation-only — `tools/gates/odom.sh walk1`, which already takes the clip name; **nothing to build**, same visit as P12 *(needs a person)* | [#10](https://github.com/bthek1/ros2_pi/issues/10) |
 | ☐ P14 | Map points, covisibility, tracking against the local map — `tools/gates/map.sh` | [#11](https://github.com/bthek1/ros2_pi/issues/11) |
 | ☐ P15 | Local bundle adjustment on a niced backend thread — `tools/gates/ba.sh` | [#11](https://github.com/bthek1/ros2_pi/issues/11) |
 | ☐ P16 | Place recognition against the whole keyframe store — `tools/gates/place.sh` | [#12](https://github.com/bthek1/ros2_pi/issues/12) |

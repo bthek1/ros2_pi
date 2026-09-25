@@ -29,7 +29,7 @@ the harness exists and EuRoC is a second `fetch-dataset.sh` entry and a second
 question turns out to be real, in which case that is what the phase is about.
 
 > **This trigger fired on 2026-09-25.** The gate is green: Sim(3)-aligned ATE
-> 0.27–0.36 m over six runs of fr1/desk, with `dataset_node`, `fetch-dataset.sh` and
+> 0.27–0.36 m over seven runs of fr1/desk, with `dataset_node`, `fetch-dataset.sh` and
 > `tum_freiburg1.yaml` all in place — so the afternoon this entry describes is now
 > exactly the afternoon it predicted. The rule in [../README.md](../README.md) says
 > a fired trigger means deleting this entry and appending it to

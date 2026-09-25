@@ -377,7 +377,7 @@ that had been silently doing nothing in some contexts. Ask what the gate does
 613 frames with a 100 Hz motion-capture trajectory, replayed through the real
 container by `dataset_node` at the dataset's own stamps and intrinsics, with
 `odom_probe` writing a TUM-format trajectory that `evo` scores: **Sim(3)-aligned
-ATE RMSE 0.27–0.36 m** over six runs of ~350 poses, 100% associated, RPE 0.14–0.15 m
+ATE RMSE 0.27–0.36 m** over seven runs of ~350 poses, 100% associated, RPE 0.14–0.15 m
 over a 1 s window.
 `bash tools/gates/trajectory.sh`.
 
@@ -403,10 +403,32 @@ so `evo` refuses. That is a stronger outcome than a large number and a weaker
 *assertion*, because an `evo` failure for any other reason would look the same —
 so the gate also asserts the ceiling is below the 0.8559 m an estimate that never
 moves would score, **derived from `groundtruth.txt`** rather than written down.
-And the fitted Sim(3) scale, 0.455–0.517 over six runs, is `depth_scale`'s answer
+And the fitted Sim(3) scale, 0.455–0.517 over seven runs, is `depth_scale`'s answer
 without a tape measure: 4.6–5.2 against the 10.0 that has been in the YAML since
 P4 because somebody typed it. It does not transfer to the C922 in this room, but
 P12 is now a check on a number rather than the only source of one.
+
+**P12's gate exists and its budgets have been watched to fail, 2026-09-25** —
+without the clip it is for. `bash tools/gates/scale.sh` replays a flat surface at
+a tape-measured distance and compares the median of `/depth` over a centred patch
+against the tape. What is missing is a person, a wall and a tape; the checklist is
+[setup.md](setup.md#the-visit-to-the-room).
+
+**Two things came out of preparing it.** Running it against `bags/desk1` standing
+in for the clip refuses at **0.30 of the patch clipped typically, 0.9998 at
+worst**, with a plausible-looking median of 4.42 m beside it — so the clipping
+budget has been watched to exclude something on real data, which is the only kind
+of threshold this project keeps. The reason it matters: `depth_to_metres` writes
+exactly `max_range_m` wherever the model's inverse depth falls below its floor, so
+a clipped pixel is the *absence* of a distance dressed as 6 m, and depth is linear
+in `depth_scale` **only below the clip** — an implied scale over a clipped patch
+comes out smaller than it should be and looks entirely ordinary.
+
+And the run found a bug in the gate itself: the first version printed the implied
+scale, and the lines to paste into `config/pimesh.yaml`, *after* declaring the
+measurement invalid. **Handing somebody a number you have just called wrong is
+worse than printing nothing**, because the number is plausible and the warning is
+three lines further up. It prints no scale at all now when a check has failed.
 
 Do not write "the node publishes X at Y Hz" until a node has published X and you
 have watched it do Y.

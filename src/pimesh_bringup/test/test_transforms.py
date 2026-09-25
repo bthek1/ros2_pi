@@ -748,6 +748,111 @@ def test_depth_publishes_into_the_frame_the_static_tree_defines(config):
 # but these tests relating them. A drift in any of them does not fail: it produces
 # a pipeline that runs and an ATE that is a measurement of the drift.
 
+def test_the_scale_probe_reads_the_topic_depth_publishes(config):
+    """`scale_probe` names its topic itself, and a drift is not a loud failure:
+    the probe simply measures nothing and `tools/gates/scale.sh` reports zero
+    usable frames — which reads as "the camera was pointed at nothing in range"
+    rather than as "nobody was publishing"."""
+    assert config['/**/scale_probe']['ros__parameters']['depth_topic'] == \
+        config['/**/depth_node']['ros__parameters']['depth_topic']
+
+
+def test_the_scale_probe_and_depth_agree_on_where_the_far_clip_is(config):
+    """**The pair that decides whether P12's unit is right.**
+
+    `depth_to_metres` writes exactly `max_range_m` wherever the model's inverse
+    depth falls below its floor, so a clipped pixel is not a large distance — it
+    is the absence of one. `centred_patch_stats` excludes and counts those, and it
+    can only do that if it is told the same clip the map was written with.
+
+    Get the pair wrong and nothing fails: a probe told 10 m over a map clipped at
+    6 m counts every "no idea" pixel as a 6 m reading, the median moves toward the
+    clip, and the implied `depth_scale` comes out **smaller than it should be** —
+    which would then be written into this file as a measurement.
+    """
+    assert config['/**/scale_probe']['ros__parameters']['max_range_m'] == \
+        config['/**/depth_node']['ros__parameters']['max_range_m']
+
+
+def test_the_depth_scale_reference_marker_is_well_formed_if_it_exists(config):
+    """**The comment `tools/gates/scale.sh` parses, and the reason it is allowed
+    to be a comment.**
+
+    `depth_scale` is the constant under every distance this project reports, and
+    what makes it a measurement rather than a guess is the tape figure recorded
+    beside it:
+
+        # depth_scale_reference: 1.985 m, bags/scale1, measured 2026-09-27
+        depth_scale: 4.83
+
+    Parsing a comment is an odd contract. It is the right one because the
+    alternative — a second file, or a parameter no node declares — puts the
+    justification somewhere the number can drift away from, which is the
+    `volume_key` trap with the two halves in different files. **Adjacency is the
+    guarantee**, so this test enforces it: at most one marker in the file, and it
+    must be the line immediately above `depth_scale`.
+
+    Absent is a pass here, because P12 has not happened yet and a test that failed
+    until somebody went to a room would be a test people learn to ignore. The
+    refusal lives in the gate, where it belongs: `bash tools/gates/scale.sh`
+    refuses rather than passes when there is no marker, because a vacuous pass
+    would put a made-up unit under every later measurement in this project.
+    """
+    import re
+
+    with open(_CONFIG) as handle:
+        lines = handle.read().split('\n')
+
+    marker = re.compile(r'^\s*#\s*depth_scale_reference:\s*'
+                        r'([0-9]+(?:\.[0-9]+)?)\s*m,\s*(\S+),\s*measured\s+'
+                        r'(\d{4}-\d{2}-\d{2})\s*$')
+    # Anything that looks like an attempt at the marker, so a typo is caught as a
+    # malformed marker rather than passing as an ordinary comment.
+    #
+    # **The token has to be the first thing after the `#`**, which is narrower
+    # than it looks like it should be and is deliberate: the block of prose above
+    # `depth_scale` in that file *describes* this marker and shows an example of
+    # it, and a looser pattern reads both of those as second markers. Measured the
+    # first time this test ran — it reported two markers in a file that has none.
+    # The cost is that a hyphenated or renamed spelling reads as an ordinary
+    # comment rather than as a malformed marker; the gate's own refusal covers
+    # that case, because a marker it cannot find is a marker that does not exist.
+    attempt = re.compile(r'^\s*#\s*depth_scale_reference')
+
+    attempts = [i for i, line in enumerate(lines) if attempt.match(line)]
+    if not attempts:
+        # P12 has not been done. Nothing to check, and the gate is what says so.
+        return
+
+    assert len(attempts) == 1, (
+        f'{len(attempts)} depth_scale_reference markers in pimesh.yaml at lines '
+        f'{[i + 1 for i in attempts]} — the gate reads the one above depth_scale, '
+        f'so a second is a number nobody reads that looks like one somebody does')
+
+    index = attempts[0]
+    found = marker.match(lines[index])
+    assert found, (
+        f'line {index + 1} looks like a depth_scale_reference and does not parse. '
+        f'The gate reads it with the same shape and would refuse:\n'
+        f'  got:  {lines[index].strip()}\n'
+        f'  want: # depth_scale_reference: <metres> m, bags/<clip>, measured <YYYY-MM-DD>')
+
+    assert re.match(r'^\s*depth_scale:', lines[index + 1] if index + 1 < len(lines) else ''), (
+        f'the marker at line {index + 1} is not immediately above depth_scale. '
+        f'Adjacency is the whole reason this is allowed to be a comment — a marker '
+        f'anywhere else in the file is a claim about a number it is not next to')
+
+    distance = float(found.group(1))
+    # Not a tuning knob, a sanity bound: depth_node clips at max_range_m, so a
+    # reference surface beyond it could not have been measured at all, and one at
+    # 5 cm is inside the near clip.
+    clip = config['/**/depth_node']['ros__parameters']['max_range_m']
+    assert 0.2 <= distance < clip, (
+        f'the recorded reference distance is {distance} m, which is outside '
+        f'[0.2, {clip}) — depth_node clips at {clip} m, so a surface past it has '
+        f'no reading to compare against')
+
+
 def test_the_written_trajectory_is_in_the_frame_a_benchmark_measures(config):
     """**The frame an ATE cannot see and an RPE can.**
 

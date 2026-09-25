@@ -62,6 +62,7 @@ endif()
 add_library(depth_components SHARED
   src/depth_node.cpp
   probes/depth_probe.cpp
+  probes/scale_probe.cpp
   # Exactly one of these two is compiled, and the choice is the only thing the
   # GPU stack's presence changes about this library.
   $<$<BOOL:${PIMESH_HAVE_ONNXRUNTIME}>:src/depth_engine_ort.cpp>
@@ -140,6 +141,7 @@ endif()
 rclcpp_components_register_nodes(depth_components
   "pimesh_depth::DepthNode"
   "pimesh_depth::DepthProbe"
+  "pimesh_depth::ScaleProbe"
 )
 
 add_executable(depth_node apps/depth_node_main.cpp)
@@ -175,6 +177,20 @@ if(BUILD_TESTING)
     target_include_directories(test_depth_model PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/include ${pimesh_core_INCLUDE_DIRS})
     target_link_libraries(test_depth_model opencv_core opencv_imgproc)
+  endif()
+
+  # P12's instrument. tools/gates/scale.sh divides a tape measure by the number
+  # this returns and calls the result `depth_scale` — the constant under every
+  # distance this project reports — and there is no second opinion on it
+  # anywhere. Every way of getting it wrong returns a plausible distance: a patch
+  # that is not centred, a NaN in the sort, and above all far-clip values counted
+  # as distances, which makes the implied scale come out too small with nothing
+  # saying so. Synthetic cv::Mats, no model and no GPU, so it runs on the Pi.
+  ament_add_gtest(test_depth_patch test/test_depth_patch.cpp)
+  if(TARGET test_depth_patch)
+    target_include_directories(test_depth_patch PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include ${pimesh_core_INCLUDE_DIRS})
+    target_link_libraries(test_depth_patch opencv_core)
   endif()
 endif()
 

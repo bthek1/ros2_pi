@@ -53,7 +53,7 @@ it; the numbers below marked **(measured here)** are that gate's output.
   are taken microseconds apart on one machine, so their relative drift is
   irrelevant, and there is no per-process constant left to be wrong.
   **(measured here)** two launches of the node agreed on their stamp-to-receipt
-  offset to within **0.30–1.02 ms** across six runs — against usb_cam, which
+  offset to within **0.30–1.02 ms** across seven runs — against usb_cam, which
   redraws hundreds of milliseconds of it every launch. The node also checks the
   buffer's `V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC` flag rather than trusting the
   field, and falls back to stamping at dequeue with a warning if the driver is
@@ -166,7 +166,7 @@ motion-capture trajectory), 2026-09-25:
 | --- | --- |
 | poses published | 366 at 18.6 Hz, **100%** associated against the truth |
 | depth frames posed | 90.2%, at 1.56 px over 148 inliers |
-| ATE RMSE, Sim(3) aligned | **0.27–0.36 m** — 0.2711, 0.2958, 0.3177, 0.3297, 0.3475, 0.3569 over six runs. A figure with that much spread is reported as a range, not as one run's number |
+| ATE RMSE, Sim(3) aligned | **0.27–0.36 m** — 0.2711, 0.2897, 0.2958, 0.3177, 0.3297, 0.3475, 0.3569 over seven runs. A figure with that much spread is reported as a range, not as one run's number |
 | ATE RMSE, SE(3) aligned | 0.90 m — very largely a measurement of `depth_scale` |
 | RPE RMSE over 1 s | **0.15 m** |
 | fitted scale `s` | 0.455–0.517, so **`depth_scale` ≈ 4.6–5.2** against the 10.0 in the YAML |
@@ -540,6 +540,56 @@ an 80 ms budget there is nothing to buy. When there is: input at 392² instead o
 cost, coarsens thin structure), then TensorRT EP with a cached engine (a real
 speedup but a long build and a per-machine cache), then fp16 — which on Turing
 without tensor cores buys bandwidth only, so measure before believing.
+
+### Pinning the unit (`scale_probe`, dev box) — **written 2026-09-25, waiting on a person**
+
+**Everything above is in an unknown unit.** Monocular depth is scale-ambiguous:
+the model says "twice as far", never "three metres". `depth_scale` has been 10.0
+since P4 because somebody typed it, and the mesh, the trajectory, the voxel size
+and `max_speed_m_s` are all that constant times an arbitrary reading.
+
+`bash tools/gates/scale.sh` is #10's P12 and what it needs is a person: a flat
+surface at a tape-measured distance, recorded once as `bags/scale1`. The
+checklist is [setup.md](setup.md#the-visit-to-the-room); the gate, the probe and
+their tests exist and the refusals have been exercised.
+
+- `scale_probe` takes a **centred patch** — 25% of each dimension — of every
+  `/depth` frame and reports the median, the quartiles, the within-frame spread
+  and the across-frame spread. **Not the pixel at the principal point**, which is
+  the false green P12 names by hand: `test_tsdf_volume` already pins that a depth
+  map carries *z* and not distance along the ray, so the principal point is the
+  one place those agree exactly — the best case in the frame — and one hot pixel
+  there would set this project's unit for good.
+- **Far-clip pixels are excluded and counted, never averaged in.**
+  `depth_to_metres` writes exactly `max_range_m` wherever the model's inverse
+  depth falls below its floor, so a clipped pixel is the *absence* of a distance
+  dressed as a real-looking 6 m. Depth is linear in `depth_scale` **only below
+  the clip**, so an implied scale computed over a patch with clip in it comes out
+  smaller than it should be, and nothing about the number looks wrong.
+- **Two spreads, and they are different failures.** The within-frame IQR is how
+  flat the patch reads: large means the camera is oblique to the surface, since a
+  depth map carries z. The across-frame spread is Depth Anything's own scale
+  breathing — the few percent a frame that `fusion_node`'s aligner exists for —
+  and a unit derived from a clip carries it, which is why the agreement budget is
+  3% rather than tighter.
+- The gate **refuses rather than passes** in four places: no clip, no tape figure
+  recorded beside `depth_scale`, the file and the command line disagreeing, and a
+  patch that is mostly clip. And when a check has failed it prints **no implied
+  scale at all** — handing over a number it has just called wrong is the failure
+  the whole gate is about.
+
+**Exercised against `bags/desk1` standing in for the clip** (2026-09-25): 848 of
+1006 frames gave a usable patch, median 4.42 m, within-frame spread 0.83 m, and
+**0.30 of the patch clipped typically and 0.9998 at worst** — so both the
+clipping and the spread budgets have been watched to exclude something, on real
+data, with a plausible-looking median beside them. A desk sweep is not a flat
+wall, which is exactly why it fails.
+
+**One number worth noting and not over-reading.** That clip implies a
+`depth_scale` of 4.52 *if* the scene averaged 2 m away, and P11's Sim(3) fit
+against TUM fr1/desk says 4.6–5.2. Two unrelated hints in the same region. Neither
+is a measurement of this camera in this room, and the tape measure is still what
+settles it.
 
 ## Stage 5 — Fusion (`fusion_node`, dev box) — **built 2026-09-16**
 

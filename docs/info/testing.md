@@ -52,12 +52,33 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 459 tests across thirty suites, identical on both distros**
+**Status: 477 tests across thirty-one suites, identical on both distros**
 (`bash tools/gates/test.sh`, 2026-09-25).
 
 ## The suites
 
-459 across thirty suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+477 across thirty-one suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+
+**`test_depth_patch`** (added 2026-09-25, #10's P12) covers the statistic this
+project's *unit* comes out of. `tools/gates/scale.sh` divides a tape measure by
+the number `centred_patch_stats` returns and calls the result `depth_scale`,
+which sits under every distance the pipeline reports — and there is no second
+opinion on it anywhere. Every way of getting it wrong returns a plausible
+distance rather than an error: a patch that is not centred reads a different part
+of a wall, a NaN in the sort gives an implementation-defined median, and an empty
+patch reported as a median of zero is `cost_mean=0.00` again, because 0 m reads
+as "very close". The sharpest case is the far clip: `depth_to_metres` writes
+exactly `max_range_m` wherever the model's inverse depth falls below its floor, so
+a clipped pixel is the *absence* of a distance dressed as 6 m — and depth is
+linear in `depth_scale` only below the clip, so counting them makes an implied
+scale come out **too small** with nothing saying so. The suite pins them out and
+counted separately, and pins the boundary as `>=` rather than `>`, because
+`max_range` is the common value and an exclusive comparison would let every one
+through.
+
+It also pinned the centring convention on an odd leftover, which exists so that
+"fixing" it the other way is a visible change rather than a silent shift of where
+the unit is read from.
 
 **`test_tum_trajectory` and `test_dataset_reader`** (added 2026-09-25, #10's P11)
 are the newest, and both are there because the code under them is read by

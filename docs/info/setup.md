@@ -272,7 +272,7 @@ cloned this, `just build && just view-camera` is the entire getting-started
 path — or `just dashboard` once the GPU stack is installed.
 
 **Everything else is a script in `tools/`, run directly.** The gates especially
-— there are seventeen, they are run constantly, and as recipes they buried the
+— there are eighteen, they are run constantly, and as recipes they buried the
 handful of commands a person actually types under an alphabetised wall of
 `gate-*`:
 
@@ -288,6 +288,7 @@ bash tools/gates/mesh.sh          # P6: marching cubes, off the integration path
 bash tools/gates/odom.sh          # P7: 6-DoF pose against a rotation-only control
 bash tools/gates/dashboard.sh     # P8: five channels, and 0 cost to the pipeline
 bash tools/gates/trajectory.sh    # P11: the ATE against TUM fr1/desk's motion capture
+bash tools/gates/scale.sh         # P12: /depth against a tape measure (needs bags/scale1)
 bash tools/gates/calibration.sh   # P9: the C922's real intrinsics, and that they straighten it
 bash tools/gates/gpu-stack.sh     # the GPU toolchain, before any node uses it
 
@@ -431,6 +432,97 @@ keypress with `ros2 launch` shutting down gracefully. Full account in
 **A leaked camera process holds `/dev/video0` exclusively**, and every later
 session then dies with `Device or resource busy`. Check both machines are clean
 before walking away.
+
+## The visit to the room
+
+**Two things in this project cannot be closed by a script**, and they are one
+trip: `depth_scale` has been 10.0 since P4 because somebody typed it, and
+`bags/desk1` is a pan from one spot so 6-DoF translation has never been shown to
+beat rotation-only. Both are milestone F —
+[#10](https://github.com/bthek1/ros2_pi/issues/10) P12 and P13 — and everything
+either of them needs from software is already written. What is left is a tape
+measure, a wall, and a walk.
+
+Do them in one visit. Each clip turns its phase into a replayable test forever;
+a second trip does not.
+
+### Before you start
+
+```bash
+bash tools/stragglers.sh            # nothing of this project's is already running
+bash tools/calib/camera-reset.sh    # V4L2 controls persist inside the camera,
+                                    #   across processes and reboots
+```
+
+A manual exposure left by an earlier benchmark makes every later session black,
+and a clip recorded at 20 fps under a stale one cannot be un-recorded.
+`record-clip.sh` resets the controls itself, so this is belt and braces — but the
+reset also prints the whole control table, which is worth a look before you spend
+half an hour recording.
+
+### P12 — the tape measure, and `bags/scale1`
+
+1. Find a **flat surface with nothing in front of it** — a wall, a door, a closed
+   cupboard — and measure from the camera's front element to it. **1.5–2.5 m.**
+   Not closer: `min_range_m` is 0.15 m and the near field is where a monocular
+   network is least like a metric sensor. Not further: at the *unpinned* scale of
+   10.0 the map reads roughly twice what it should against a 6 m clip, so a
+   surface at 3.5 m true reads past it — and a clipped pixel is not a distance,
+   it is the absence of one written as 6 m.
+2. Point the camera **square-on**, filling the middle of the frame. A depth map
+   carries *z*, not distance along the ray, so an oblique patch reads a range of
+   distances rather than one.
+3. **Look before you record**: `just view-depth`. Near is bright and the clip is
+   black in that preview, so a colour is a distance — **the middle of the frame
+   must be bright.** Black means the gate will refuse the clip, and you will find
+   that out after walking back from the wall.
+4. `bash tools/record-clip.sh scale1 20`.
+5. `bash tools/gates/scale.sh <the metres you measured>`. It **refuses** — nothing
+   is recorded in git yet — and prints the two lines to paste into
+   `src/pimesh_bringup/config/pimesh.yaml`. If the clip failed its checks it
+   prints no number at all and says why, which is deliberate: an implied scale
+   computed over a patch that is mostly clip is wrong in the direction that looks
+   plausible.
+6. Paste, `bash tools/build.sh`, then `bash tools/gates/scale.sh` with no
+   argument. That is P12's test.
+
+**What to expect.** The predecessor's room came out at **2.69**. P11's Sim(3) fit
+against TUM fr1/desk says **4.6–5.2** for that sequence, which bounds the number
+without transferring to this camera in this room — so a result in that region is
+unsurprising and a result at 9, or at 2, is worth stopping over and writing into
+the issue. If the tape and the calibration disagree by more than ~2%, the trigger
+in [milestone-f-future.md](../plans/future/milestone-f-future.md) has fired: `fx`
+is pinned only to ±2.2% and the fix is a flat mount and a re-run of
+`record | select | solve`.
+
+### P13 — `bags/walk1`
+
+`bash tools/record-clip.sh walk1 60` — a **slow walk**, camera held level, moving
+**metres** rather than centimetres, **returning to where you started**.
+
+The return is not decoration. Milestone H cannot detect a loop on a clip that
+never revisits anywhere, and `bags/desk1` is a ~0.9 m arm arc against 2–3 m of
+scene, which is why rotation already explains most of its frame motion.
+
+Then `bash tools/gates/odom.sh walk1`. It prints both regimes' median
+paired-surface gap, agreement, path length and net displacement. On `desk1` the
+two are a dead heat — 0.4456 m against 0.4471 m — which is why that comparison is
+printed rather than asserted. **If 6-DoF wins on a clip that carries real
+translation, the comparison gets promoted to an assertion keyed to the clip, with
+the margin taken from three runs, not one.** If it still does not win, that is the
+more interesting result and it points at the depth network rather than at the
+pose — annotate the phase with both numbers and open a deferred entry naming the
+network. It does not become an assertion on a number that did not move.
+
+### Afterwards
+
+```bash
+bash tools/stragglers.sh
+```
+
+`bags/` is git-ignored, so the two clips exist only on the machine that recorded
+them. Their identity is the sha256 the way `bags/desk1`'s is — record it in the
+issue alongside the numbers.
 
 ## Environment traps
 

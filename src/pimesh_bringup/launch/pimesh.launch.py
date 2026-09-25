@@ -166,6 +166,10 @@ PROBE_COMPONENTS = [
     # length, the net displacement, and above all the largest single step, which
     # is the number a mean hides.
     ('odom_probe', 'pimesh_frontend', 'pimesh_frontend::OdomProbe'),
+    # tools/gates/scale.sh: the median of /depth over a centred patch, which is
+    # what a tape measure gets compared against. In the container for
+    # depth_probe's reason — /depth is 3.7 MB a frame.
+    ('scale_probe', 'pimesh_depth', 'pimesh_depth::ScaleProbe'),
 ]
 
 # Where the frames come from, when they do not come from the Pi.

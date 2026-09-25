@@ -324,10 +324,29 @@
     # argument of the same name rather than by editing this file.
     use_cuda: true
     # **Arbitrary, and honestly so.** Monocular depth is scale-ambiguous: the model
-    # says "twice as far", never "three metres". The room will be plausibly shaped
-    # and the wrong size until P5 pins this against a tape measure — the
-    # predecessor's came out at 2.69x. Do not tune it by eye against a mesh that
-    # looks about right.
+    # says "twice as far", never "three metres". The room is plausibly shaped and
+    # the wrong size until #10's P12 pins this against a tape measure — the
+    # predecessor's came out at 2.69x, and P11's Sim(3) fit against TUM fr1/desk
+    # says 4.6-5.2 for that sequence, which bounds it without transferring to this
+    # camera in this room. Do not tune it by eye against a mesh that looks about
+    # right.
+    #
+    # **The line above it, when there is one, is what makes this number a
+    # measurement rather than a guess**, and `bash tools/gates/scale.sh` reads it:
+    #
+    #     # depth_scale_reference: <metres> m, bags/scale1, measured <YYYY-MM-DD>
+    #     depth_scale: <value>
+    #
+    # A parsed comment is an odd contract and it is the right one here. The
+    # alternative is a second file, or a parameter no node reads — and either puts
+    # the justification somewhere the number can drift away from, which is the
+    # `volume_key` trap exactly. Adjacency is the whole point: the marker has to
+    # be the line immediately above `depth_scale`, and
+    # `test_the_depth_scale_reference_marker_is_well_formed_if_it_exists` asserts
+    # that, so the comment is a checked thing rather than prose. Absent means the
+    # measurement has not been made, and the gate **refuses rather than passes** —
+    # a vacuous pass here would put a made-up unit under every later measurement
+    # in this project.
     depth_scale: 10.0
     # Applied to the model's *inverse* output before the reciprocal. 1/0 is inf,
     # not a big number, and one NaN integrated into a TSDF poisons voxels that
@@ -337,6 +356,28 @@
     # optical convention. Named, never re-derived here.
     optical_frame: camera_optical_frame
     stats_period_s: 5.0
+
+/**/scale_probe:
+  ros__parameters:
+    # tools/gates/scale.sh's instrument, loaded with probe:=scale_probe. It reads
+    # the median of a centred patch of /depth, which is the number a tape measure
+    # is compared against in P12 — so this is the one probe whose output becomes a
+    # *parameter* rather than a verdict.
+    depth_topic: /depth
+    # 25% of each dimension. Wide enough that one hot pixel cannot set the median,
+    # narrow enough to stay on a surface somebody pointed the camera at. **Not a
+    # single pixel at the principal point**, which is the false green #10's P12
+    # names by hand: a depth map carries z and not ray length, so the principal
+    # point is the one place those agree exactly, and a reading there is the best
+    # case in the frame.
+    patch_fraction: 0.25
+    # **Must match depth_node's max_range_m below.** Past it a reading is the
+    # model's "far away or no idea" written as a real-looking distance, and
+    # counting those as distances makes the implied scale come out too small with
+    # nothing saying so. test_transforms asserts the pair.
+    max_range_m: 6.0
+    duration_s: 30.0
+    warmup_frames: 5
 
 /**/depth_probe:
   ros__parameters:
