@@ -168,6 +168,26 @@ PROBE_COMPONENTS = [
     ('odom_probe', 'pimesh_frontend', 'pimesh_frontend::OdomProbe'),
 ]
 
+# Where the frames come from, when they do not come from the Pi.
+#
+# **This is the `probe` mechanism used for a different reason, and the reason is
+# the sharper one.** A probe is a consumer nobody asked for; a source is a
+# *publisher* on the one topic the Pi already uses, and two publishers on
+# /image_raw/compressed is the failure written up in CLAUDE.md as "one session at
+# a time" seen from the producing end — one decode_node interleaving a live
+# camera and a three-minute-old bag, with neither session doing anything wrong
+# and nothing in any log saying so.
+#
+# So it is named rather than flagged, `source:=live` loads nothing, and the one
+# value that does load something loads exactly one thing. `assert_no_session`
+# covers the other half — a dataset replay beside a `just view-camera` is the same
+# mixture whatever this list says.
+SOURCE_COMPONENTS = [
+    # tools/gates/trajectory.sh: a TUM-format sequence on camera_node's two
+    # topics, at the dataset's own stamps, with the dataset's own intrinsics.
+    ('dataset_node', 'pimesh_dataset', 'pimesh_dataset::DatasetNode'),
+]
+
 
 def _static_transform_args(entry: dict) -> list:
     """Turn one config/pimesh.yaml entry into static_transform_publisher's argv.
@@ -212,6 +232,11 @@ def _component(
     argument. Both of these belong to one node and are harmless on the others: a
     node that never declared a parameter ignores it.
 
+    `dataset_dir` is dataset_node's and `trajectory_path` is odom_probe's, both
+    for tools/gates/trajectory.sh — the first because a replay source with a
+    hard-coded directory would be a second publisher on the topic the Pi uses,
+    the second because the file `evo` reads has to land somewhere the gate chose.
+
     `log_payloads` is decode_node's, for tools/gates/ipc.sh. `use_cuda` is
     depth_node's, and it is **the control run** tools/gates/depth.sh needs rather
     than a fallback anyone should choose: an 80 ms per-frame budget that the CPU
@@ -245,6 +270,10 @@ def _component(
                     LaunchConfiguration('remesh_period_s'), value_type=float),
                 'odometry': ParameterValue(
                     LaunchConfiguration('odom_regime'), value_type=str),
+                'dataset_dir': ParameterValue(
+                    LaunchConfiguration('dataset_dir'), value_type=str),
+                'trajectory_path': ParameterValue(
+                    LaunchConfiguration('trajectory_path'), value_type=str),
             },
         ],
         extra_arguments=extra,
@@ -386,6 +415,33 @@ def generate_launch_description() -> LaunchDescription:
                         'the surface needs a run without it.',
         ),
         DeclareLaunchArgument(
+            'source',
+            default_value='live',
+            description='Where frames come from. live (the default) loads '
+                        'nothing — the Pi\'s camera_node or a bag is publishing. '
+                        'dataset_node replays a TUM sequence from dataset_dir. '
+                        'Like `probe`, the value **is the node name**, so there '
+                        'is no second table to drift out of step with '
+                        'SOURCE_COMPONENTS — and it is a name rather than a flag '
+                        'so two publishers cannot end up on '
+                        '/image_raw/compressed.',
+        ),
+        DeclareLaunchArgument(
+            'dataset_dir',
+            default_value='',
+            description='The unpacked TUM sequence dataset_node replays, with '
+                        'source:=dataset_node. Empty is a refusal to start '
+                        'rather than a default: bash tools/fetch-dataset.sh '
+                        '--print-path prints one.',
+        ),
+        DeclareLaunchArgument(
+            'trajectory_path',
+            default_value='',
+            description="Where odom_probe writes the pose stream in TUM format, "
+                        'for tools/gates/trajectory.sh to hand to evo. Empty '
+                        'writes nothing, which is what every other gate wants.',
+        ),
+        DeclareLaunchArgument(
             'use_cuda',
             default_value='true',
             description="depth_node's execution provider. false forces the CPU, "
@@ -456,5 +512,22 @@ def generate_launch_description() -> LaunchDescription:
                 ],
             )
             for name, package, plugin in PROBE_COMPONENTS
+        ],
+        # And one per source, on exactly the same mechanism. Separate from the
+        # probe loop rather than folded into it, because the two lists are
+        # selected by *different* arguments and a shared loop would have to carry
+        # which one — at which point the thing telling you what this action is
+        # would be a variable rather than the code.
+        *[
+            LoadComposableNodes(
+                target_container='pimesh_container',
+                condition=IfCondition(
+                    PythonExpression(
+                        [repr(name), ' == ', "'", LaunchConfiguration('source'), "'"])),
+                composable_node_descriptions=[
+                    _component(name, package, plugin, params_path, extra),
+                ],
+            )
+            for name, package, plugin in SOURCE_COMPONENTS
         ],
     ])

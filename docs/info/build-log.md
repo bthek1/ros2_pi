@@ -372,5 +372,41 @@ the process group from `$!`, which is empty whenever `setsid` forks — a kill
 that had been silently doing nothing in some contexts. Ask what the gate does
 **not** touch.
 
+**The pipeline has an outside opinion as of 2026-09-25** — P11,
+[gh issue #10](https://github.com/bthek1/ros2_pi/issues/10). TUM RGB-D fr1/desk,
+613 frames with a 100 Hz motion-capture trajectory, replayed through the real
+container by `dataset_node` at the dataset's own stamps and intrinsics, with
+`odom_probe` writing a TUM-format trajectory that `evo` scores: **Sim(3)-aligned
+ATE RMSE 0.27–0.36 m** over six runs of ~350 poses, 100% associated, RPE 0.14–0.15 m
+over a 1 s window.
+`bash tools/gates/trajectory.sh`.
+
+**The finding is not the ATE, it is the frame the trajectory was written in.**
+`/odom` carries `odom -> base_link`, the REP-103 body convention; every public
+benchmark's ground truth is the colour camera's *optical* frame. They differ by a
+constant rotation and no translation, so an ATE over the translation part is
+**identical** either way — and a relative-pose error is not, because the error
+transform composes the rotations. Measured by rotating TUM's own ground truth by
+that constant and scoring it against itself: **0.654 m RPE over a 1 s window, for
+a trajectory that is exactly right.** The first run of the probe reported 0.768 m
+in the body frame and 0.150 m in the optical one, so essentially the whole of that
+number was the convention. The ATE moved by less than the run-to-run spread and
+would never have shown it. `odom_probe` now looks the rotation up in the TF tree
+rather than carrying a quaternion of its own, and **refuses to write the file** if
+the lookup fails — a trajectory in the wrong frame produces a number, not an
+error.
+
+**Two smaller ones from the same afternoon.** The `rotation_only` control does
+not merely fail the ATE ceiling, it cannot be scored at all: translation
+identically zero is a rank-deficient covariance and Umeyama has nothing to fit,
+so `evo` refuses. That is a stronger outcome than a large number and a weaker
+*assertion*, because an `evo` failure for any other reason would look the same —
+so the gate also asserts the ceiling is below the 0.8559 m an estimate that never
+moves would score, **derived from `groundtruth.txt`** rather than written down.
+And the fitted Sim(3) scale, 0.455–0.517 over six runs, is `depth_scale`'s answer
+without a tape measure: 4.6–5.2 against the 10.0 that has been in the YAML since
+P4 because somebody typed it. It does not transfer to the C922 in this room, but
+P12 is now a check on a number rather than the only source of one.
+
 Do not write "the node publishes X at Y Hz" until a node has published X and you
 have watched it do Y.

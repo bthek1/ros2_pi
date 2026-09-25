@@ -153,6 +153,34 @@ and fails with a protobuf parse error that names no cause.
 `models/` is excluded by construction rather than by a rule somebody has to
 remember.
 
+### A dataset with ground truth
+
+**TUM RGB-D fr1/desk**, 344 MB compressed. Fetched, checksummed and unpacked into
+`~/.local/share/pimesh-datasets` — outside the workspace, because it is not this
+project's data and a second checkout should find it already there.
+
+```bash
+bash tools/fetch-dataset.sh                  # fetch if missing, verify either way
+bash tools/fetch-dataset.sh --print-path     # where the sequence is
+```
+
+Three hashes are pinned rather than one: the tarball's says the download is what
+TUM published, `rgb.txt`'s says the frame list has not moved, and
+**`groundtruth.txt`'s says the truth has not** — which is the one that would
+otherwise be unfalsifiable, since a corrupted truth file does not produce an
+error, it produces an ATE. A tampered tree is detected, named, and re-extracted
+from the tarball.
+
+`tools/gates/trajectory.sh` also needs **`evo`**, which computes the ATE. It is
+somebody else's tool on purpose: writing our own would be writing the instrument
+and the thing it measures in the same afternoon.
+
+```bash
+uv tool install evo          # the way shellcheck-py is installed — no sudo
+```
+
+Neither goes on the Pi.
+
 ## Raspberry Pi
 
 The Pi already runs `ros-jazzy-ros-base` with the environment provisioned by the
@@ -244,7 +272,7 @@ cloned this, `just build && just view-camera` is the entire getting-started
 path — or `just dashboard` once the GPU stack is installed.
 
 **Everything else is a script in `tools/`, run directly.** The gates especially
-— there are fifteen, they are run constantly, and as recipes they buried the
+— there are seventeen, they are run constantly, and as recipes they buried the
 handful of commands a person actually types under an alphabetised wall of
 `gate-*`:
 
@@ -259,6 +287,7 @@ bash tools/gates/fusion.sh        # P5: the TSDF integrates every frame it is of
 bash tools/gates/mesh.sh          # P6: marching cubes, off the integration path
 bash tools/gates/odom.sh          # P7: 6-DoF pose against a rotation-only control
 bash tools/gates/dashboard.sh     # P8: five channels, and 0 cost to the pipeline
+bash tools/gates/trajectory.sh    # P11: the ATE against TUM fr1/desk's motion capture
 bash tools/gates/calibration.sh   # P9: the C922's real intrinsics, and that they straighten it
 bash tools/gates/gpu-stack.sh     # the GPU toolchain, before any node uses it
 
@@ -275,6 +304,7 @@ bash tools/calib/calibrate.sh select    #   ...best frames out of it, marker-con
 bash tools/calib/calibrate.sh solve     #   ...fit, and write the YAML + report.txt
 bash tools/calib/camera-reset.sh        # clear the camera's persistent V4L2 controls
 bash tools/stragglers.sh          # assert nothing outlived its session
+bash tools/fetch-dataset.sh       # TUM fr1/desk, for gates/trajectory.sh
 bash tools/pi/sync-pi.sh             # ship source to the Pi — source only
 bash tools/pi/build-pi.sh            # ...and build it there, under Jazzy
 bash tools/clean.sh               # delete the colcon trees (clean-pi.sh for the Pi's)

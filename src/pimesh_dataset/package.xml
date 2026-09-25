@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pimesh_dataset</name>
+  <version>0.1.0</version>
+  <description>
+    A public RGB-D sequence where the camera usually is. One component,
+    dataset_node, which publishes a TUM-format dataset's own frames at its own
+    stamps with its own intrinsics on camera_node's two topics — so that the
+    pipeline can be measured against a trajectory recorded by something that has
+    never heard of this repository.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>sensor_msgs</depend>
+  <depend>pimesh_msgs</depend>
+
+  <!-- **The calibration loader, not a second copy of it.** This node stands in
+       for camera_node, and reading a standard camera_info YAML is the part of
+       camera_node's job it has to do identically — including the refusal on a
+       width/height mismatch, which is what stops the C922's intrinsics being
+       served over a 640x480 dataset. The dependency runs dev-box package ->
+       Pi package, which is the direction that is fine: pimesh_camera keeps its
+       own copy of the small shared helpers precisely so that no edge points the
+       other way, and this one does not. It is also the same stage of the
+       pipeline, which is the real argument — a duplicated loader here would be
+       two implementations of "what does this YAML mean" and they would
+       eventually disagree. -->
+  <depend>pimesh_camera</depend>
+
+  <!-- imread, and only to learn the first frame's size at startup. The size is
+       what makes the calibration check an assertion instead of a comment. -->
+  <depend>libopencv-dev</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

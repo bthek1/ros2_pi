@@ -30,3 +30,25 @@ distortion in this mode, which is not what the phase expected; see
 One file per camera *and resolution*: these intrinsics do not carry to another mode,
 and `camera_node` refuses to start rather than publish a calibration whose
 `image_width`/`image_height` disagree with what it is capturing.
+
+## `tum_freiburg1.yaml` — somebody else's camera
+
+Not a calibration of anything in this room. It is the Kinect colour camera of the
+TUM RGB-D benchmark's *freiburg1* sequences, published by TUM alongside the data,
+and it is here because `dataset_node` (P11, [#10](https://github.com/bthek1/ros2_pi/issues/10))
+serves it while replaying `rgbd_dataset_freiburg1_desk` — 640×480,
+fx=517.306408, fy=516.469215, cx=318.643040, cy=255.313989, with real barrel
+distortion (`k1=+0.262383`), which the C922 at 720p does not have.
+
+**Its value is that it is a different size.** `load_calibration` refuses a file
+whose `image_width`/`image_height` disagrees with the stream, and `dataset_node`
+hands it the size measured off the first decoded frame — so serving
+`c922_720p.yaml` over Freiburg's frames is a node that will not start, rather
+than an ATE that is really a measurement of our calibration against somebody
+else's room. That is
+[#10](https://github.com/bthek1/ros2_pi/issues/10)'s second named false green,
+turned into a refusal.
+
+The numbers are transcribed from TUM's own calibration page rather than fitted
+here, and there is no way to check them from inside this project — which is
+precisely why they are in a file with a name saying whose camera they belong to.

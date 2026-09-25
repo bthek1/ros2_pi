@@ -23,6 +23,14 @@ revisits somewhere, which P13 records. Deleted from here.*
 
 ## Bound the drift against something outside the pipeline
 
+> **Half of this trigger fired on 2026-09-25.** #10's P11 gave the project a
+> second source of pose and an accuracy claim — 0.27–0.36 m Sim(3)-aligned ATE
+> against TUM fr1/desk's motion capture, `bash tools/gates/trajectory.sh`. What it
+> did **not** give is a bound on the drift *in this room, on this camera*: a
+> public dataset says nothing about the C922, and the Sim(3) alignment throws away
+> exactly the scale a tape measure would pin. Both bullets below are still about
+> that, and both still need a person. The entry stays.
+
 **Trigger: a second source of pose.** Everything P7 asserts about the trajectory
 is either internal consistency (the fit's reprojection error) or plausibility (a
 camera cannot cross what it can see in a tenth of a second). Neither is an

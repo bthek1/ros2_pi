@@ -31,6 +31,11 @@
   <exec_depend>pimesh_frontend</exec_depend>
   <exec_depend>pimesh_depth</exec_depend>
   <exec_depend>pimesh_mapping</exec_depend>
+  <!-- Loaded only with source:=dataset_node, and listed here for the same
+       reason as the three above: the container resolves it through the ament
+       index at runtime, so a missing dependency is a load failure on any machine
+       where it does not happen to be built. -->
+  <exec_depend>pimesh_dataset</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

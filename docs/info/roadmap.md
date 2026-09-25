@@ -7,10 +7,13 @@ mapping back end that fuses a surface out of it. What they do **not** build is
 the part that closes the loop: nothing recognises a place it has seen before, so
 drift is bounded per step and unbounded over a session. That is M10–M19.
 
-Status as of **2026-09-23**: M0–M9 done — that is visual odometry plus dense
-mapping, one webcam to a live mesh — and **M10–M19 filed that day as issues
-#10–#13, none started**, which is the SLAM work proper. The last thing to close was M8 and M9 on 2026-09-19; M5
-on 2026-09-15, M4 on 2026-09-13, M2.5 and M3 the day before.
+Status as of **2026-09-25**: M0–M9 done — that is visual odometry plus dense
+mapping, one webcam to a live mesh — plus **M10, the first number about the pose
+that this project did not produce**: a Sim(3)-aligned ATE of 0.27–0.36 m against TUM
+fr1/desk's motion-capture truth. M11–M19 remain, and **M11 and M12 need a person
+in a room with a tape measure and the camera**, not a script. The last thing to
+close before M10 was M8 and M9 on 2026-09-19; M5 on 2026-09-15, M4 on 2026-09-13,
+M2.5 and M3 the day before.
 
 The build order and per-phase tests live in
 [../plans/future/project_final_state.md](../plans/future/project_final_state.md);
@@ -25,8 +28,9 @@ Those phases are **built** as milestone issues, each a contiguous slice:
 [#6 C](https://github.com/bthek1/ros2_pi/issues/6) = M5,
 [#7 D](https://github.com/bthek1/ros2_pi/issues/7) = M6–M7,
 [#8 E](https://github.com/bthek1/ros2_pi/issues/8) = M8–M9 — **all five closed,
-and that is the pipeline** — then, opened 2026-09-23 and **not started**,
-[#10 F](https://github.com/bthek1/ros2_pi/issues/10) = M10–M12,
+and that is the pipeline** — then, opened 2026-09-23,
+[#10 F](https://github.com/bthek1/ros2_pi/issues/10) = M10–M12 (**M10 done
+2026-09-25**; M11 and M12 are the visit to the room),
 [#11 G](https://github.com/bthek1/ros2_pi/issues/11) = M13–M14,
 [#12 H](https://github.com/bthek1/ros2_pi/issues/12) = M15–M17,
 [#13 I](https://github.com/bthek1/ros2_pi/issues/13) = M18–M19, which turn it
@@ -52,7 +56,7 @@ outside opinion about whether any of it worked.
 | M7 | `mesh_node` — marching cubes, cleanup, Marker + PLY export | **done 2026-09-16** — [issue #7](https://github.com/bthek1/ros2_pi/issues/7) P6, `bash tools/gates/mesh.sh`: 790 668 triangles marched in 2.8 s and decimated to 120 000, boundary loops 5119 → 448 with the frontier still open, a 779 740-triangle PLY, and the worst integration gap 374.7 ms against a control's 401.3 ms — no dip |
 | M8 | 6-DoF odometry from RGB-D keypoints, so the surface stops smearing | **done 2026-09-19** — [issue #8](https://github.com/bthek1/ros2_pi/issues/8) P7, `bash tools/gates/odom.sh` over the whole of `bags/desk1`: **1.421 px** mean inlier reprojection over **97 inliers**, **79.9%** of depth frames posed, 1043 poses at **17.47 Hz**, a 31.1 m path and 4.87 m of net displacement against the control's identical zero, fastest published motion 1.9986 m/s against a 2.0 ceiling the node enforces itself. **The larger result is a bug it found on the way**: the rotation had been composed *inverted* since P3 — pan right, the published frame turns left — and correcting it is worth **3× on the paired-surface gap**, 1.3440 m → 0.4456 m, the first of those reproducing what M6 recorded. **The 6-DoF translation itself makes no measurable difference on this clip**, 0.4456 m against the control's 0.4471 m, and the gate prints that rather than asserting it: `desk1` is a pan, and what is left after the pose is the depth network's own shape error |
 | M9 | `dashboard_node` — the web view | **done 2026-09-19** — [issue #8](https://github.com/bthek1/ros2_pi/issues/8) P8 and P10, `bash tools/gates/dashboard.sh`. An HTTP and WebSocket server inside a ROS 2 node in its own process, no library and no three.js: five channels at 10.01 Hz stats / 9.16 Hz rgb / 4.47 Hz depth / 10.01 Hz pose / ~2.1 MB of mesh, the STALE flag 2.10 s after `/odom` stops against a 2.0 s threshold, and every stage of the pipeline — including `capture` from the Pi at 60.00 Hz — reporting itself on `/pipeline/stats`. Worst stage drift with a client attached: **0.77%**, against a **0.29%** floor measured between two runs with none — so P8's 2% bound is met. The gate states it as *floor plus slack* rather than a constant, because an earlier run of it saw 15% between two identical no-client runs and that was a `colcon build` sharing the box, not the pipeline |
-| M10 | A trajectory measured against ground truth — ATE on TUM fr1/desk | not started — [#10](https://github.com/bthek1/ros2_pi/issues/10) P11, `bash tools/gates/trajectory.sh`. **The first number this project will have about its pose that this project did not produce.** Everything M1–M9 asserts about the trajectory is internal, and P7 showed what that is worth: the rotation was composed inverted from P3 to P7 and every number describing it was correct |
+| M10 | A trajectory measured against ground truth — ATE on TUM fr1/desk | **done 2026-09-25** — [#10](https://github.com/bthek1/ros2_pi/issues/10) P11, `bash tools/gates/trajectory.sh`. **Sim(3)-aligned ATE RMSE 0.27–0.36 m over six runs** of ~350 poses of TUM fr1/desk, 100% associated against the motion-capture truth, RPE 0.14–0.15 m over a 1 s window, with the `rotation_only` control failing the same ceiling — it cannot be aligned at all. The fitted scale puts `depth_scale` at **4.6–4.9**, which is M11's answer arrived at without a tape measure. Everything M1–M9 asserts about the trajectory is internal, and P7 showed what that is worth: the rotation was composed inverted from P3 to P7 and every number describing it was correct |
 | M11 | `depth_scale` pinned with a tape measure, `bags/scale1` recorded | not started — [#10](https://github.com/bthek1/ros2_pi/issues/10) P12, `bash tools/gates/scale.sh`. **Needs a human.** Until it happens every distance this pipeline reports is plausibly shaped and in an unknown unit |
 | M12 | `bags/walk1` — a clip with real translation | not started — [#10](https://github.com/bthek1/ros2_pi/issues/10) P13, `bash tools/gates/odom.sh walk1`. **Needs a human**, and the same visit to the room as M11. Settles the comparison `gates/odom.sh` currently prints rather than asserts |
 | M13 | Map points observed by many keyframes, tracking against the local map | not started — [#11](https://github.com/bthek1/ros2_pi/issues/11) P14, `bash tools/gates/map.sh`. A landmark stops dying with the keyframe that saw it, which is the noun SLAM has and this pipeline does not |

@@ -733,6 +733,70 @@ sane in the meantime — the histogram `mesh_node` logs each extraction
 (`weights blocks=… >=1:… >=4:… >=8:… >=16:… >=32:…`) is the evidence to choose it
 from, rather than eyeing a picture.
 
+## `dataset_node` refuses to start, naming a calibration
+
+```
+[FATAL] [dataset_node]: refusing to start: dataset_node cannot use camera_info_url
+'package://pimesh_bringup/config/camera_info/c922_720p.yaml' (...): image size
+1280x720 does not match the 640x480 stream
+```
+
+**This is the node working.** `dataset_node` hands `pimesh_camera`'s calibration
+loader the size of the *first decoded frame*, and that loader rejects a YAML whose
+`image_width`/`image_height` disagrees. Serving the C922's intrinsics over a
+640×480 dataset would make every unprojection wrong by ~1.5× and the resulting ATE
+a measurement of our calibration against somebody else's room — a plausible
+number, with nothing anywhere failing. `tools/gates/trajectory.sh` runs exactly
+this as a control on every run.
+
+The fix is to name the sequence's own intrinsics:
+`camera_info_url:=package://pimesh_bringup/config/camera_info/tum_freiburg1.yaml`,
+which is what `config/pimesh.yaml` already sets. If you are adding a **new**
+sequence, add a `camera_info` YAML for it beside that one; there is no fallback,
+because a dataset's intrinsics are a fact about somebody else's camera and there
+is no such thing as a nominal value for one.
+
+A second refusal from the same node, and it is also the node working:
+
+```
+refusing to start: dataset_node needs dataset_dir set to an unpacked TUM sequence
+```
+
+There is no default path on purpose — a replay source that starts on its own is a
+second publisher on `/image_raw/compressed`. Pass
+`source:=dataset_node dataset_dir:=$(bash tools/fetch-dataset.sh --print-path)`.
+
+---
+
+## `evo` reports a plausible RPE and the trajectory is fine
+
+**Check what frame the trajectory was written in before believing an RPE.**
+`/odom` carries `odom -> base_link`, the REP-103 body convention; every public
+RGB-D benchmark's ground truth is the colour camera's *optical* frame. They differ
+by a constant rotation and no translation.
+
+An **ATE** over the translation part is therefore identical either way — it never
+looks at the rotation. An **RPE** is not, because the error transform
+`inv(rel_ref) · rel_est` composes them. Measured 2026-09-25 by rotating TUM
+fr1/desk's own ground truth by that constant and scoring it against itself:
+**0.654 m RPE over a 1 s window, for a trajectory that is exactly right.** The
+first run of this pipeline reported 0.768 m in the body frame and 0.150 m in the
+optical one.
+
+`odom_probe` composes the pose with `base_link -> camera_optical_frame` looked up
+from TF, and **refuses to write the file** rather than writing one in the wrong
+frame. If it says
+
+```
+odom_probe trajectory refused: N of M poses could not be put in 'camera_optical_frame'
+```
+
+then the static tree was not up when those poses arrived — check that
+`pipeline:=false` was not passed and that the three `static_transform_publisher`
+processes are running.
+
+---
+
 ## A node segfaults immediately after doing something difficult correctly
 
 **Symptom.** `process has died … exit code -11`, right after a log line reporting

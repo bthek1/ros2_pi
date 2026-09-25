@@ -91,6 +91,53 @@
     # because the failure P7 fixed was a pose every internal number described
     # correctly and that left the node inverted.
     odom_topic: /odom
+    # Empty writes nothing. tools/gates/trajectory.sh overrides it through the
+    # launch argument of the same name — the file it names is what `evo` reads to
+    # produce the first number in this project about the pose that does not come
+    # out of this project. Default empty because every *other* gate loads this
+    # probe too and none of them wants a file.
+    trajectory_path: ""
+    # **Must match camera_to_optical's child_frame_id.** The written trajectory is
+    # the *camera's* pose, because that is what a public benchmark's ground truth
+    # is; /odom carries the body frame, and the two differ by a constant rotation
+    # that an ATE cannot see and an RPE can — measured at 0.654 m over a 1 s
+    # window against a trajectory that was exactly right. The quaternion is not
+    # written here: the probe looks the edge up in the TF tree, so there is one
+    # copy of it. test_transforms asserts the pair.
+    optical_frame: camera_optical_frame
+
+# --- The dataset, which is where the frames come from when the Pi does not ----
+
+/**/dataset_node:
+  ros__parameters:
+    # Loaded only with source:=dataset_node, and never beside the camera: two
+    # publishers on /image_raw/compressed is the "one session at a time" failure
+    # seen from the producing end, where neither session is doing anything wrong.
+    #
+    # **No dataset_dir here, and that is the point.** A path in this file would be
+    # a default, and a replay source with a default is one that can start without
+    # anybody having chosen it. tools/gates/trajectory.sh passes it through the
+    # launch argument; the node refuses to construct without one.
+    index_name: rgb.txt
+    # camera_node's two topics. Nothing downstream may be able to tell which of
+    # the two is publishing — that is the whole basis on which a trajectory
+    # measured against TUM's ground truth says anything about the pipeline that
+    # runs on the Pi's camera.
+    image_topic: /image_raw/compressed
+    info_topic: /camera_info
+    # **Somebody else's camera, and named as such.** The loader is handed the size
+    # of the first decoded frame, so this file's 640x480 is checked against the
+    # frames rather than asserted beside them — serving c922_720p.yaml here is a
+    # node that will not start.
+    camera_info_url: package://pimesh_bringup/config/camera_info/tum_freiburg1.yaml
+    # The optical convention, the same string camera_node stamps with.
+    frame_id: camera_optical_frame
+    # Real time. A slower replay gives the pipeline more time per frame, which
+    # makes the posed fraction go up and the number stop being about a 30 Hz
+    # camera; it is a diagnostic, not a run.
+    rate_scale: 1.0
+    max_frames: 0
+    stats_period_s: 0.1
 
 /**/keypoint_node:
   ros__parameters:

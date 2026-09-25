@@ -169,6 +169,18 @@ if(BUILD_TESTING)
   if(TARGET test_keyframe_store)
     target_link_libraries(test_keyframe_store frontend_components)
   endif()
+
+  # P11's instrument. odom_probe writes the trajectory tools/gates/trajectory.sh
+  # hands to `evo`, and a gate's instrument needs its own tests — the same
+  # argument test_orb_reference makes. It is sharper here because the reader is
+  # somebody else's parser: every way of getting this format wrong ends in a
+  # number rather than an error. Header-only and no ROS, so it runs on the Pi
+  # like everything else in this directory.
+  ament_add_gtest(test_tum_trajectory test/test_tum_trajectory.cpp)
+  if(TARGET test_tum_trajectory)
+    target_include_directories(test_tum_trajectory PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  endif()
 endif()
 
 ament_export_include_directories(include)

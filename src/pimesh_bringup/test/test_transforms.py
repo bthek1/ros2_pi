@@ -12,6 +12,7 @@ These run under `colcon test` on both machines and need no hardware.
 import importlib.util
 import math
 import os
+import xml.etree.ElementTree as ElementTree
 
 import pytest
 import yaml
@@ -19,6 +20,7 @@ import yaml
 _HERE = os.path.dirname(__file__)
 _CONFIG = os.path.join(_HERE, '..', 'config', 'pimesh.yaml')
 _LAUNCH = os.path.join(_HERE, '..', 'launch', 'pimesh.launch.py')
+_WORKSPACE = os.path.abspath(os.path.join(_HERE, '..', '..', '..'))
 
 
 def _load_launch_module():
@@ -102,6 +104,7 @@ def test_config_has_no_keys_the_launch_file_ignores(config, launch_module):
     expected = set(launch_module.STATIC_TRANSFORMS)
     expected |= {name for name, _, _plugin in launch_module.COMPONENTS}
     expected |= {name for name, _, _plugin in launch_module.PROBE_COMPONENTS}
+    expected |= {name for name, _, _plugin in launch_module.SOURCE_COMPONENTS}
     expected |= {name for name, _, _exe in launch_module.STANDALONE_NODES}
     assert keyed == expected
 
@@ -110,7 +113,8 @@ def test_every_composed_component_has_a_config_key(launch_module, config):
     """And the same check from the other side, stated separately because it fails
     differently: a component with no key in the YAML runs entirely on its code
     defaults, which is a node that works and is not configured."""
-    for name, _, _plugin in launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS:
+    for name, _, _plugin in (launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS +
+                             launch_module.SOURCE_COMPONENTS):
         assert f'/**/{name}' in config, f'{name} is composed but has no key in pimesh.yaml'
     for name, _, _exe in launch_module.STANDALONE_NODES:
         assert f'/**/{name}' in config, f'{name} is launched but has no key in pimesh.yaml'
@@ -129,11 +133,34 @@ def test_every_plugin_string_is_registered_in_the_ament_index(launch_module):
     names for it**, not in one fixed package's. The container does exactly that,
     and since P5 there are two packages supplying components — so a check against
     a single index would either pass over half of them or report a class as
-    missing when it is merely elsewhere."""
+    missing when it is merely elsewhere.
+
+    **A package of this workspace's own is located from `install/`, not from
+    `AMENT_PREFIX_PATH`.** It is the same file either way — the overlay's entry
+    on that path *is* `install/<package>` — but the environment is a statement
+    about the shell and `install/` is a statement about the tree, and only the
+    second is what this test is about. Measured 2026-09-25: a terminal opened
+    before #14's P2 split `pimesh_perception` carried three prefixes of an
+    overlay that has nine, so `pytest` run from it raised
+    `PackageNotFoundError: package 'pimesh_frontend' not found` over a package
+    built, installed and registered correctly — a red test naming a file that
+    was right, in a workspace where `colcon test` passed 36/36. Anything *not*
+    in `src/` is still resolved through the index, which is the only way to find
+    it."""
     from ament_index_python.packages import get_package_prefix
 
+    def prefix_of(package):
+        """Where this package's build output is, without asking the environment."""
+        if os.path.isdir(os.path.join(_WORKSPACE, 'src', package)):
+            prefix = os.path.join(_WORKSPACE, 'install', package)
+            assert os.path.isdir(prefix), (
+                f'{package} is in src/ and not in install/ — build the '
+                f'workspace (`bash tools/build.sh`) before running this suite')
+            return prefix
+        return get_package_prefix(package)
+
     def registered_in(package):
-        prefix = get_package_prefix(package)
+        prefix = prefix_of(package)
         resource = os.path.join(prefix, 'share', 'ament_index', 'resource_index',
                                 'rclcpp_components', package)
         assert os.path.isfile(resource), (
@@ -147,11 +174,52 @@ def test_every_plugin_string_is_registered_in_the_ament_index(launch_module):
                     found.add(line.split(';')[0].strip())
         return found
 
-    for name, package, plugin in launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS:
+    for name, package, plugin in (launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS +
+                                  launch_module.SOURCE_COMPONENTS):
         registered = registered_in(package)
         assert plugin in registered, (
             f'{name} names {plugin}, which {package} does not register '
             f'(it registers {sorted(registered)})')
+
+
+def test_every_component_package_is_an_exec_depend_of_this_one(launch_module):
+    """The launch file names three packages it is not compiled against, and
+    `package.xml` is the only thing that says they will be installed.
+
+    This is here because it used to be asserted by accident. `colcon test` runs
+    a suite with the package under test and its recursive dependencies on
+    AMENT_PREFIX_PATH and *nothing else*, so while the test above resolved its
+    plugins through that path, a package missing from `package.xml` came out as
+    a `PackageNotFoundError` — a real signal, from a mechanism nobody had
+    written down, that said "not found" when it meant "not depended on". The
+    test above no longer reads the environment, so that signal has to be made
+    on purpose or not at all.
+
+    Making it on purpose is strictly better: it holds under a bare `pytest` too,
+    it fails with the name of the missing dependency instead of a search path,
+    and a reader can see what is being claimed. The failure it covers is a
+    launch file that works on the machine it was written on — where the package
+    happens to be built — and fails to load a component on a fresh install of
+    `pimesh_bringup` alone.
+    """
+    manifest = ElementTree.parse(os.path.join(_HERE, '..', 'package.xml')).getroot()
+    declared = {
+        element.text.strip()
+        for tag in ('exec_depend', 'depend')
+        for element in manifest.findall(tag)
+        if element.text
+    }
+
+    named = {package for _, package, _ in
+             launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS +
+             launch_module.SOURCE_COMPONENTS}
+
+    missing = sorted(named - declared)
+    assert not missing, (
+        f'pimesh.launch.py loads components from {missing}, which '
+        f'pimesh_bringup does not exec_depend on — the container would come up '
+        f'and fail to load them wherever that package is not separately '
+        f'installed')
 
 
 # --- The numbers are valid rotations ----------------------------------------
@@ -284,17 +352,18 @@ def test_the_launch_description_actually_builds(launch_module):
         len(launch_module.STATIC_TRANSFORMS) + len(launch_module.STANDALONE_NODES))
     assert kinds.get(ComposableNodeContainer) == 1, 'there is one container, always'
     # intra_process, log_payloads, probe, probe_duration_s, align,
-    # remesh_period_s, dashboard, dashboard_port, odom_regime, use_cuda,
-    # pipeline — each exists because something outside this file has to be able
-    # to set it: the first ten for gates and viewers, the last for
-    # tools/view/replay.sh.
-    assert kinds.get(DeclareLaunchArgument) == 11
-    # One per probe, loaded into the running container rather than listed in it,
-    # because `composable_node_descriptions` is built when this file is evaluated
-    # and cannot be made conditional on an argument. One action each rather than
-    # one action over a filtered list, for the same reason: the filtering would
-    # have to happen before `probe` has a value.
-    assert kinds.get(LoadComposableNodes) == len(launch_module.PROBE_COMPONENTS)
+    # remesh_period_s, dashboard, dashboard_port, odom_regime, source,
+    # dataset_dir, trajectory_path, use_cuda, pipeline — each exists because
+    # something outside this file has to be able to set it: all but the last for
+    # gates and viewers, the last for tools/view/replay.sh.
+    assert kinds.get(DeclareLaunchArgument) == 14
+    # One per probe **and one per source**, loaded into the running container
+    # rather than listed in it, because `composable_node_descriptions` is built
+    # when this file is evaluated and cannot be made conditional on an argument.
+    # One action each rather than one action over a filtered list, for the same
+    # reason: the filtering would have to happen before `probe` has a value.
+    assert kinds.get(LoadComposableNodes) == (
+        len(launch_module.PROBE_COMPONENTS) + len(launch_module.SOURCE_COMPONENTS))
     assert len(actions) == sum(kinds.values())
 
 
@@ -316,13 +385,23 @@ def test_at_most_one_probe_loads_and_none_by_default(launch_module):
     from launch_ros.actions import LoadComposableNodes
 
     description = launch_module.generate_launch_description()
+    # Every conditional load, probes and sources alike — they are the same action
+    # type and the count is asserted over the pair rather than over one list,
+    # because a source load accidentally conditioned on `probe` is exactly the
+    # "two conditions matching the same value" failure this test is about.
     loads = [a for a in description.entities if isinstance(a, LoadComposableNodes)]
-    assert len(loads) == len(launch_module.PROBE_COMPONENTS)
+    assert len(loads) == (
+        len(launch_module.PROBE_COMPONENTS) + len(launch_module.SOURCE_COMPONENTS))
 
     names = [name for name, _, _plugin in launch_module.PROBE_COMPONENTS]
     for value, expected in [('none', 0), *[(n, 1) for n in names]]:
         context = LaunchContext()
         context.launch_configurations['probe'] = value
+        # Pinned so that what is counted is probes and nothing else. The source
+        # loads are the same action type on the same mechanism, and without this
+        # they would resolve an unset configuration and raise — a red test about
+        # the wrong thing.
+        context.launch_configurations['source'] = 'live'
         fired = sum(
             1 for load in loads
             if load.condition is not None and load.condition.evaluate(context)
@@ -331,6 +410,44 @@ def test_at_most_one_probe_loads_and_none_by_default(launch_module):
             f'probe:={value} loads {fired} probe(s), expected {expected} — '
             'two probes measuring at once is the thing this argument prevents'
         )
+
+
+def test_at_most_one_source_loads_and_none_by_default(launch_module):
+    """The same shape as the probe test and a sharper reason.
+
+    A probe is a *consumer* nobody asked for. A source is a **publisher on
+    /image_raw/compressed**, which is the one topic the Pi's camera and
+    `ros2 bag play` already use — and two publishers there is the failure
+    CLAUDE.md records for 2026-09-13, where one `decode_node` interleaved a live
+    camera and a three-minute-old bag, published a pose whose stamps jumped
+    minutes back and forth, and flooded both RViz windows. **Neither session had
+    anything wrong with it.** `assert_no_session` guards the case where the other
+    publisher is a separate session; this guards the case where it is in the same
+    launch.
+
+    `source:=live` is the default and loads nothing, because in normal operation
+    the publisher is `camera_node` on the Pi and this file has no business
+    starting one.
+    """
+    from launch import LaunchContext
+    from launch_ros.actions import LoadComposableNodes
+
+    description = launch_module.generate_launch_description()
+    loads = [a for a in description.entities if isinstance(a, LoadComposableNodes)]
+
+    names = [name for name, _, _plugin in launch_module.SOURCE_COMPONENTS]
+    assert names, 'there is at least one source; this test is about it'
+    for value, expected in [('live', 0), *[(n, 1) for n in names]]:
+        context = LaunchContext()
+        context.launch_configurations['source'] = value
+        context.launch_configurations['probe'] = 'none'
+        fired = sum(
+            1 for load in loads
+            if load.condition is not None and load.condition.evaluate(context)
+        )
+        assert fired == expected, (
+            f'source:={value} loads {fired} source(s), expected {expected} — '
+            'two publishers on /image_raw/compressed is what this prevents')
 
 
 def test_the_dashboard_is_opt_in_and_runs_outside_the_container(launch_module):
@@ -546,19 +663,23 @@ def test_the_overrides_are_the_ones_the_gates_actually_pass(launch_module):
 
     `use_cuda` is a bool in depth_node, `duration_s` a double in depth_probe,
     `log_payloads` a bool in decode_node, `align` a bool in fusion_node,
-    `remesh_period_s` a double in mesh_node, `odometry` a string in odometry_node.
+    `remesh_period_s` a double in mesh_node, `odometry` a string in
+    odometry_node, `dataset_dir` a string in dataset_node and `trajectory_path`
+    a string in odom_probe.
     A `value_type` that disagrees with the declaration is the same silent no-op as
     having none.
     """
     expected = {
         'log_payloads': bool, 'use_cuda': bool, 'duration_s': float, 'align': bool,
-        'remesh_period_s': float, 'odometry': str}
+        'remesh_period_s': float, 'odometry': str, 'dataset_dir': str,
+        'trajectory_path': str}
     overrides = _override_values(launch_module)
 
     assert set(overrides) == set(expected), (
         'the override set changed; update the gates that depend on it '
         '(tools/gates/ipc.sh, tools/gates/depth.sh, tools/gates/fusion.sh, '
-        'tools/gates/mesh.sh, tools/gates/odom.sh) and this test together')
+        'tools/gates/mesh.sh, tools/gates/odom.sh, tools/gates/trajectory.sh) '
+        'and this test together')
     for name, want in expected.items():
         assert overrides[name].value_type is want, (
             f'{name} is declared {want.__name__} by its node')
@@ -616,6 +737,102 @@ def test_depth_publishes_into_the_frame_the_static_tree_defines(config):
     """
     optical = config['/**/camera_to_optical']['ros__parameters']['child_frame_id']
     assert config['/**/depth_node']['ros__parameters']['optical_frame'] == optical
+
+
+# --- The dataset source has to be indistinguishable from the camera -----------
+#
+# `dataset_node` exists so that the pose can be measured against a trajectory
+# recorded by something outside this project. That only means anything if nothing
+# downstream can tell which source is publishing — so every string it shares with
+# the rest of the pipeline is a pair that has to hold the same value, with nothing
+# but these tests relating them. A drift in any of them does not fail: it produces
+# a pipeline that runs and an ATE that is a measurement of the drift.
+
+def test_the_written_trajectory_is_in_the_frame_a_benchmark_measures(config):
+    """**The frame an ATE cannot see and an RPE can.**
+
+    `/odom` carries `odom -> base_link`, the REP-103 body convention. Every public
+    RGB-D benchmark gives ground truth for the *colour camera's optical* frame.
+    The two differ here by a constant rotation and no translation, so an ATE over
+    the translation part is identical either way — and a relative-pose error is
+    not, because the error transform composes the rotations. Measured 2026-09-25
+    by rotating TUM fr1/desk's own ground truth by that constant and scoring it
+    against itself: **0.654 m RPE over a 1 s window, for a trajectory that is
+    exactly right**, against the 0.724 m the first run of `odom_probe` reported.
+    Essentially the whole of that number was the convention.
+
+    `odom_probe` names the frame and looks the rotation up in the TF tree rather
+    than carrying a quaternion of its own — so this test is the pair check: the
+    frame it names has to be the one `camera_to_optical` actually publishes, or
+    the lookup fails and no trajectory is written at all.
+    """
+    optical = config['/**/camera_to_optical']['ros__parameters']['child_frame_id']
+    assert config['/**/odom_probe']['ros__parameters']['optical_frame'] == optical
+    # And the same frame everything geometric in this pipeline works in, which is
+    # the claim that makes composing onto /odom's orientation the right thing.
+    assert config['/**/depth_node']['ros__parameters']['optical_frame'] == optical
+
+
+def test_the_dataset_publishes_onto_the_topic_the_pipeline_decodes(config):
+    """`dataset_node` stands in for `camera_node`, which means publishing exactly
+    where `camera_node` does.
+
+    A drift here is the quietest failure in this file: the replay runs, the frames
+    go out, `decode_node` sees nothing, and `tools/gates/trajectory.sh` reports a
+    trajectory of zero poses — which reads as "the pipeline could not pose this
+    sequence" rather than as "nobody was listening".
+    """
+    dataset = config['/**/dataset_node']['ros__parameters']
+    assert dataset['image_topic'] == config['/**/decode_node']['ros__parameters']['input_topic']
+    assert dataset['info_topic'] == config['/**/fusion_node']['ros__parameters']['info_topic']
+
+
+def test_the_dataset_stamps_frames_in_the_frame_the_static_tree_defines(config):
+    """Same claim as `test_depth_publishes_into_the_frame_the_static_tree_defines`,
+    at the other end of the pipeline: the frames arrive labelled with a frame the
+    tree actually publishes, and it is the *optical* one.
+
+    A body-convention frame_id here would leave every unprojected ray 90 degrees
+    out with nothing failing — the failure `camera_node`'s own comment is about.
+    """
+    optical = config['/**/camera_to_optical']['ros__parameters']['child_frame_id']
+    assert config['/**/dataset_node']['ros__parameters']['frame_id'] == optical
+
+
+def test_the_dataset_serves_intrinsics_that_are_not_this_cameras(config):
+    """**#10 P11's second named false green, as an assertion.**
+
+    Serving the C922's `fx=953.4` over Freiburg's 640x480 frames makes every
+    unprojection wrong by ~1.5x, and the resulting ATE a measurement of our
+    calibration against somebody else's room. Nothing about it looks malformed:
+    `CameraInfo` is well-formed, every consumer accepts it, and the trajectory
+    comes out plausible and wrong.
+
+    `dataset_node` makes that a refusal to start rather than a number, by handing
+    `load_calibration` the size of the first *decoded frame* — and this test is
+    the hermetic half: the file it names exists, it is a different resolution
+    from the camera's, and its focal length is not the camera's either. The size
+    difference is what the runtime refusal keys on; the focal length is what would
+    still be wrong if two sequences ever shared a resolution.
+    """
+    url = config['/**/dataset_node']['ros__parameters']['camera_info_url']
+    prefix = 'package://pimesh_bringup/'
+    assert url.startswith(prefix), url
+    here = os.path.join(_HERE, '..', url[len(prefix):])
+    assert os.path.isfile(here), f'{url} resolves to nothing'
+
+    with open(here) as handle:
+        dataset_cal = yaml.safe_load(handle)
+    with open(os.path.join(_HERE, '..', 'config', 'camera_info', 'c922_720p.yaml')) as handle:
+        camera_cal = yaml.safe_load(handle)
+
+    assert (dataset_cal['image_width'], dataset_cal['image_height']) != \
+        (camera_cal['image_width'], camera_cal['image_height']), (
+            'the dataset and the camera are the same resolution, so the '
+            "loader's width/height refusal can no longer tell them apart — the "
+            'run-time protection against serving the wrong intrinsics is gone')
+    assert dataset_cal['camera_matrix']['data'][0] != camera_cal['camera_matrix']['data'][0]
+    assert dataset_cal['distortion_model'] == 'plumb_bob'
 
 
 # --- The map's two nodes have to agree with each other and with depth ---------
@@ -852,6 +1069,7 @@ def test_the_marker_cap_is_a_cap_and_not_a_target(config):
 # Naming the package and walking it removes the failure mode rather than the
 # instance: a new subdirectory is covered without anyone remembering.
 _COMPONENT_PKGS = [
+    os.path.join(_HERE, '..', '..', 'pimesh_dataset'),
     os.path.join(_HERE, '..', '..', 'pimesh_frontend'),
     os.path.join(_HERE, '..', '..', 'pimesh_depth'),
     os.path.join(_HERE, '..', '..', 'pimesh_mapping'),
@@ -907,6 +1125,7 @@ def test_no_parameter_in_the_yaml_is_read_by_nobody(config, launch_module, decla
     """
     components = {name for name, _, _plugin in launch_module.COMPONENTS}
     components |= {name for name, _, _plugin in launch_module.PROBE_COMPONENTS}
+    components |= {name for name, _, _plugin in launch_module.SOURCE_COMPONENTS}
 
     orphans = {}
     for key, entry in config.items():

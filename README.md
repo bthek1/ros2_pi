@@ -29,9 +29,10 @@ where it pays.
 ## Status
 
 **The whole pipeline runs, end to end.** As of **2026-09-23** the repository holds
-six packages, and a webcam on a Pi becomes a triangle surface on the dev box with
-a browser tab watching it. The surface does not look like a room yet, for a
-reason given below:
+nine packages, and a webcam on a Pi becomes a triangle surface on the dev box with
+a browser tab watching it. Since **2026-09-25** it has also been measured against
+a trajectory recorded by something that has never heard of this repository. The
+surface does not look like a room yet, for a reason given below:
 
 - **Capture** (`pimesh_camera`, on the Pi) — 1280×720 MJPEG stamped with the
   kernel's capture time, **44–59 Hz received on the dev box**, serving real
@@ -71,6 +72,16 @@ reason given below:
   with meshing running against 401.3 ms in a control with nothing meshing** — the
   extraction costs the integrator nothing measurable.
 
+- **Truth** (`pimesh_dataset` + `evo`, offline) — TUM RGB-D fr1/desk, 613 frames
+  with a 100 Hz motion-capture trajectory, replayed through the real container at
+  its own stamps with its own intrinsics: **Sim(3)-aligned ATE RMSE 0.27–0.36 m**
+  over six runs of ~350 poses, **100%** of them associated against the truth, RPE **0.15 m** over a
+  1 s window, with the `rotation_only` control unable to be aligned at all. It is
+  the first figure in this project about the pose that this project did not
+  produce, and it was worth having: everything above is internal, and P7 is what
+  that is worth — the rotation was composed inverted for six days and every
+  internal number describing it was right. `bash tools/gates/trajectory.sh`.
+
 `just build` then `just view-mesh` shows it running; `just --list` is the
 whole of what you type on a normal day. The tests are the `tools/gates/*.sh`
 scripts, run directly, and each milestone issue records what they printed —
@@ -78,7 +89,8 @@ scripts, run directly, and each milestone issue records what they printed —
 [#5](https://github.com/bthek1/ros2_pi/issues/5) for decode and keypoints,
 [#6](https://github.com/bthek1/ros2_pi/issues/6) for depth,
 [#7](https://github.com/bthek1/ros2_pi/issues/7) for fusion and the mesh,
-[#9](https://github.com/bthek1/ros2_pi/issues/9) for the calibration.
+[#9](https://github.com/bthek1/ros2_pi/issues/9) for the calibration, and
+[#10](https://github.com/bthek1/ros2_pi/issues/10) for the ATE.
 
 **The mesh is still not a room, and the reason moved on 2026-09-19.** Two causes
 were named for it — rotation-only odometry and an unpinned `depth_scale` — and P7
@@ -93,10 +105,17 @@ first of those numbers reproduces exactly what milestone D recorded.
 measurable difference to the surface: `bags/desk1` is a *pan*, so rotation already
 explains most of the frame motion, and what is left is the depth network's own
 shape error rather than the pose's. What would settle it is a clip with deliberate
-translation, which needs a person and the camera —
-[docs/plans/future/milestone-e-future.md](docs/plans/future/milestone-e-future.md)
-says so, alongside the tape measure that pins `depth_scale`. Until that number
-exists every distance here is plausibly shaped and the wrong size.
+translation, which needs a person and the camera — that is **P13** of
+[#10](https://github.com/bthek1/ros2_pi/issues/10), alongside **P12**, the tape
+measure that pins `depth_scale`.
+
+**P11 has since bounded that second number without a tape measure.** Fitting a
+Sim(3) between our trajectory and TUM's metric ground truth gives a scale of
+0.46–0.52 over six runs, so that sequence says `depth_scale` should be **4.6–5.2** against the
+10.0 in the YAML. It does not transfer — different camera, different scene, and
+Depth Anything's scale is per-image — so the visit to the room still has to
+happen. What changed is that it is now a *check* on a figure that exists rather
+than the only source of it.
 
 **Every number in `docs/` is now this project's own.** Nothing is quoted from the
 Python predecessor at [`~/Documents/piros2`](../piros2) as a stand-in any more; it

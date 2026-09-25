@@ -52,14 +52,43 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 433 tests across twenty-eight suites, identical on both distros**
-(`bash tools/gates/test.sh`, 2026-09-23).
+**Status: 459 tests across thirty suites, identical on both distros**
+(`bash tools/gates/test.sh`, 2026-09-25).
 
 ## The suites
 
-433 across twenty-eight suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+459 across thirty suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
 
-**`test_keypoints_view`** (added 2026-09-23) is the newest and the only one in
+**`test_tum_trajectory` and `test_dataset_reader`** (added 2026-09-25, #10's P11)
+are the newest, and both are there because the code under them is read by
+something outside this project.
+
+`test_tum_trajectory` covers the file `odom_probe` hands to `evo` — a gate's
+instrument, and the argument `test_orb_reference` makes applies with more force
+here, because the *reader* is somebody else's parser. `evo` accepts nearly
+anything that writer could emit, so every way of getting the format wrong ends in
+a number rather than an error: `%g` on the timestamp collapses a 20 s clip onto
+one instant and reports a small, confident ATE over nothing; a `w x y z`
+quaternion is invisible in exactly the figure P11 is about, since an ATE over the
+translation part never looks at the rotation; and a one-pose file aligns exactly
+onto its reference for an ATE of 0.000000, which is `cost_mean=0.00` in a new
+format. The expectations are literal bytes, not a round trip through a parser
+written beside the writer — `test_mesh_io`'s lesson.
+
+`test_dataset_reader` covers the index parser, and it exists for one line of it:
+`std::stod(text) * 1e9` is the obvious way to turn `1305031452.791720` into
+nanoseconds, it is wrong by a few hundred of them, and nothing downstream would
+ever report it — `evo` associates within 10 ms and the pipeline is internally
+consistent because it is wrong the same way everywhere. The suite asserts the
+exact integer *and* asserts that the naive spelling disagrees with it, so a
+compiler with wider intermediates cannot quietly turn the test into a tautology.
+The rest is refusals: an index whose stamps repeat (two frames at one stamp is a
+second answer to a lookup `odometry_node` does by exact stamp, not a duplicate),
+one that goes backwards (the `--loop` failure arriving through a file), a listed
+image that is not on disk, and a three-field line, which is what a path with a
+space in it looks like.
+
+**`test_keypoints_view`** (added 2026-09-23) is the only one in
 this workspace that asserts about *undefined behaviour* rather than about a
 plausible wrong answer. Reading a `Keypoints` message back into corners, track
 ids, descriptors and one-frame-apart pairs was three loops inside

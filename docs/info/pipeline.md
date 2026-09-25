@@ -53,7 +53,7 @@ it; the numbers below marked **(measured here)** are that gate's output.
   are taken microseconds apart on one machine, so their relative drift is
   irrelevant, and there is no per-process constant left to be wrong.
   **(measured here)** two launches of the node agreed on their stamp-to-receipt
-  offset to within **0.30–1.02 ms** across five runs — against usb_cam, which
+  offset to within **0.30–1.02 ms** across six runs — against usb_cam, which
   redraws hundreds of milliseconds of it every launch. The node also checks the
   buffer's `V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC` flag rather than trusting the
   field, and falls back to stamping at dequeue with a warning if the driver is
@@ -115,6 +115,81 @@ five runs — 0 duplicate payloads in every run, so those are distinct frames.
 The gap between the two is the Wi-Fi hop, and it is the thing to watch: never
 quote a frame rate without saying which machine measured it and which exposure
 mode it was under.
+
+### Stage 1b — Capture, from somebody else's room (`dataset_node`, dev box) — **built 2026-09-25**
+
+**Job:** be stage 1, exactly, with a public sequence where the sensor is.
+
+`bash tools/gates/trajectory.sh` (P11) is what closes it, and the phase exists
+because this project had never measured its pose against anything outside itself.
+Every figure P0–P10 asserts about the trajectory is produced by the thing that
+produced the trajectory — a PnP reprojection residual, a paired-surface gap — and
+P7 is the demonstration of what that is worth: the rotation was composed inverted
+for six days and every internal number describing it was right.
+
+- Reads a TUM-format index (`rgb.txt`: `<timestamp> <path>` per line) and
+  publishes each frame's bytes **verbatim** on `/image_raw/compressed`, at the
+  dataset's own `header.stamp`, in `camera_optical_frame`, with the dataset's own
+  intrinsics on `/camera_info`. Plus a `/pipeline/stats` row under the stage name
+  **`capture`**, because it is the capture stage for the length of a replay and a
+  stage name nobody publishes draws as a permanent em dash on the dashboard.
+- **The stamps are the dataset's**, parsed as integers rather than through a
+  double. `std::stod("1305031452.791720") * 1e9` is the obvious spelling and it
+  lands a few hundred nanoseconds out — invisible against `evo`'s 10 ms
+  association window and invisible inside the pipeline, which is wrong the same
+  way everywhere, but it means the trajectory's stamps are not the dataset's.
+  `test_dataset_reader` pins the exact integer *and* pins that the naive spelling
+  disagrees with it.
+- Paced on absolute deadlines from one origin, never `sleep_for(interval)` in a
+  loop: the second accumulates every scheduling delay, and the gate asserts that
+  **0 frames went out behind schedule**, because a replay that cannot keep up
+  gives depth more time per frame and makes every number better for a reason that
+  is not the code.
+
+**Three things it deliberately does not do.** It does not **loop** — a replay that
+restarts sends every `header.stamp` backwards and `tf2::BufferCore` then refuses
+everything for the rest of the run, which is the failure `tools/view/replay.sh` is
+shaped around; there is no parameter for it because there is no correct value. It
+does not **re-encode** — TUM's frames are lossless PNG and go on the wire as PNG,
+since `cv::imdecode` reads either codec and a quality setting here would be a
+variable inside the number the gate reports. And it does not **invent
+intrinsics**: they come from a standard `camera_info` YAML through
+`pimesh_camera`'s own loader, which is handed the size of the *first decoded
+frame* — so serving the C922's 1280×720 calibration over Freiburg's 640×480 frames
+is a refusal to start rather than an ATE that is really a measurement of the
+mismatch. The gate runs that refusal as a control on every run.
+
+**Measured on TUM fr1/desk** (613 frames, 640×480, 20.4 s, 30 Hz, with a 100 Hz
+motion-capture trajectory), 2026-09-25:
+
+| | |
+| --- | --- |
+| poses published | 366 at 18.6 Hz, **100%** associated against the truth |
+| depth frames posed | 90.2%, at 1.56 px over 148 inliers |
+| ATE RMSE, Sim(3) aligned | **0.27–0.36 m** — 0.2711, 0.2958, 0.3177, 0.3297, 0.3475, 0.3569 over six runs. A figure with that much spread is reported as a range, not as one run's number |
+| ATE RMSE, SE(3) aligned | 0.90 m — very largely a measurement of `depth_scale` |
+| RPE RMSE over 1 s | **0.15 m** |
+| fitted scale `s` | 0.455–0.517, so **`depth_scale` ≈ 4.6–5.2** against the 10.0 in the YAML |
+| control: `rotation_only` | cannot be aligned at all — zero translation is a rank-deficient covariance and Umeyama has nothing to fit. What it *would* score is 0.8559 m, the RMS spread of the truth about its own centroid |
+
+**The fitted scale is worth more than the assertion.** On a dataset with metric
+ground truth it *is* `depth_scale`'s answer, obtained without a tape measure. It
+does not transfer to the C922 in this room — different camera, different scene,
+and Depth Anything's scale is per-image — but it bounds it, which turns P12 from
+the only source of that number into a check on one that already exists. The
+predecessor's room came out at 2.69.
+
+**And one finding that an ATE could never have shown.** The trajectory handed to
+`evo` is the **camera optical** pose, not `base_link`'s. `/odom` is the REP-103
+body frame; every public benchmark's ground truth is the colour camera's optical
+frame. The two differ by a constant rotation and no translation, so the ATE is
+*identical* either way and a relative-pose error is not: rotating TUM's own ground
+truth by that constant and scoring it against itself gives **0.654 m RPE over a
+1 s window for a trajectory that is exactly right**. The first run of this
+pipeline reported 0.768 m in the body frame and 0.150 m in the optical one.
+`odom_probe` looks the rotation up in the TF tree rather than carrying a
+quaternion of its own, and **refuses to write the file** if the lookup fails —
+because a trajectory in the wrong frame produces a number and not an error.
 
 ## Stage 2 — Decode (`decode_node`, dev box)
 

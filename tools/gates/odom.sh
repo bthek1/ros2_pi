@@ -70,8 +70,11 @@
 # **What would let this be asserted: a clip with deliberate translation.** A slow
 # walk around the room rather than a sweep from one spot, where the arc is metres
 # instead of centimetres and rotation-only has no way to explain it. That needs a
-# person and the camera, so it is an entry in docs/plans/future/ with that trigger
-# rather than a phase. Recording it is `bash tools/record-clip.sh walk1 60`.
+# person and the camera, which is why it is **P13 of gh issue #10** rather than
+# something a script can reach — promoted there on 2026-09-23 out of
+# docs/plans/future/milestone-e-future.md. Recording it is
+# `bash tools/record-clip.sh walk1 60`, and this gate takes the clip name as its
+# first argument: `bash tools/gates/odom.sh walk1`.
 #
 # Both runs replay bags/desk1, like every phase from P3 on, so the numbers compare
 # like for like. The Pi is not involved at all.
@@ -413,7 +416,8 @@ echo "  Anything V2 estimates relative depth, its scale breathes a few percent a
 echo "  frame, and its shape changes with viewpoint."
 echo "  The trigger is a clip with deliberate translation — a slow walk around the"
 echo "  room rather than a sweep from one spot. That needs a person and the camera:"
-echo "  bash tools/record-clip.sh walk1 60. See docs/plans/future/milestone-e-future.md."
+echo "  bash tools/record-clip.sh walk1 60. It is P13 of gh issue #10, promoted there"
+echo "  on 2026-09-23 out of docs/plans/future/milestone-e-future.md."
 echo
 echo "What IS asserted about the surface is the ceiling in claim 4, and it is a"
 echo "ceiling that has been watched to exclude something: the pre-P7 composition"
