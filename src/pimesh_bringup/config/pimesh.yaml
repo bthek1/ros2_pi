@@ -347,7 +347,8 @@
     # measurement has not been made, and the gate **refuses rather than passes** —
     # a vacuous pass here would put a made-up unit under every later measurement
     # in this project.
-    depth_scale: 10.0
+    # depth_scale_reference: 1.730 m, bags/scale1, measured 2026-09-28
+    depth_scale: 4.6002
     # Applied to the model's *inverse* output before the reciprocal. 1/0 is inf,
     # not a big number, and one NaN integrated into a TSDF poisons voxels that
     # were fine.
