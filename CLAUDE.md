@@ -70,22 +70,24 @@ composed inverted for six days and every internal number describing it was right
 frame in three, the rest dropped through a one-slot mailbox. Nothing downstream
 of it can run faster.
 
-**Two things are unpinned and both need a person**, not a script: `depth_scale` is
-arbitrary at 10.0 until a tape measure fixes it, so every distance here is
-plausibly shaped and the wrong size; and `bags/desk1` is a *pan*, so 6-DoF
-translation makes no measurable difference on it and a clip with deliberate
-translation is what would settle that. Both are **P12 and P13 of
-[#10](https://github.com/bthek1/ros2_pi/issues/10)**, promoted there on 2026-09-23
-out of the milestone D and E future files.
+**`depth_scale` was pinned on 2026-09-28 and every distance here is now in
+metres.** `bash tools/gates/scale.sh` PASS: **4.6002**, from a 1.730 m tape figure
+against a within-frame spread of 0.0527 (ceiling 0.10), zero clipping, 346 of 351
+frames; a replay of the same clip implies 4.6125. It had been an arbitrary 10.0
+since P4 because somebody typed it. P11 had independently bounded it at 4.6–5.2
+by fitting a Sim(3) against TUM's metric ground truth, which is the cross-check
+that makes the tape figure more than one afternoon's reading; the predecessor's
+room came out at 2.69. **Two caveats are on the record rather than in a comment**:
+the measured patch was 31% wall-timer, an object the network puts 0.268 m nearer
+than the wall, so the figure is ~2% high and wall-only would give ≈4.50; and five
+clips were needed, because **a blank wall defeats the depth network** — see that
+constraint below, which is worth more than the number.
 
-**P11 has since bounded the first of them without a tape measure.** Fitting a
-Sim(3) between our trajectory and TUM's metric ground truth gives a scale of
-0.46–0.52 over seven runs, so the sequence says `depth_scale` should be **4.6–5.2** against the
-10.0 in the YAML. It does **not** transfer — different camera, different scene,
-and Depth Anything's scale is per-image — so P12 is still a visit to the room.
-What changed is that P12 is now a *check* on a figure that already exists rather
-than the only source of it, and a tape measure that comes back at 9 or at 2 is a
-result worth stopping over. The predecessor's room came out at 2.69.
+**What still needs a person is `bags/walk1`** — `bags/desk1` is a *pan*, so 6-DoF
+translation makes no measurable difference on it and a clip with deliberate
+translation is what settles P7's comparison. That is **P13 of
+[#10](https://github.com/bthek1/ros2_pi/issues/10)**, promoted there on 2026-09-23
+out of the milestone E future file.
 
 **`bags/desk1` is the reference clip** — 59.7 s, 3489 frames at 58.5 Hz, 220 MB,
 sha256 `1333c5bd…`. `bags/` is git-ignored, so that hash is its only identity, and
@@ -706,6 +708,30 @@ strong priors, re-verify before quoting a number as this project's own.
   involved instead of two, there is no scale ratio between them, and the residual
   comes out in pixels — a unit this project has a calibration for, unlike the
   metres everything else is in.
+- **A blank wall is the worst thing in the room to point this pipeline at, and it
+  is the most obvious.** Depth Anything V2 estimates *relative* depth from
+  monocular cues — texture gradient, perspective, familiar object size. A plain
+  painted wall offers none, so the network returns something smooth, confident and
+  wrong, with no residual anywhere to say it is guessing. Measured 2026-09-28 while
+  doing P12: two independent 20 s clips of a wall at a 1.730 m tape figure each
+  produced a **1.74 m → 6.00 m ramp across the frame** and a within-patch spread of
+  **23.5%** against a 10% ceiling, reproducing to two decimal places. The wall was
+  flat and square-on, and the proof is the only object in frame with a shape known
+  in advance: a round wall timer imaged at **145.1 × 146.4 px, aspect 0.991**, where
+  the tilt the depth map implied would have squashed it to **0.571**. The patch
+  measured intensity sd **5.33/255** and Laplacian variance **0.59**.
+
+  **Three lessons, and the second is the one that cost the afternoon.** A fit to
+  the depth map is a fit to *the network's opinion*, not to the room — an R² of
+  0.9987 for a plane says the output is plane-like and says nothing about the wall,
+  so **check the camera image before concluding anything about geometry from
+  `/depth`**; a round object is a free protractor. The blank wall also defeats the
+  C922's continuous autofocus, for the same absence of contrast. And `gates/scale.sh`
+  was right to refuse: its spread ceiling caught a failure mode nobody designed it
+  for. **What that gate cannot see is what is *in* the patch** — a 31% wall-timer
+  passed at 5.17%, and defocus *lowers* the spread while making the reading worse,
+  so a blurrier clip scores better. The accepted `depth_scale` of 4.6002 carries
+  that 31%-timer bias and is ~2% high; wall-only would give ≈4.50.
 - **A constant that is wrong but works is invisible, and only an outside
   reference finds it.** The FNV-1a offset basis in this project was
   `1469598103934665603` — the real one, `14695981039346656037`, with its last

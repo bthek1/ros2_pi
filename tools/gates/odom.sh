@@ -90,6 +90,46 @@ BAG_NAME=${1:-desk1}
 MAX_GAP_M=0.8
 # Agreement floor, from the same pair: 0.2102 with the fix, 0.1057 without.
 MIN_AGREE=0.15
+
+# --- What a *walking* clip changes, measured 2026-09-28 (#10's P13) -----------
+#
+# Both numbers above were derived on `bags/desk1`, which is a pan from one spot.
+# One of them transfers to a clip that carries real translation and the other does
+# not, and the difference is not a matter of degree:
+#
+#   - **The gap transfers, and it discriminates.** Three runs of this gate on
+#     `bags/walk1` (18.2 m of path, net 0.99 m):
+#         sixdof        0.4545  0.5150  0.5204
+#         rotation_only 0.7234  0.6688  0.6704
+#     Non-overlapping ranges, margin 0.1500-0.2689 m, sign never flips.
+#
+#   - **The agreement floor does not, because on a walk it cannot tell the two
+#     regimes apart.** Same three runs:
+#         sixdof        0.1329  0.1393  0.1158
+#         rotation_only 0.1085  0.1174  0.1206
+#     The ranges overlap and the *ordering alternates* — run 3 has the control,
+#     which publishes no translation whatever, scoring higher than the 6-DoF run.
+#     A floor placed anywhere in that band is a coin flip.
+#
+# The mechanism is in `surface_agreement`'s own contract: the denominator is every
+# valid pixel of the incoming frame, not the overlap. On a pan the map already
+# holds what the camera is looking at; on a walk most of each frame is room the
+# map has never seen, and those pixels cannot agree however good the pose is. It
+# is not insensitive to quality — it rose 0.1016 -> 0.1393 as three successive
+# walk clips got better frames — it simply has no headroom left to separate a good
+# pose from a degenerate one.
+#
+# So a walking clip asserts the gap and the *comparison*, and prints agreement
+# without asserting it. This is not the floor being lowered to make a run pass:
+# the assertion it is replaced by is strictly stronger, because it has a control
+# in the same run rather than a constant from another clip.
+WALKING_CLIP=0
+case $BAG_NAME in *walk*) WALKING_CLIP=1 ;; esac
+# The margin the 6-DoF run must beat the rotation-only control by, on a walking
+# clip. 0.10 m against a measured minimum of 0.1500 over three runs — below the
+# worst observed, so a run that merely repeats what has been seen passes, and one
+# where the regimes converge does not.
+MIN_REGIME_MARGIN_M=0.10
 # The fastest the published pose is allowed to appear to move, in the map's
 # arbitrary units per second, measured over the interval since it last *changed*.
 #
@@ -375,11 +415,30 @@ in_range "$posed_pct" "$MIN_POSED_PCT" 100 ||
 check_surface() {       # $1 = label, $2 = median gap, $3 = median agreement
     in_range "$2" 0 "$MAX_GAP_M" ||
         note "$1: median paired-surface gap $2 m, ceiling ${MAX_GAP_M} m — the pre-P7 composition measured 1.3440 m here, so this is the shape of that failure"
+    if (( WALKING_CLIP )); then
+        return
+    fi
     in_range "$3" "$MIN_AGREE" 1 ||
         note "$1: median agreement $3, floor ${MIN_AGREE} — the pre-P7 composition measured 0.1057"
 }
 check_surface sixdof "$six_gap" "$six_agree"
 check_surface rotation_only "$rot_gap" "$rot_agree"
+
+# --- Claim 4b: on a walking clip, 6-DoF must beat the rotation-only control ---
+# P7 asked for this and bags/desk1 could not answer it — a ~0.9 m arm arc against
+# 2-3 m of scene is explained almost entirely by rotation, so the two regimes tie
+# there (0.3830 against 0.3847, 2026-09-28) and the gate prints the comparison
+# instead. bags/walk1 carries 18.2 m of path and answers it: see the three runs
+# recorded beside MIN_REGIME_MARGIN_M above.
+#
+# **This is the assertion the agreement floor is replaced by on a walk**, and it is
+# the stronger of the two because its control runs in the same session on the same
+# clip, rather than being a constant carried over from another one.
+if (( WALKING_CLIP )); then
+    margin=$(awk -v s="$six_gap" -v r="$rot_gap" 'BEGIN { printf "%.4f", r - s }')
+    in_range "$margin" "$MIN_REGIME_MARGIN_M" 99 ||
+        note "sixdof's surface gap beats rotation_only's by only ${margin} m (floor ${MIN_REGIME_MARGIN_M} m) — six ${six_gap}, rot ${rot_gap}. On a clip that carries translation the 6-DoF pose is what the surface is supposed to be paying for; three runs on bags/walk1 measured 0.1500-0.2689 m"
+fi
 
 # =============================================================================
 echo
@@ -404,24 +463,48 @@ echo "                 ${six_implausible} poses refused as implausible motion, $
 echo "keyframe store : ${six_keyframes} keyframes, ${six_kf_kb} kB"
 echo "assert         : control path == 0; sixdof path >= ${MIN_PATH_M} m, net <= ${MAX_NET_M} m,"
 echo "                 fastest <= ${MAX_SPEED_M_S} m/s; reprojection <= ${MAX_REPROJ_PX} px;"
-echo "                 >= ${MIN_POSED_PCT}% posed; both regimes gap <= ${MAX_GAP_M} m and agree >= ${MIN_AGREE}"
+echo "                 >= ${MIN_POSED_PCT}% posed; both regimes gap <= ${MAX_GAP_M} m"
+if (( WALKING_CLIP )); then
+    echo "                 walking clip: sixdof beats rotation_only by >= ${MIN_REGIME_MARGIN_M} m"
+    echo "                 (agreement printed, not asserted — see below)"
+else
+    echo "                 and agree >= ${MIN_AGREE}"
+fi
 echo
-echo "NOT asserted: that sixdof's surface gap beats rotation_only's."
-echo "  P7 asks for it and on this clip the two are a coin flip — the winner"
-echo "  alternates window by window while every number the sixdof run reports about"
-echo "  itself is healthy. bags/desk1 is a *pan*: ~0.9 m of arm arc against 2-3 m of"
-echo "  scene, so rotation already explains most of the frame motion, and what is"
-echo "  left is dominated by the depth network rather than by the pose — Depth"
-echo "  Anything V2 estimates relative depth, its scale breathes a few percent a"
-echo "  frame, and its shape changes with viewpoint."
-echo "  The trigger is a clip with deliberate translation — a slow walk around the"
-echo "  room rather than a sweep from one spot. That needs a person and the camera:"
-echo "  bash tools/record-clip.sh walk1 60. It is P13 of gh issue #10, promoted there"
-echo "  on 2026-09-23 out of docs/plans/future/milestone-e-future.md."
+if (( WALKING_CLIP )); then
+    echo "This clip carries translation, so the comparison P7 asked for is ASSERTED"
+    echo "here rather than printed — claim 4b above. Three runs on bags/walk1,"
+    echo "2026-09-28: sixdof 0.4545 0.5150 0.5204 against rotation_only 0.7234"
+    echo "0.6688 0.6704 — non-overlapping, margin 0.1500-0.2689 m, sign never flips."
+    echo "bags/desk1 cannot answer it: a ~0.9 m arm arc against 2-3 m of scene is"
+    echo "explained almost entirely by rotation, and the two regimes tie there."
+    echo
+    echo "Agreement is PRINTED and not asserted on a walking clip, and that is a"
+    echo "measurement rather than a concession. Over the same three runs sixdof"
+    echo "scored 0.1329 0.1393 0.1158 and rotation_only 0.1085 0.1174 0.1206 — the"
+    echo "ranges overlap and the ordering alternates, with the control that"
+    echo "publishes no translation at all coming out ahead on run 3. The cause is"
+    echo "in surface_agreement's own contract: the denominator is every valid pixel"
+    echo "of the incoming frame, and on a walk most of each frame is room the map"
+    echo "has never seen. The floor of ${MIN_AGREE} was derived on a pan and does not"
+    echo "transfer. It still applies to bags/desk1, where it discriminates."
+else
+    echo "NOT asserted: that sixdof's surface gap beats rotation_only's."
+    echo "  P7 asks for it and on this clip the two are a coin flip — the winner"
+    echo "  alternates window by window while every number the sixdof run reports about"
+    echo "  itself is healthy. bags/desk1 is a *pan*: ~0.9 m of arm arc against 2-3 m of"
+    echo "  scene, so rotation already explains most of the frame motion, and what is"
+    echo "  left is dominated by the depth network rather than by the pose — Depth"
+    echo "  Anything V2 estimates relative depth, its scale breathes a few percent a"
+    echo "  frame, and its shape changes with viewpoint."
+    echo "  It IS asserted on a walking clip, as of #10's P13 on 2026-09-28:"
+    echo "  bash tools/gates/odom.sh walk1."
+fi
 echo
-echo "What IS asserted about the surface is the ceiling in claim 4, and it is a"
-echo "ceiling that has been watched to exclude something: the pre-P7 composition"
-echo "measured 1.3440 m and 0.1057 here, reproducing milestone D's own 1.32-1.37 m."
+echo "What IS asserted about the surface on every clip is the ceiling in claim 4,"
+echo "and it is a ceiling that has been watched to exclude something: the pre-P7"
+echo "composition measured 1.3440 m and 0.1057 here, reproducing milestone D's own"
+echo "1.32-1.37 m."
 echo "========================================================================="
 
 if (( fail )); then echo "FAIL gate-odom"; exit 1; fi

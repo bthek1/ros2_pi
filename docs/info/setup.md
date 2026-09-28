@@ -462,20 +462,44 @@ half an hour recording.
 
 ### P12 — the tape measure, and `bags/scale1`
 
-1. Find a **flat surface with nothing in front of it** — a wall, a door, a closed
-   cupboard — and measure from the camera's front element to it. **1.5–2.5 m.**
-   Not closer: `min_range_m` is 0.15 m and the near field is where a monocular
-   network is least like a metric sensor. Not further: at the *unpinned* scale of
-   10.0 the map reads roughly twice what it should against a 6 m clip, so a
-   surface at 3.5 m true reads past it — and a clipped pixel is not a distance,
-   it is the absence of one written as 6 m.
+0. **The surface must have pattern on it, and this is the step that costs a trip
+   if you skip it.** A blank painted wall is the most obvious thing to point at
+   and it does not work. Depth Anything V2 estimates *relative* depth from
+   monocular cues — texture gradient, perspective, familiar object size — and a
+   plain wall offers none of them, so it returns something smooth and confident
+   and wrong, with no error anywhere to say it is guessing. Measured 2026-09-28,
+   two independent clips of a wall confirmed perpendicular (a circular object on
+   it came out at aspect **0.991**, where the tilt the depth map implied would
+   have given 0.571): a 1.74 m → 6.00 m ramp across the frame, **23.5% within-patch
+   spread both times** against a 10% ceiling. The central patch measured
+   intensity sd **5.33/255**, Laplacian variance **0.59** — no texture at all.
+   So tape a newspaper spread, a poster, or six sheets of printed A4 tiled 3×2
+   over it, flat and at every edge; or pick a surface that already has pattern —
+   a panelled door, a tiled splashback, a whiteboard with writing on it — and
+   measure to *that*. The patch the gate reads covers about **0.58 m × 0.33 m**
+   at 1.75 m, so cover at least that.
+1. Find a **flat surface with nothing in front of it** — see step 0 about what
+   goes on it — and measure from the camera's front element to it.
+   **1.5–2.0 m**, and 1.75 m is the middle of the good band. Not closer:
+   `min_range_m` is 0.15 m and the near field is where a monocular network is
+   least like a metric sensor. Not further, and the reason is arithmetic: with a
+   `depth_scale` near 4.8 a surface at 2.50 m reports **5.18 m of a 6.00 m clip**,
+   leaving 0.82 m of headroom while a *passing* 10% spread is already 0.52 m wide
+   — and `MAX_CLIPPED` is 2% of the patch **in the worst frame** of the clip, so
+   one noisy frame fails it.
 2. Point the camera **square-on**, filling the middle of the frame. A depth map
    carries *z*, not distance along the ray, so an oblique patch reads a range of
-   distances rather than one.
+   distances rather than one. **Do not judge squareness off the depth map** — it
+   is the network's opinion, and on a poor surface it will report a steep tilt
+   for a wall that is flat. A round object on the wall is a free control: if it
+   images as a circle, you are square.
 3. **Look before you record**: `just view-depth`. Near is bright and the clip is
-   black in that preview, so a colour is a distance — **the middle of the frame
-   must be bright.** Black means the gate will refuse the clip, and you will find
-   that out after walking back from the wall.
+   black in that preview, so a colour is a distance. At 1.75 m a correctly-read
+   surface comes out **rose**, not yellow — yellow means you are under a metre
+   away, deep purple means walk in, black means at or past the clip. What matters
+   as much as the colour is that it is **uniform**: a left-to-right gradient is
+   the signature of either an off-square camera or a surface the network cannot
+   read, and both send you back to the wall after recording.
 4. `bash tools/record-clip.sh scale1 20`.
 5. `bash tools/gates/scale.sh <the metres you measured>`. It **refuses** — nothing
    is recorded in git yet — and prints the two lines to paste into
@@ -486,12 +510,22 @@ half an hour recording.
 6. Paste, `bash tools/build.sh`, then `bash tools/gates/scale.sh` with no
    argument. That is P12's test.
 
-**What to expect.** The predecessor's room came out at **2.69**. P11's Sim(3) fit
-against TUM fr1/desk says **4.6–5.2** for that sequence, which bounds the number
-without transferring to this camera in this room — so a result in that region is
-unsurprising and a result at 9, or at 2, is worth stopping over and writing into
-the issue. If the tape and the calibration disagree by more than ~2%, the trigger
-in [milestone-f-future.md](../plans/future/milestone-f-future.md) has fired: `fx`
+**What it came out at, 2026-09-28: `depth_scale` = 4.6002**, from a 1.730 m tape
+figure, `bash tools/gates/scale.sh` PASS at a within-frame spread of 0.0527 against
+the 0.10 ceiling and zero clipping over 346 of 351 frames. P11's Sim(3) fit against
+TUM fr1/desk had independently said **4.6–5.2** for that sequence; the predecessor's
+room came out at **2.69**. A replay of the same clip implies 4.6125, a 0.27%
+reproduction.
+
+**One bias is knowingly in that number.** The measured patch was 31% wall-timer,
+an object the network puts 0.268 m nearer than the wall behind it, which pulls the
+median down; wall-only would give ≈**4.50**. Five clips were taken and everything
+credible sat in **4.50–4.70**. If you re-measure on a properly textured surface
+and land outside that band, that is worth writing into
+[#10](https://github.com/bthek1/ros2_pi/issues/10).
+
+If the tape and the calibration disagree by more than ~2%, the trigger in
+[milestone-f-future.md](../plans/future/milestone-f-future.md) has fired: `fx`
 is pinned only to ±2.2% and the fix is a flat mount and a re-run of
 `record | select | solve`.
 

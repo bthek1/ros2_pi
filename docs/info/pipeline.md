@@ -529,11 +529,14 @@ per frame, 58.21 ms p95** against an 80 ms budget and **17.42 Hz** sustained on
   make the 80 ms assertion partly a claim about a viewer. Measured: counting it
   moved `cost_mean` from 55 ms to 59 ms and a window's p95 over the ceiling, with
   nothing about the pipeline changed.
-- **`depth_scale` is arbitrary until P5.** Monocular depth is scale-ambiguous —
-  the model says "twice as far", never "three metres" — so the room comes out
-  plausibly shaped and the wrong size. The predecessor's was 2.69× out.
-  `gates/depth.sh` deliberately asserts nothing about the absolute values, only
-  that near and far differ.
+- **`depth_scale` was arbitrary until 2026-09-28 and is now 4.6002.** Monocular
+  depth is scale-ambiguous — the model says "twice as far", never "three metres" —
+  so the room came out plausibly shaped and the wrong size for every measurement
+  before that date. `bash tools/gates/scale.sh` pinned it against a 1.730 m tape
+  figure (#10's P12); P11's Sim(3) fit on TUM had independently said 4.6–5.2. The
+  predecessor's was 2.69. `gates/depth.sh` still asserts nothing about the
+  absolute values, only that near and far differ, because its budget predates the
+  measurement and a budget in metres was a budget on an unknown unit.
 
 **Optimisations, in the order worth trying:** none of them yet — at 55 ms against
 an 80 ms budget there is nothing to buy. When there is: input at 392² instead of 518² (roughly halves the
@@ -720,8 +723,10 @@ gap, and a real translation on top of it — and the surface is better for it
 without being a room. What is left is the depth network rather than the geometry:
 Depth Anything V2 estimates *relative* depth, its scale breathes a few percent a
 frame, and its shape changes with viewpoint, so the same wall comes back at a
-different distance however well the camera is posed. And the scale is still
-arbitrary until a tape measure pins `depth_scale`.
+different distance however well the camera is posed. The absolute scale is no
+longer arbitrary — a tape measure pinned `depth_scale` at 4.6002 on 2026-09-28 —
+but the per-frame breathing that this paragraph is about is unaffected by that,
+because it is a property of the network rather than of the constant in front of it.
 
 ## Stage 7 — Dashboard (`dashboard_node`, dev box)
 
