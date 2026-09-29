@@ -88,8 +88,42 @@ BAG_NAME=${1:-desk1}
 # with the fix, 1.3440 m without — so it is a threshold that has been watched to
 # exclude something rather than one nobody has seen fail.
 MAX_GAP_M=0.8
-# Agreement floor, from the same pair: 0.2102 with the fix, 0.1057 without.
-MIN_AGREE=0.15
+# Agreement floor. **Re-derived 2026-09-29, and the re-derivation changed its
+# scope as well as its value.**
+#
+# The original was 0.15, from one run of each composition on bags/desk1: 0.2102
+# with the fix, 0.1057 without. One run each is what put it inside the noise —
+# measured 2026-09-29, three runs of this gate on desk1 with nothing changed
+# between them scored rotation_only 0.1581, 0.1456, 0.1459, so the floor failed
+# two runs in three of a pipeline that was fine. A gate that asserts on a number
+# which alternates is the worst kind, because it teaches people to re-run until
+# it passes.
+#
+# Re-derived the way the original should have been: the pre-P7 composition
+# restored (`camera_step()` returning its argument instead of the inverse — the
+# mutation fails exactly CameraStep.PanningRightYawsRightAndNotLeft and three
+# siblings, which is what makes it the bug and not an edit), three runs of each,
+# bags/desk1:
+#
+#                     sixdof                          rotation_only
+#   correct    0.1741 0.1653 0.1646 0.1752     0.1581 0.1456 0.1459 0.1380
+#   pre-P7     0.0775 0.0793 0.0888 0.1050     0.1446 0.1282 0.1254 0.1338
+#   separation 0.1050 -> 0.1646  (0.0596)      overlapping
+#
+# **So it is asserted on the sixdof run only.** On the rotation-only control the
+# two distributions overlap outright — 0.1380 correct against 0.1446 broken — so
+# no floor catches a broken rotation-only pose without also failing a correct one.
+# That regime keeps the gap ceiling, which does discriminate: 0.9077-0.9587 broken
+# against 0.3847-0.4170 correct.
+#
+# 0.12 sits in the sixdof gap, 0.015 above the worst broken run and 0.045 below
+# the best correct one. Deliberately not the midpoint: agreement is the second
+# guard on this regime and the gap ceiling is the first, so the cost of a false
+# *pass* here is lower than the cost of a flaky fail — which is the mistake 0.15
+# made. The fourth broken reading came from the control run that watched this
+# floor exclude something (2026-09-29): 0.1050 against the 0.12, alongside a gap
+# of 1.0970 m.
+MIN_AGREE=0.12
 
 # --- What a *walking* clip changes, measured 2026-09-28 (#10's P13) -----------
 #
@@ -415,11 +449,15 @@ in_range "$posed_pct" "$MIN_POSED_PCT" 100 ||
 check_surface() {       # $1 = label, $2 = median gap, $3 = median agreement
     in_range "$2" 0 "$MAX_GAP_M" ||
         note "$1: median paired-surface gap $2 m, ceiling ${MAX_GAP_M} m — the pre-P7 composition measured 1.3440 m here, so this is the shape of that failure"
-    if (( WALKING_CLIP )); then
+    # Agreement is asserted on one regime and one clip type, and both narrowings
+    # are measurements rather than concessions — see MIN_AGREE's derivation above
+    # for the rotation_only case and MIN_REGIME_MARGIN_M's for the walking one.
+    # It is printed either way, so a reading that starts to drift is still visible.
+    if (( WALKING_CLIP )) || [[ $1 != sixdof ]]; then
         return
     fi
     in_range "$3" "$MIN_AGREE" 1 ||
-        note "$1: median agreement $3, floor ${MIN_AGREE} — the pre-P7 composition measured 0.1057"
+        note "$1: median agreement $3, floor ${MIN_AGREE} — the pre-P7 composition measured 0.0775-0.0888 over three runs, this one 0.1646-0.1741"
 }
 check_surface sixdof "$six_gap" "$six_agree"
 check_surface rotation_only "$rot_gap" "$rot_agree"
@@ -468,7 +506,8 @@ if (( WALKING_CLIP )); then
     echo "                 walking clip: sixdof beats rotation_only by >= ${MIN_REGIME_MARGIN_M} m"
     echo "                 (agreement printed, not asserted — see below)"
 else
-    echo "                 and agree >= ${MIN_AGREE}"
+    echo "                 and sixdof agreement >= ${MIN_AGREE} (rotation_only's is printed"
+    echo "                 only — the two compositions are 0.0010 apart there)"
 fi
 echo
 if (( WALKING_CLIP )); then

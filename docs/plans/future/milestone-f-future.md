@@ -68,6 +68,19 @@ is not the estimator.
 physical speed, re-run `bash tools/gates/trajectory.sh` and record whether the
 refusal count and the ATE moved — and throttle the warning while you are there.
 
+> **This trigger fired on 2026-09-28, and the answer was that the existing value
+> is now about right.** `depth_scale` went from 10.0 to 4.6002, so the map's units
+> are metres and `max_speed_m_s = 2.0` means a real 2.0 m/s where it used to mean
+> **0.92 m/s** — ordinary walking pace, which is why it refused 27-36 poses a run
+> on TUM fr1/desk. Measured on `bags/walk1` the day after: the fastest published
+> motion is **1.94 m/s** against a gate ceiling of 2.5, and the node refused
+> **8-36** poses depending on the clip rather than a fixed 7-10%. So the ceiling no
+> longer needs re-deriving; what is left of this entry is **throttling the
+> warning**, which is a log-rate fix and not a unit one, and the
+> `RCLCPP_WARN`-under-a-mutex argument above still stands. Recorded rather than
+> promoted, because a throttle is not worth a phase of its own — fold it into the
+> next change that touches `odometry_node`.
+
 ---
 
 ## Re-calibrate on a flat mount — *not a new entry, a pointer*
@@ -83,3 +96,66 @@ anything in the pipeline. `fx` is currently pinned only to ±2.2%, and that is a
 
 It stays in that file rather than moving here, because an entry never sits in
 two places.
+
+---
+
+## `gates/scale.sh` has no view of what is *in* the patch
+
+**What.** Two blind spots in P12's gate, both found by running it five times at a
+real wall on 2026-09-28, and both of which let a worse clip score better.
+
+1. **An object in the patch passes.** The accepted clip's patch is **31%
+   wall-timer**, which the network puts 0.268 m nearer than the wall behind it.
+   The median is still a wall pixel, but at the wall's ~27th percentile rather
+   than its 50th, so `depth_scale` = 4.6002 is about **2% high**; wall-only gives
+   ≈4.50. Nothing in the gate looks at whether the patch is one surface — only at
+   its spread, and a 31%/69% split with a 0.27 m step scored 5.17% against a 10%
+   ceiling.
+2. **Defocus improves the spread.** A blurred depth map is a smoother depth map.
+   One clip scored the *best* spread of the five (4.42%) and gave the *outlying*
+   scale (5.3502), because its patch was nearly blank. The gate has no view of
+   focus at all, so the metric it asserts on moves the wrong way as the image
+   gets worse.
+
+**Why not now.** Both fixes want the same input the gate does not currently
+read — the *colour* frame, not just `/depth`. Texture (Laplacian variance over
+the patch) and focus are cheap to measure there, and a bimodal depth histogram
+would catch the object. But `scale_probe` subscribes to `/depth` alone, and
+adding a second subscription to a gate whose number is already recorded means
+re-measuring `depth_scale` in the same change, which is two things at once.
+
+**Trigger.** **A re-measurement of `depth_scale` on a properly textured flat
+surface** — which is the thing that would retire the 2% bias anyway. Do both in
+one visit: add the patch checks, re-record, and record whether the figure moves
+out of the 4.50–4.70 band that five clips agreed on.
+
+---
+
+## `desk1`'s agreement dropped and nothing here explains it
+
+**What.** `gates/odom.sh`'s `sixdof` median agreement on `bags/desk1` was
+**0.2102** when P7 derived the floor from it on 2026-09-19. Measured 2026-09-29
+over four runs it is **0.1646, 0.1653, 0.1741, 0.1752** — down about 20%, on a
+clip that has not changed.
+
+**What it is not.** The obvious candidate was P12: `voxel_size_m` is 0.015 in
+*map* units, and pinning `depth_scale` from 10.0 to 4.6002 changed what a map
+unit means, so the TSDF went from ~6.9 mm physical voxels to 15 mm — 2.17×
+coarser. **Tested and wrong.** Doubling the voxel size to 0.030 moved the two
+regimes in *opposite* directions (sixdof 0.1653 → 0.1386, rotation_only 0.1456 →
+0.1642), where a resolution effect would move both the same way.
+
+Between 2026-09-19 and now the tree also took #14's renames, P11's `odom_probe`
+frame change and P12 — so the cause is not attributable from what is recorded,
+and guessing at it is what this file exists to avoid.
+
+**Why it matters less than it looks.** The re-derived `MIN_AGREE` of 0.12 was
+measured against the pre-P7 control *as the code is today*, so the assertion is
+sound whatever moved the baseline. This is an unexplained observation, not a
+known defect.
+
+**Trigger.** **P14 or P15** — milestone G is the next work that changes the
+mapping back end, and `MapPoint`s plus local bundle adjustment will move this
+number again. Re-measure agreement on `desk1` before and after that change: two
+observations either side of a known edit are what would separate a real
+regression from whatever happened in the last ten days.

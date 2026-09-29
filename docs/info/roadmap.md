@@ -7,13 +7,17 @@ mapping back end that fuses a surface out of it. What they do **not** build is
 the part that closes the loop: nothing recognises a place it has seen before, so
 drift is bounded per step and unbounded over a session. That is M10–M19.
 
-Status as of **2026-09-28**: M0–M11 done — that is visual odometry plus dense
-mapping, one webcam to a live mesh, with **M10, the first number about the pose
-that this project did not produce** (a Sim(3)-aligned ATE of 0.27–0.36 m against
-TUM fr1/desk's motion-capture truth), and **M11, the first number that makes the
-rest of them metres**: `depth_scale` = 4.6002 off a tape measure, 2026-09-28.
-M12–M19 remain. The last thing to close before M11 was M10 on 2026-09-25; M8 and
-M9 on 2026-09-19, M5 on 2026-09-15, M4 on 2026-09-13, M2.5 and M3 the day before.
+Status as of **2026-09-29**: M0–M12 done — **milestone F is closed**, and with it
+the three things P0–P10 could not do. **M10** is the first number about the pose
+that this project did not produce (a Sim(3)-aligned ATE of 0.27–0.36 m against TUM
+fr1/desk's motion-capture truth). **M11** is the first number that makes the rest
+of them metres: `depth_scale` = 4.6002 off a tape measure. **M12** is the first
+clip carrying real translation, and it settled a question open since P7 — 6-DoF
+odometry beats rotation-only, 0.4545 m of paired-surface gap against 0.6688 m,
+which `bags/desk1` could never show because a pan is explained by rotation alone.
+M13–M19 remain, and none of them needs a person in a room. The last thing to close
+before M12 was M11 on 2026-09-28; M10 on 2026-09-25, M8 and M9 on 2026-09-19, M5
+on 2026-09-15, M4 on 2026-09-13, M2.5 and M3 the day before.
 
 The build order and per-phase tests live in
 [../plans/future/project_final_state.md](../plans/future/project_final_state.md);
@@ -29,8 +33,8 @@ Those phases are **built** as milestone issues, each a contiguous slice:
 [#7 D](https://github.com/bthek1/ros2_pi/issues/7) = M6–M7,
 [#8 E](https://github.com/bthek1/ros2_pi/issues/8) = M8–M9 — **all five closed,
 and that is the pipeline** — then, opened 2026-09-23,
-[#10 F](https://github.com/bthek1/ros2_pi/issues/10) = M10–M12 (**M10 done
-2026-09-25, M11 done 2026-09-28**; M12 is what is left of the visit to the room),
+[#10 F](https://github.com/bthek1/ros2_pi/issues/10) = M10–M12 (**all three done
+— M10 2026-09-25, M11 2026-09-28, M12 2026-09-29**),
 [#11 G](https://github.com/bthek1/ros2_pi/issues/11) = M13–M14,
 [#12 H](https://github.com/bthek1/ros2_pi/issues/12) = M15–M17,
 [#13 I](https://github.com/bthek1/ros2_pi/issues/13) = M18–M19, which turn it
@@ -58,7 +62,7 @@ outside opinion about whether any of it worked.
 | M9 | `dashboard_node` — the web view | **done 2026-09-19** — [issue #8](https://github.com/bthek1/ros2_pi/issues/8) P8 and P10, `bash tools/gates/dashboard.sh`. An HTTP and WebSocket server inside a ROS 2 node in its own process, no library and no three.js: five channels at 10.01 Hz stats / 9.16 Hz rgb / 4.47 Hz depth / 10.01 Hz pose / ~2.1 MB of mesh, the STALE flag 2.10 s after `/odom` stops against a 2.0 s threshold, and every stage of the pipeline — including `capture` from the Pi at 60.00 Hz — reporting itself on `/pipeline/stats`. Worst stage drift with a client attached: **0.77%**, against a **0.29%** floor measured between two runs with none — so P8's 2% bound is met. The gate states it as *floor plus slack* rather than a constant, because an earlier run of it saw 15% between two identical no-client runs and that was a `colcon build` sharing the box, not the pipeline |
 | M10 | A trajectory measured against ground truth — ATE on TUM fr1/desk | **done 2026-09-25** — [#10](https://github.com/bthek1/ros2_pi/issues/10) P11, `bash tools/gates/trajectory.sh`. **Sim(3)-aligned ATE RMSE 0.27–0.36 m over seven runs** of ~350 poses of TUM fr1/desk, 100% associated against the motion-capture truth, RPE 0.14–0.15 m over a 1 s window, with the `rotation_only` control failing the same ceiling — it cannot be aligned at all. The fitted scale puts `depth_scale` at **4.6–5.2**, which is M11's answer arrived at without a tape measure. Everything M1–M9 asserts about the trajectory is internal, and P7 showed what that is worth: the rotation was composed inverted from P3 to P7 and every number describing it was correct |
 | M11 | `depth_scale` pinned with a tape measure, `bags/scale1` recorded | **done 2026-09-28** — [#10](https://github.com/bthek1/ros2_pi/issues/10) P12, `bash tools/gates/scale.sh` PASS. **`depth_scale` = 4.6002** against a 1.730 m tape, within-frame spread 0.0527 of the median (ceiling 0.10), zero clipping, 346 of 351 frames measured; a replay implies 4.6125. **Every distance this pipeline reports is now in metres** — it had been an arbitrary constant since P4. M10's Sim(3) fit on TUM had independently said 4.6–5.2. Five clips were taken and the finding is worth more than the number: **a blank wall defeats the depth network** (23.5% within-patch spread on a surface confirmed perpendicular, twice), so the surface must carry texture. The accepted figure is ~2% high from a 31% wall-timer in the patch; wall-only gives ≈4.50. Checklist in [setup.md](setup.md#the-visit-to-the-room) |
-| M12 | `bags/walk1` — a clip with real translation | **waiting on a person** — [#10](https://github.com/bthek1/ros2_pi/issues/10) P13, `bash tools/gates/odom.sh walk1`, which already takes the clip name. The same visit to the room as M11 and the same checklist. Settles the comparison `gates/odom.sh` currently prints rather than asserts |
+| M12 | `bags/walk1` — a clip with real translation | **done 2026-09-29** — [#10](https://github.com/bthek1/ros2_pi/issues/10) P13, `bash tools/gates/odom.sh walk1`. **6-DoF beats rotation-only for the first time**: median paired-surface gap **0.4545 / 0.5150 / 0.5204 m** against rotation-only's **0.6688 / 0.7234 / 0.6704** over three runs, non-overlapping, margin 0.1500–0.2876 m over five, sign never flipping. On `bags/desk1` the two tie (0.3830 against 0.3847), which is why P7 could only print the comparison — a ~0.9 m arm arc is explained almost entirely by rotation. The gate now **asserts** it on a walking clip. Took three clips: the first two spent 26% and 49% of their frames on this room's blank walls, where the tenth-percentile frame carried 9 ORB features |
 | M13 | Map points observed by many keyframes, tracking against the local map | not started — [#11](https://github.com/bthek1/ros2_pi/issues/11) P14, `bash tools/gates/map.sh`. A landmark stops dying with the keyframe that saw it, which is the noun SLAM has and this pipeline does not |
 | M14 | Local bundle adjustment | not started — [#11](https://github.com/bthek1/ros2_pi/issues/11) P15, `bash tools/gates/ba.sh`. g2o is already installed on both machines from ROS itself, with identical target names — measured 2026-09-23 |
 | M15 | Place recognition against the whole keyframe store | not started — [#12](https://github.com/bthek1/ros2_pi/issues/12) P16, `bash tools/gates/place.sh`. The store's second reader, which P7 built it for. **The control is the phase**: zero accepted closures on `bags/desk1`, which revisits nothing |

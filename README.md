@@ -28,107 +28,81 @@ where it pays.
 
 ## Status
 
-**The whole pipeline runs, end to end.** As of **2026-09-23** the repository holds
-nine packages, and a webcam on a Pi becomes a triangle surface on the dev box with
-a browser tab watching it. Since **2026-09-25** it has also been measured against
-a trajectory recorded by something that has never heard of this repository. The
-surface does not look like a room yet, for a reason given below:
+**Both halves run end to end, and every distance is in metres.** Ten packages
+build from source under both distros; a webcam on a Pi becomes a live triangle
+surface on the dev box with a browser tab watching it. As of **2026-09-28**
+milestones M0–M12 are done — **milestone F is closed**
+([roadmap](docs/info/roadmap.md)):
 
-- **Capture** (`pimesh_camera`, on the Pi) — 1280×720 MJPEG stamped with the
-  kernel's capture time, **44–59 Hz received on the dev box**, serving real
-  intrinsics on `/camera_info` (fx=953.4, fy=957.6, held-out reprojection
-  0.4955 px).
-- **Decode** (`pimesh_frontend`, here) — the container's *one* subscriber on the
-  only topic that crosses Wi-Fi, `cv::imdecode` at **1.90 ms/frame**, handing the
-  2.7 MB frame to its consumers as a pointer: **504/504** buffer addresses matched
-  with intra-process comms on against **0/395** with it off.
-- **Keypoints** (`pimesh_frontend`, here) — ORB at 500 features with pooled
-  matching over a 10-frame window, **57.8 Hz sustained at 6.82 ms/frame** with
-  depth and odometry running beside it, publishing corners, track ids and each
-  corner's position one frame earlier.
-- **Pose** (`pimesh_frontend`, here) — **the tracking front end**, `odometry_node`:
-  `cv::solvePnPRansac` against the newest keyframe's 3D landmarks, **1.37 px mean
-  inlier reprojection over 94 inliers on 81.6% of depth frames**, 16.6 Hz. It
-  holds its last pose rather than guessing when its gates fail, and refuses a fit
-  whose *motion* is implausible even when the fit itself is confident — a
-  reprojection error cannot tell you the 3D points were where the depth network
-  claimed. `rotation_only` stays selectable as the control run.
-- **Depth** (`pimesh_depth`, here, on the GPU) — Depth Anything V2 Small at
-  518² through ONNX Runtime's CUDA execution provider, **55.1 ms/frame and
-  17.4 Hz** against an 80 ms budget, publishing `/depth` in metres alongside
-  `/depth/rgb` — the exact frame each map was inferred on, **1048/1048 measured
-  byte-identical**. The metres are the right *shape* and an arbitrary *size*:
-  monocular depth is scale-ambiguous until something measures a known distance.
-- **Fusion** (`pimesh_mapping`, here) — a spatially hashed TSDF at 15 mm voxels,
-  **15.3 ms per integration** against a 20 ms budget and **17.1 Hz** sustained,
-  with every frame posed at its own capture stamp and paired with the exact colour
-  frame its depth was inferred on: 1030 of 1030 frames offered actually
-  integrated, 0.19% displaced, 0 without a pose, 0 without a colour twin.
-- **Surface** (`pimesh_mapping`, here) — marching cubes over a chunked snapshot of
-  the volume every ten seconds, on a niced thread: **790 668 triangles in 2.8 s**,
-  debris pruned, interior holes fanned shut with **every component's frontier left
-  open**, decimated to **120 000** for `/world/mesh` and written full-detail as a
-  **779 740-triangle** PLY. The worst gap between two integrations was **374.7 ms
-  with meshing running against 401.3 ms in a control with nothing meshing** — the
-  extraction costs the integrator nothing measurable.
+| Stage | Package | Where | Measured |
+| --- | --- | --- | --- |
+| Capture | `pimesh_camera` | Pi | 720p MJPEG stamped at `VIDIOC_DQBUF`, **44–59 Hz** on the dev box, calibrated intrinsics (held-out reprojection 0.4955 px) |
+| Capture (eval) | `pimesh_dataset` | dev box | TUM RGB-D fr1/desk at its own stamps and intrinsics, 613 of 613 frames |
+| Decode | `pimesh_frontend` | dev box | **1.90 ms/frame**, the container's *one* network subscriber; zero-copy **504/504** with intra-process on vs **0/395** off |
+| Keypoints | `pimesh_frontend` | dev box | ORB ×500, **57.8 Hz at 6.82 ms/frame** against an 8 ms budget |
+| Pose | `pimesh_frontend` | dev box | PnP vs newest keyframe, **1.37 px over 94 inliers, 81.6% posed**, 16.6 Hz |
+| Depth | `pimesh_depth` | dev box, **GPU** | Depth Anything V2 Small via ONNX Runtime CUDA, **55.1 ms/frame, 17.4 Hz** (287.9 ms on the CPU control) |
+| Fusion | `pimesh_mapping` | dev box | TSDF at 15 mm voxels, **15.3 ms/integration at 17.1 Hz** |
+| Surface | `pimesh_mapping` | dev box | marching cubes every 10 s, **2.8 s per extraction** off the hot path, 120 k triangles on `/world/mesh` |
+| View | `pimesh_dashboard` | dev box, own process | HTTP + WebSocket, **10.01 Hz stats**, costs the pipeline **0.77%** |
 
-- **Truth** (`pimesh_dataset` + `evo`, offline) — TUM RGB-D fr1/desk, 613 frames
-  with a 100 Hz motion-capture trajectory, replayed through the real container at
-  its own stamps with its own intrinsics: **Sim(3)-aligned ATE RMSE 0.27–0.36 m**
-  over seven runs of ~350 poses, **100%** of them associated against the truth, RPE **0.15 m** over a
-  1 s window, with the `rotation_only` control unable to be aligned at all. It is
-  the first figure in this project about the pose that this project did not
-  produce, and it was worth having: everything above is internal, and P7 is what
-  that is worth — the rotation was composed inverted for six days and every
-  internal number describing it was right. `bash tools/gates/trajectory.sh`.
+**Depth is the pipeline's clock:** 17.4 Hz against a 59 Hz input. Every stage
+drops rather than queues.
 
-- **Unit** (`pimesh_depth`, here) — **written and waiting on a person.**
-  `bash tools/gates/scale.sh` compares the median of `/depth` over a centred patch
-  against a tape measure, so that `depth_scale` stops being 10.0 because somebody
-  typed it. Every path through it is exercised except the one that needs a flat
-  wall at a measured distance — including both refusal budgets, which
-  `bags/desk1` fails at **0.30 of the patch clipped** while reporting a
-  plausible 4.42 m. The checklist for the visit is in
-  [docs/info/setup.md](docs/info/setup.md#the-visit-to-the-room).
+**Measured against an outside truth — M10, 2026-09-25.** TUM fr1/desk replayed
+through the real container and scored by `evo`: **Sim(3)-aligned ATE RMSE
+0.27–0.36 m** over seven runs of ~350 poses, 100% associated against the
+motion-capture trajectory, RPE **0.14–0.15 m** over 1 s, with the
+`rotation_only` control unable to be aligned at all. It is the first number
+about the pose that this project did not produce, and it matters: the rotation
+was once composed *inverted* for six days while every internal number
+describing it was right. `bash tools/gates/trajectory.sh`.
 
-`just build` then `just view-mesh` shows it running; `just --list` is the
-whole of what you type on a normal day. The tests are the `tools/gates/*.sh`
-scripts, run directly, and each milestone issue records what they printed —
-[#4](https://github.com/bthek1/ros2_pi/issues/4) for capture,
-[#5](https://github.com/bthek1/ros2_pi/issues/5) for decode and keypoints,
-[#6](https://github.com/bthek1/ros2_pi/issues/6) for depth,
-[#7](https://github.com/bthek1/ros2_pi/issues/7) for fusion and the mesh,
-[#9](https://github.com/bthek1/ros2_pi/issues/9) for the calibration, and
-[#10](https://github.com/bthek1/ros2_pi/issues/10) for the ATE.
+**Pinned to metres with a tape measure — M11, 2026-09-28.** `depth_scale` =
+**4.6002** from a 1.730 m tape figure (`bash tools/gates/scale.sh`: spread 0.0527
+against a 0.10 ceiling, zero clipping, 346 of 351 frames). M10's Sim(3) fit had
+independently bounded it at 4.6–5.2. The lesson worth more than the number:
+**a blank wall defeats monocular depth** — it came back as a confident 1.7 m →
+6.0 m ramp on a wall that was provably square-on — so point the camera at
+texture.
 
-**The mesh is still not a room, and the reason moved on 2026-09-19.** Two causes
-were named for it — rotation-only odometry and an unpinned `depth_scale` — and P7
-settled the first. It found that the rotation had been composed **inverted** since
-P3: a fit answers where the *points* went, and the camera composes with the
-inverse of that, so the published frame turned left when the camera panned right.
-Nothing failed; a frame that moves when you pan looks correct in RViz. Correcting
-it is worth **3× on the paired-surface gap** — 1.3440 m to 0.4456 m — and the
-first of those numbers reproduces exactly what milestone D recorded.
+**6-DoF odometry earns its keep — M12, 2026-09-29.** The reference clip
+`bags/desk1` is a *pan*, so rotation alone explains almost all of its frame
+motion and the two regimes tie there (0.3830 m against 0.3847 m of
+paired-surface gap). `bags/walk1` carries 18.2 m of path, and on it 6-DoF wins:
+**0.4545 / 0.5150 / 0.5204 m against rotation-only's 0.6688–0.7234**, five runs,
+non-overlapping, the sign never flipping. `bash tools/gates/odom.sh walk1` now
+asserts it. That question had been open since P7 in September.
 
-6-DoF translation is real now too, but on the reference clip it makes no
-measurable difference to the surface: `bags/desk1` is a *pan*, so rotation already
-explains most of the frame motion, and what is left is the depth network's own
-shape error rather than the pose's. What would settle it is a clip with deliberate
-translation, which needs a person and the camera — that is **P13** of
-[#10](https://github.com/bthek1/ros2_pi/issues/10), alongside **P12**, the tape
-measure that pins `depth_scale`.
+It took three clips to record, and the reason is the finding above: this room's
+walls are blank, and the first two walks spent 26% and 49% of their frames
+facing them, where the tenth-percentile frame carried **9 ORB features**.
 
-**P11 has since bounded that second number without a tape measure.** Fitting a
-Sim(3) between our trajectory and TUM's metric ground truth gives a scale of
-0.46–0.52 over seven runs, so that sequence says `depth_scale` should be **4.6–5.2** against the
-10.0 in the YAML. It does not transfer — different camera, different scene, and
-Depth Anything's scale is per-image — so the visit to the room still has to
-happen. What changed is that it is now a *check* on a figure that exists rather
-than the only source of it.
+**Next is the SLAM half:** map points shared across keyframes and local bundle
+adjustment ([#11](https://github.com/bthek1/ros2_pi/issues/11)), place
+recognition, a pose graph and a rebuilt TSDF
+([#12](https://github.com/bthek1/ros2_pi/issues/12)), then a `LOST` state and
+relocalisation ([#13](https://github.com/bthek1/ros2_pi/issues/13)).
 
-**Every number in `docs/` is now this project's own.** Nothing is quoted from the
-Python predecessor at [`~/Documents/piros2`](../piros2) as a stand-in any more; it
-remains the yardstick where a comparison is useful, not a source.
+### Running it
+
+```bash
+just build          # colcon, with the flags this box needs
+just view-mesh      # the pipeline on the Pi's camera, surface in RViz
+just dashboard      # the same, watched from a browser tab
+just --list         # everything you type on a normal day
+```
+
+The tests are the `tools/gates/*.sh` scripts, run directly — each exits 0 or
+non-zero and prints the number it asserted on — plus **478 unit tests across
+thirty-one suites**, identical on both machines (`bash tools/test.sh`, catalogue
+in [docs/info/testing.md](docs/info/testing.md)). Each closed milestone issue
+records what its gates printed: [#4](https://github.com/bthek1/ros2_pi/issues/4)
+capture, [#5](https://github.com/bthek1/ros2_pi/issues/5) decode and keypoints,
+[#6](https://github.com/bthek1/ros2_pi/issues/6) depth,
+[#7](https://github.com/bthek1/ros2_pi/issues/7) fusion and mesh,
+[#8](https://github.com/bthek1/ros2_pi/issues/8) odometry and dashboard,
+[#9](https://github.com/bthek1/ros2_pi/issues/9) calibration.
 
 ## Why a rewrite
 
@@ -156,21 +130,6 @@ that uses it.
 Two different ROS distros, deliberately — there is no ABI compatibility across
 them, so every package builds from source on the machine that runs it.
 
-## The budget
-
-Measured on this hardware — the depth row here, the rest via the predecessor:
-
-| Stage | Cost |
-| --- | --- |
-| Capture + ship (Pi) | ~16 ms/frame, up to 60 fps at 720p MJPEG |
-| Decode + ORB (dev box CPU) | ~9 ms/frame |
-| **Depth (dev box GPU)** | **55.1 ms/frame** in the node, 51.1 ms of it inference — 287.9 ms on CPU ([gate](docs/info/setup.md#gpu), 2026-09-15) |
-| TSDF integrate | ~15 ms/frame (target) |
-| Mesh extraction | 300–900 ms, every ~10 s, off the hot path |
-
-**Depth is the pipeline's clock: 17.4 Hz measured.** Every stage drops rather than
-queues.
-
 ## Documentation
 
 | | |
@@ -182,22 +141,23 @@ queues.
 | [docs/info/hardware.md](docs/info/hardware.md) | Measured specs of both machines and the camera |
 | [docs/info/setup.md](docs/info/setup.md) | Getting both machines to build and run this |
 | [docs/info/troubleshooting.md](docs/info/troubleshooting.md) | Symptom → cause |
-| [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones |
+| [docs/info/roadmap.md](docs/info/roadmap.md) | Milestones M0–M19 and their status |
+| [docs/info/build-log.md](docs/info/build-log.md) | **How this got built, and the dozen times a number was wrong before it was right.** Read it before adding a gate |
+| [docs/info/testing.md](docs/info/testing.md) | The unit suites and what each exists to catch |
 | [docs/plans/README.md](docs/plans/README.md) | How plans are written here: a GitHub issue of stable phases, a command for a test, executable phases only |
-| [Issue #2 — hello-world plan](https://github.com/bthek1/ros2_pi/issues/2) | Closed 2026-09-08: the scaffolding, and what each of its gates measured. The `pimesh_hello` package and its five gates were deleted on 2026-09-23, once the real pipeline's gates covered the same claims |
-| [Issue #3 — justfile plan](https://github.com/bthek1/ros2_pi/issues/3) | Closed 2026-09-09: grouped recipes, gate bodies in `tools/`, and the first shellcheck run over this repo's shell |
-| [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | **Where this went.** The build order P0–P8, each ending in a `tools/gates/*.sh` test and each annotated with what that test printed, followed by the deferred register — each entry with the trigger that would make it a phase |
+| [docs/plans/future/project_final_state.md](docs/plans/future/project_final_state.md) | The one phase list, P0–P20, each ending in a `tools/gates/*.sh` test, and the deferred register |
 
 Plans live in the issue tracker, not in this tree: `gh issue list --label plan`.
 
 ## What one webcam can honestly do
 
 **Monocular depth is relative, not metric.** One measured distance fixes the
-scale, and until a tape measure supplies it every distance this reports is
-plausibly shaped and the wrong size. The model's output also wobbles ~4% frame to
+scale — here a tape measure, 1.730 m to a wall, which put `depth_scale` at
+4.6002 — and that constant is only as good as the surface it was read off. The model's output also wobbles ~4% frame to
 frame on a static scene; per-frame scale alignment against the volume already
 built is what keeps that wobble from thickening every surface. Anything beyond
-~6 m is a guess and is clipped.
+~6 m is a guess and is clipped, and a textureless surface is a confident guess
+at any range.
 
 **And a monocular system has no absolute reference for where it is.** The pose is
 measured against keyframes, which bounds the per-step error but not the
