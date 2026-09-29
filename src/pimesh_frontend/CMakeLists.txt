@@ -27,6 +27,10 @@ find_package(pimesh_msgs REQUIRED)
 # header laid over an image without copying it, and the percentile the probes
 # report. Header-only, so this is include directories and nothing to link.
 find_package(pimesh_core REQUIRED)
+# The map odometry_node tracks against (#11's P14): map points, covisibility,
+# triangulation and culling. A library with no rclcpp in it, exported as a
+# namespaced target, and built at both ends like everything else.
+find_package(pimesh_backend REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 # The apt OpenCV: 4.10.0 here, 4.6.0 on the Pi, and **neither has the CUDA
@@ -41,6 +45,7 @@ add_library(frontend_components SHARED
   probes/ipc_probe.cpp
   src/keyframe_store.cpp
   src/keypoint_node.cpp
+  src/local_map_match.cpp
   probes/odom_probe.cpp
   src/odometry_node.cpp
   src/orb_tracker.cpp
@@ -64,6 +69,7 @@ target_link_libraries(frontend_components PUBLIC
   ${pimesh_msgs_TARGETS}
   tf2::tf2
   tf2_ros::tf2_ros
+  pimesh_backend::backend
   opencv_core
   opencv_imgproc
   opencv_imgcodecs
@@ -170,6 +176,15 @@ if(BUILD_TESTING)
     target_link_libraries(test_keyframe_store frontend_components)
   endif()
 
+  # The projection search P14's local-map tracking stands on. Every way of getting it
+  # wrong still produces matches: a corner claimed by two points, an ambiguous match
+  # accepted, a point behind the camera "found" on the sensor — and each of them is a
+  # correspondence PnP will happily use.
+  ament_add_gtest(test_local_map_match test/test_local_map_match.cpp)
+  if(TARGET test_local_map_match)
+    target_link_libraries(test_local_map_match frontend_components)
+  endif()
+
   # P11's instrument. odom_probe writes the trajectory tools/gates/trajectory.sh
   # hands to `evo`, and a gate's instrument needs its own tests — the same
   # argument test_orb_reference makes. It is sharper here because the reader is
@@ -187,6 +202,6 @@ ament_export_include_directories(include)
 ament_export_libraries(frontend_components)
 ament_export_dependencies(
   rclcpp rclcpp_components sensor_msgs geometry_msgs nav_msgs pimesh_msgs
-  pimesh_core tf2 tf2_ros OpenCV)
+  pimesh_core pimesh_backend tf2 tf2_ros OpenCV)
 
 ament_package()

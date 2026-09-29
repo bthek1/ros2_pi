@@ -352,11 +352,12 @@ def test_the_launch_description_actually_builds(launch_module):
         len(launch_module.STATIC_TRANSFORMS) + len(launch_module.STANDALONE_NODES))
     assert kinds.get(ComposableNodeContainer) == 1, 'there is one container, always'
     # intra_process, log_payloads, probe, probe_duration_s, align,
-    # remesh_period_s, dashboard, dashboard_port, odom_regime, source,
+    # remesh_period_s, dashboard, dashboard_port, odom_regime, local_map, local_ba,
+    # source,
     # dataset_dir, trajectory_path, use_cuda, pipeline — each exists because
     # something outside this file has to be able to set it: all but the last for
     # gates and viewers, the last for tools/view/replay.sh.
-    assert kinds.get(DeclareLaunchArgument) == 14
+    assert kinds.get(DeclareLaunchArgument) == 16
     # One per probe **and one per source**, loaded into the running container
     # rather than listed in it, because `composable_node_descriptions` is built
     # when this file is evaluated and cannot be made conditional on an argument.
@@ -663,22 +664,23 @@ def test_the_overrides_are_the_ones_the_gates_actually_pass(launch_module):
 
     `use_cuda` is a bool in depth_node, `duration_s` a double in depth_probe,
     `log_payloads` a bool in decode_node, `align` a bool in fusion_node,
-    `remesh_period_s` a double in mesh_node, `odometry` a string in
-    odometry_node, `dataset_dir` a string in dataset_node and `trajectory_path`
-    a string in odom_probe.
+    `remesh_period_s` a double in mesh_node, `odometry` a string and
+    `local_map` and `local_ba` bools in odometry_node, `dataset_dir` a string in dataset_node
+    and `trajectory_path` a string in odom_probe.
     A `value_type` that disagrees with the declaration is the same silent no-op as
     having none.
     """
     expected = {
         'log_payloads': bool, 'use_cuda': bool, 'duration_s': float, 'align': bool,
-        'remesh_period_s': float, 'odometry': str, 'dataset_dir': str,
-        'trajectory_path': str}
+        'remesh_period_s': float, 'odometry': str, 'local_map': bool, 'local_ba': bool,
+        'dataset_dir': str, 'trajectory_path': str}
     overrides = _override_values(launch_module)
 
     assert set(overrides) == set(expected), (
         'the override set changed; update the gates that depend on it '
         '(tools/gates/ipc.sh, tools/gates/depth.sh, tools/gates/fusion.sh, '
-        'tools/gates/mesh.sh, tools/gates/odom.sh, tools/gates/trajectory.sh) '
+        'tools/gates/mesh.sh, tools/gates/odom.sh, tools/gates/trajectory.sh, '
+        'tools/gates/map.sh, tools/gates/ba.sh) '
         'and this test together')
     for name, want in expected.items():
         assert overrides[name].value_type is want, (

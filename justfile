@@ -62,6 +62,11 @@ view-mesh seconds="600" bag="":
 view-odom seconds="600" bag="" regime="sixdof":
     @bash "{{ ws }}/tools/view/view-odom.sh" "{{ seconds }}" "{{ bag }}" "{{ regime }}"
 
+# Map points and the trail, in RViz. ba = true (default) or false, the control
+[group('run')]
+view-map seconds="600" bag="" ba="true":
+    @bash "{{ ws }}/tools/view/view-map.sh" "{{ seconds }}" "{{ bag }}" "{{ ba }}"
+
 # The whole pipeline in a browser tab: http://localhost:8080. Not evidence
 [group('run')]
 dashboard seconds="600" bag="" port="8080":

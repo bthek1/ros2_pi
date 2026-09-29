@@ -87,7 +87,7 @@ fi
 # something. The camera path is covered by view-camera in the row above.
 
 # recipe -> the argv to run it with, and what "it is up" means for it.
-RECIPES=(view-camera replay view-keypoints view-depth view-mesh view-odom dashboard)
+RECIPES=(view-camera replay view-keypoints view-depth view-mesh view-odom view-map dashboard)
 
 # `replay` is the only recipe here that takes an argument, and the bag it takes
 # has to be *this gate's own*. bags/ is git-ignored, so on a fresh clone there
@@ -192,6 +192,7 @@ argv_for() {                # $1 = recipe, $2 = seconds; prints one argv word pe
         view-depth)  printf '%s\n' "$PIMESH_WS/tools/view/view-depth.sh" "$2" "$GATE_BAG" ;;
         view-mesh)   printf '%s\n' "$PIMESH_WS/tools/view/view-mesh.sh" "$2" "$GATE_BAG" ;;
         view-odom)   printf '%s\n' "$PIMESH_WS/tools/view/view-odom.sh" "$2" "$GATE_BAG" ;;
+        view-map)    printf '%s\n' "$PIMESH_WS/tools/view/view-map.sh" "$2" "$GATE_BAG" ;;
         # A port, not a window. The third argument keeps it off 8080 so a gate run
         # cannot collide with a dashboard somebody has open.
         dashboard)   printf '%s\n' "$PIMESH_WS/tools/view/dashboard.sh" "$2" "$GATE_BAG" 18080 ;;
@@ -238,6 +239,11 @@ session_up() {              # $1 = recipe
         # The same three once more. view-odom is view-mesh with an extra display
         # in the config; nothing about how it starts or ends differs.
         view-odom)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
+                    pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
+                    pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
+        # And view-map is view-odom with the backend thread doing bundle adjustment
+        # inside the container — a thread, not a process, so nothing new to wait on.
+        view-map)   pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
                     pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
                     pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
         # **The one recipe here with no window at all**, which is why it is worth

@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pimesh_backend</name>
+  <version>0.1.0</version>
+  <description>
+    The map, and from P15 the backend that revisits it. Map points observed by
+    many keyframes, the covisibility graph between keyframes, triangulation from
+    those observations, and culling of both — milestone G of #11.
+
+    A library and not a node. odometry_node in pimesh_frontend owns the one Map
+    and tracks against it; the frontend turns pixels into correspondences, and
+    this package maintains and optimises what the correspondences are *to*. The
+    two share an object in one process, the way ORB-SLAM's tracker and local
+    mapper do, because the alternative — a backend component finding the map by a
+    string key, as mesh_node finds the TSDF — is the volume_key trap for no gain.
+
+    No rclcpp anywhere in it, so every header here is callable from a unit test
+    and every suite runs on the Pi like the rest of the workspace.
+  </description>
+  <maintainer email="bthekkel1@gmail.com">Benedict Thekkel</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>libopencv-dev</depend>
+  <!-- P15's bundle adjustment. Ships with ROS at both ends, same version. -->
+  <depend>libg2o</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

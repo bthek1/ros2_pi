@@ -241,6 +241,10 @@ def _component(
     hard-coded directory would be a second publisher on the topic the Pi uses,
     the second because the file `evo` reads has to land somewhere the gate chose.
 
+    `local_map` is odometry_node's, for tools/gates/map.sh: the control run is the
+    same binary tracking against the newest keyframe alone. `local_ba` is too, for
+    tools/gates/ba.sh: the control skips only the solve.
+
     `log_payloads` is decode_node's, for tools/gates/ipc.sh. `use_cuda` is
     depth_node's, and it is **the control run** tools/gates/depth.sh needs rather
     than a fallback anyone should choose: an 80 ms per-frame budget that the CPU
@@ -274,6 +278,10 @@ def _component(
                     LaunchConfiguration('remesh_period_s'), value_type=float),
                 'odometry': ParameterValue(
                     LaunchConfiguration('odom_regime'), value_type=str),
+                'local_map': ParameterValue(
+                    LaunchConfiguration('local_map'), value_type=bool),
+                'local_ba': ParameterValue(
+                    LaunchConfiguration('local_ba'), value_type=bool),
                 'dataset_dir': ParameterValue(
                     LaunchConfiguration('dataset_dir'), value_type=str),
                 'trajectory_path': ParameterValue(
@@ -417,6 +425,24 @@ def generate_launch_description() -> LaunchDescription:
                         'second is P3\'s estimator, kept as the control run in '
                         'tools/gates/odom.sh — a claim that translation improves '
                         'the surface needs a run without it.',
+        ),
+        DeclareLaunchArgument(
+            'local_map',
+            default_value='false',
+            description="odometry_node tracks against the local map — the "
+                        'reference keyframe and every keyframe covisible with '
+                        'it — when true, and against the newest keyframe\'s '
+                        'landmarks alone when false. false is P7\'s tracker and '
+                        'the control run in tools/gates/map.sh: the same binary '
+                        'one parameter apart.',
+        ),
+        DeclareLaunchArgument(
+            'local_ba',
+            default_value='false',
+            description="odometry_node's backend thread bundle-adjusts the "
+                        'window around each new keyframe when true. false is the '
+                        'control run in tools/gates/ba.sh. Only changes tracking '
+                        'with local_map:=true — P7\'s tracker never reads the map.',
         ),
         DeclareLaunchArgument(
             'source',

@@ -59,6 +59,42 @@ file; the busy-device case is `tools/gates/capture.sh`'s job.
 
 478 across thirty-one suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
 
+**`test_map`, `test_triangulation`, `test_local_map_match`, `test_local_ba` and
+`test_local_mapper`** (added 2026-09-29/30, #11's P14 and P15) cover milestone G,
+and they share one property: **everything wrong in a map makes its numbers look
+better.** A map that never culls has more points and more keyframes. A point that
+accepts two observations from one keyframe reaches "three observations" sooner. A
+covisibility query that returns only the reference keyframe tracks exactly as well
+as P7, because it *is* P7. So each suite asserts what a count would never show.
+
+`test_map` pins the plan's three false greens directly — a cull that ran (and,
+since a cull that found nothing and one that never looked both report zero, that
+it *judged* something), one observation per keyframe however many features claim a
+point, a track id re-admitted onto a feature the geometry disagrees with being
+refused, and a local map larger than its reference. It also pins two decisions that
+came out of measurement rather than design: a point sits at its **freshest** depth
+reading, not its first (tracking against first readings measured 0.47-0.54 m of ATE
+against 0.25-0.35 m for P7), and each new keyframe's depth map is moved only
+**part** of the way onto the map's scale, because full correction is inheritance and
+inheritance of a measured quantity is a random walk — one fr1/desk run finished at a
+fitted Sim(3) scale of 0.699 that way. `test_triangulation` pins the refusals —
+parallax, cheirality, and the worst view rather than the mean — and pins *why* the
+parallax floor exists as a measurement: at one degree, half a pixel of noise puts a
+point several percent out in depth while reprojecting better than the budget.
+
+`test_local_ba` is the one suite in the workspace whose failure mode is a **process
+abort** rather than a wrong answer. This g2o is built with asserts on, and a window
+with no free pose trips `BlockSolver::resize`'s `_sizePoses > 0` — measured on both
+machines while probing the library. The refusals are tested by handing the solver
+exactly those windows; if one is ever removed, the test binary dies, which is the
+louder of the two. Its sharpest case is `TheDepthPriorIsWhatAnchorsScale`: a window
+30% too large reprojects exactly as well as the right one, so monocular BA leaves it
+30% too large, and only the depth readings pull it back. `test_local_mapper` pins
+that the backend's queue *refuses* when full rather than dropping — the one queue in
+this project that is not newest-wins, because a dropped keyframe is a hole in the
+map — and that with bundle adjustment on, every keyframe after the first is solved
+with iterations above zero.
+
 **`test_depth_patch`** (added 2026-09-25, #10's P12) covers the statistic this
 project's *unit* comes out of. `tools/gates/scale.sh` divides a tape measure by
 the number `centred_patch_stats` returns and calls the result `depth_scale`,

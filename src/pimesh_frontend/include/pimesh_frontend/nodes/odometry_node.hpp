@@ -7,6 +7,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -16,13 +17,17 @@
 #include "pimesh_msgs/msg/keypoints.hpp"
 #include "pimesh_msgs/msg/pipeline_stats.hpp"
 #include "pimesh_frontend/keyframe_store.hpp"
+#include "pimesh_backend/local_mapper.hpp"
+#include "pimesh_backend/map.hpp"
 #include "pimesh_core/mailbox.hpp"
+#include "pimesh_frontend/local_map_match.hpp"
 #include "pimesh_frontend/orb_tracker.hpp"
 #include "pimesh_frontend/rgbd_odometry.hpp"
 #include "pimesh_frontend/rotation_fit.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "sensor_msgs/msg/point_cloud2.hpp"
 // **`.hpp`, not `.h`, and it is the cross-distro rule again.** tf2 renamed every
 // header to `.hpp`; Jazzy ships both spellings with the `.h` forms emitting
 // `#warning …_DEPRECATION`, and Lyrical has **deleted** the `.h` forms under
@@ -111,6 +116,9 @@ private:
     std::vector<cv::Point2f> pixels;
     std::vector<std::int32_t> ids;
     cv::Mat descriptors;
+    /// The sensor's size, from the message — the projection search needs to know
+    /// where the image ends, and the dataset and the C922 disagree about it.
+    cv::Size image_size;
   };
 
   /// The landmarks one depth-backed frame contributed, indexed by track id.
@@ -149,6 +157,7 @@ private:
   void process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg);
   void publish_pose(const rclcpp::Time & stamp);
   void log_stats();
+  void publish_map_points(const rclcpp::Time & stamp);
 
   /// How far the pose is from where it started, which is not the path length.
   double net_displacement();
@@ -181,6 +190,10 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<pimesh_msgs::msg::PipelineStats>::SharedPtr stats_pub_;
+  /// The map's points, for `just view-map`. A viewer's topic and nothing else reads
+  /// it; published at most every `map_points_period_s`, from the pose worker, when a
+  /// keyframe has changed the map.
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_points_pub_;
   rclcpp::TimerBase::SharedPtr stats_timer_;
 
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -318,6 +331,46 @@ private:
   /// adds a reader.
   RgbdView reference_;
   KeyframeStore keyframes_;
+
+  // --- The map (#11's P14) ----------------------------------------------------
+  //
+  // **Built in both settings of `local_map`, read by tracking in only one.** The
+  // control run pays for maintaining the map exactly as the measured run does, so a
+  // rate difference between the two is a difference in *tracking* rather than in
+  // how much work the node did; and the control's map statistics are what show how
+  // much of the measured run's map came from the projection search, which is the
+  // only part of it the control does not have.
+  //
+  // The map frame is `odom`. P14 publishes no `map -> odom` correction — that edge
+  // is static identity until milestone H's pose graph — so a map point's position
+  // and an odom pose are in the same coordinates, and saying "map" here is naming the
+  // role rather than a different frame.
+  bool local_map_ {true};
+  ProjectionConfig projection_;
+  std::unique_ptr<pimesh_backend::Map> map_;
+  /// The backend thread (#11's P15) that inserts, triangulates, culls and — with
+  /// `local_ba` — bundle-adjusts. **Declared after `map_`**, so it is destroyed
+  /// first: its thread is joined while the map it writes to still exists.
+  std::unique_ptr<pimesh_backend::LocalMapper> mapper_;
+  bool local_ba_ {false};
+  /// A keyframe the backend's queue has not taken yet. Offered again every depth
+  /// frame until it is.
+  std::optional<pimesh_backend::KeyframeInput> pending_keyframe_;
+  std::atomic<std::uint64_t> keyframes_deferred_ {0};
+  std::atomic<std::uint64_t> keyframes_dropped_ {0};
+  double map_points_period_s_ {1.0};
+  std::int64_t last_map_points_ns_ {0};
+
+  /// The gate's evidence, written by the pose worker and read by the stats timer.
+  std::mutex map_stats_mutex_;
+  /// Keyframes in the local map, one sample per frame tracked against it. **The
+  /// plan's third false green is a distribution whose median is 1** — a
+  /// covisibility query that silently returns only the reference — so this is kept
+  /// as a distribution rather than as a mean a few large maps could hold up.
+  std::vector<double> local_keyframe_samples_;
+  std::uint64_t by_track_sum_ {0};
+  std::uint64_t by_projection_sum_ {0};
+  std::uint64_t map_tracked_frames_ {0};
 
   // --- Counters -------------------------------------------------------------
   //

@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <unordered_set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,7 +24,9 @@
 #include "rcl_interfaces/msg/floating_point_range.hpp"
 #include "rcl_interfaces/msg/integer_range.hpp"
 #include "rcl_interfaces/msg/parameter_descriptor.hpp"
+#include "pimesh_core/stats.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
+#include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "tf2/LinearMath/Matrix3x3.hpp"
 #include "tf2/LinearMath/Quaternion.hpp"
 
@@ -296,6 +299,141 @@ OdometryNode::OdometryNode(const rclcpp::NodeOptions & options)
       keyframe_distance_m,
       static_cast<std::size_t>(max_keyframes)});
 
+  // --- The map (#11's P14) ---------------------------------------------------
+  // **false by default, and that is a measurement, not caution.** On TUM fr1/desk,
+  // 2026-09-29, no configuration of local-map tracking beat this tracker's Sim(3)
+  // ATE over 24 runs and seven variants; the best overlapped it. The mechanism is
+  // on the `stats map` line as `align_dev`: Depth Anything's scale differs by ~15%
+  // between consecutive keyframes, P7's tracker never mixes two depth maps, and a
+  // map mixes them in every PnP by construction. Defaulting to the worse tracker
+  // would silently move every other gate onto it.
+  local_map_ = declare_parameter(
+    "local_map", false,
+    describe(
+      "Track against the local map — the reference keyframe and every keyframe "
+      "covisible with it, projected into the frame — rather than against the "
+      "newest keyframe's landmarks alone. false is P7's tracker and is "
+      "tools/gates/map.sh's control; the map is built either way, so the two runs "
+      "do the same work and differ only in what tracking reads."));
+  projection_.radius_px = declare_parameter(
+    "map_search_radius_px", 12.0,
+    describe_double(
+      "How far from its predicted pixel a map point's corner may be, in pixels.",
+      1.0, 100.0));
+  projection_.max_hamming = static_cast<int>(
+    declare_parameter(
+      "map_search_max_hamming", 50,
+      describe_int(
+        "ORB Hamming distance, in bits of 256, past which two corners are not the "
+        "same corner. 50 is ORB-SLAM's strict threshold.", 1, 256)));
+  projection_.ratio = declare_parameter(
+    "map_search_ratio", 0.8,
+    describe_double(
+      "The best candidate must beat the second best by this factor, or the match "
+      "is ambiguous and refused.", 0.1, 1.0));
+  pimesh_backend::Map::Config map_config;
+  map_config.min_parallax_deg = declare_parameter(
+    "map_min_parallax_deg", 3.0,
+    describe_double(
+      "Below this parallax a map point keeps the depth network's reading rather "
+      "than being triangulated. Depth error per pixel of noise is ~d/(f*parallax), "
+      "so at 1 degree and f=525 a triangulation is ~11% of the distance out per "
+      "pixel — worse than the network it would replace.", 0.1, 45.0));
+  map_config.associate_px = declare_parameter(
+    "map_associate_px", 4.0,
+    describe_double(
+      "An association tracking claims is refused if the point reprojects further "
+      "than this from the feature in the keyframe it is added to. Looser than "
+      "pnp_inlier_px because the keyframe pose is the published one, after the "
+      "low-pass.", 0.5, 50.0));
+  map_config.align_scale = declare_parameter(
+    "map_align_scale", true,
+    describe(
+      "Scale each new keyframe's depth map onto the map's scale, from the median "
+      "depth ratio over the points it re-observed, before it creates points. The "
+      "network's scale breathes a few percent a frame; P7 never mixed two depth "
+      "maps so never saw it, and a map is nothing but many depth maps mixed."));
+  map_config.align_gain = declare_parameter(
+    "map_align_gain", 0.5,
+    describe_double(
+      "The fraction of that log-ratio applied. 1 makes each keyframe inherit the "
+      "map's scale exactly, which is a random walk — measured as a fitted Sim(3) "
+      "scale of 0.699 on one fr1/desk run against 0.99-1.06 on the rest. 0 leaves "
+      "the map a patchwork of depth-map scales. Between them the network's "
+      "absolute scale still wins over time.", 0.0, 1.0));
+  map_config.reading_window = static_cast<std::size_t>(
+    declare_parameter(
+      "map_reading_window", 1,
+      describe_int(
+        "A map point sits at the mean of this many of its newest depth readings. 1 "
+        "puts it exactly where P7's reference landmark would be; see "
+        "Map::Config::reading_window for the measurement behind that default.",
+        1, 50)));
+  map_config.local_keyframes = static_cast<std::size_t>(
+    declare_parameter(
+      "map_local_keyframes", 10,
+      describe_int(
+        "Most-covisible keyframes, beside the reference, whose points make the "
+        "local map.", 1, 200)));
+  map_ = std::make_unique<pimesh_backend::Map>(map_config);
+
+  // --- The backend thread (#11's P15) -------------------------------------------
+  pimesh_backend::LocalMapper::Config mapper_config;
+  // **false by default until gates/ba.sh says otherwise**, for local_map's reason:
+  // a default is what every other gate runs, and it should be the configuration that
+  // has been measured to be better rather than the one most recently written.
+  local_ba_ = declare_parameter(
+    "local_ba", false,
+    describe(
+      "Bundle-adjust the covisible window around each new keyframe on the backend "
+      "thread — poses and points together, g2o, Huber kernel, with each depth "
+      "reading as a prior. false is tools/gates/ba.sh's control: the same thread "
+      "doing the same insert, triangulate and cull, skipping only the solve. Only "
+      "affects tracking with local_map:=true, since P7's tracker never reads the "
+      "map."));
+  mapper_config.bundle_adjust = local_ba_;
+  mapper_config.window_keyframes = static_cast<std::size_t>(
+    declare_parameter(
+      "ba_window_keyframes", 10,
+      describe_int(
+        "Keyframes bundle adjustment moves: the newest and its most covisible. "
+        "Every other keyframe that sees their points is held fixed.", 2, 100)));
+  mapper_config.max_fixed_keyframes = static_cast<std::size_t>(
+    declare_parameter(
+      "ba_max_fixed_keyframes", 20,
+      describe_int(
+        "Ceiling on the fixed keyframes around the window, most-shared first. They "
+        "anchor the solve and cost only their edges.", 1, 200)));
+  mapper_config.ba.depth_sigma_rel = declare_parameter(
+    "ba_depth_sigma_rel", 0.15,
+    describe_double(
+      "One sigma of a depth reading, relative to the depth. 0.15 is P14's "
+      "measurement of how far consecutive keyframes' depth maps disagree (align_dev). "
+      "0 drops the prior and makes this monocular BA, whose only scale anchor is "
+      "the fixed keyframes.", 0.0, 10.0));
+  mapper_config.queue = static_cast<std::size_t>(
+    declare_parameter(
+      "backend_queue", 2,
+      describe_int(
+        "Keyframes waiting for the backend. **Not newest-wins**: a full queue refuses "
+        "and the keyframe is offered again next frame, because a dropped keyframe is "
+        "a hole in the map. Keyframes arrive every half second or so, so it is small.",
+        1, 50)));
+  mapper_config.nice = static_cast<int>(
+    declare_parameter(
+      "backend_nice", 10,
+      describe_int(
+        "Nice value of the backend thread alone. Measured on mesh_node: a CPU-heavy "
+        "thread at equal priority took depth_node from 17.8 to 14.6 Hz with its "
+        "per-frame cost unchanged.", 0, 19)));
+  mapper_ = std::make_unique<pimesh_backend::LocalMapper>(*map_, mapper_config);
+  mapper_->start();
+  map_points_period_s_ = declare_parameter(
+    "map_points_period_s", 1.0,
+    describe_double(
+      "Shortest interval between two /map/points publications. The cloud is only "
+      "rebuilt when a keyframe has changed the map.", 0.1, 60.0));
+
   publish_tf_ = declare_parameter(
     "publish_tf", true,
     describe("Publish odom -> base_link. Rotation only in the rotation_only regime."));
@@ -380,6 +518,13 @@ OdometryNode::OdometryNode(const rclcpp::NodeOptions & options)
   }
 
   stats_pub_ = create_publisher<pimesh_msgs::msg::PipelineStats>("/pipeline/stats", 10);
+
+  // Latched, so a viewer started after the last keyframe still gets the map. A
+  // VOLATILE reader against this writer is compatible and simply misses the stored
+  // one — see the note on /world/mesh in CLAUDE.md for why that mismatch is legal.
+  rclcpp::QoS map_qos(rclcpp::KeepLast(1));
+  map_qos.reliable().transient_local();
+  map_points_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>("/map/points", map_qos);
 
   pose_worker_ = std::thread([this] {this->pose_work();});
 
@@ -468,6 +613,8 @@ void OdometryNode::on_keypoints(pimesh_msgs::msg::Keypoints::ConstSharedPtr msg)
   record->pixels = keypoint_pixels(*msg);
   record->ids = msg->track_id;
   record->descriptors = copy_keypoint_descriptors(*msg);
+  record->image_size = cv::Size(
+    static_cast<int>(msg->image_width), static_cast<int>(msg->image_height));
 
   {
     std::lock_guard<std::mutex> lock(history_mutex_);
@@ -719,7 +866,116 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
       }
     }
   }
-  const std::size_t shared = solve_pnp_ ? from.size() : to.size();
+  // The orientation as it stands, read once — used by the control path, as the
+  // prediction the local-map search projects with when nothing better exists, and
+  // as the pose to hold when nothing can be fitted.
+  cv::Affine3d pose_now;
+  {
+    std::lock_guard<std::mutex> lock(pose_mutex_);
+    pose_now = pose_;
+  }
+  const cv::Affine3d odom_from_camera_now = pose_now * base_from_optical_;
+
+  // --- The map, stage one: by track id -------------------------------------------
+  //
+  // Every corner whose track id the map knows, against that point's position in the
+  // map frame. Done in both settings of `local_map`: in the control it is only the
+  // association a new keyframe is built with, so the map the control maintains is
+  // the map the tracker *would* have had.
+  //
+  // **Deduplicated by point**, because a point can carry two track ids — an old one
+  // the tracker has not yet retired and a new one the projection search attached —
+  // and a corner counted twice in a PnP is a correspondence weighted double with
+  // nothing to say so.
+  const std::size_t n_features = record->pixels.size();
+  std::vector<pimesh_backend::PointId> feature_point(n_features, pimesh_backend::kNoPoint);
+  std::vector<std::uint8_t> corner_taken(n_features, 0);
+  std::vector<cv::Vec3d> map_object;
+  std::vector<cv::Point2f> map_image;
+  std::vector<pimesh_backend::PointId> map_ids;
+  std::unordered_set<pimesh_backend::PointId> matched_points;
+  {
+    const std::vector<pimesh_backend::PointView> by_track = map_->lookup_tracks(record->ids);
+    for (std::size_t i = 0; i < n_features; ++i) {
+      const pimesh_backend::PointId id = by_track[i].id;
+      if (id == pimesh_backend::kNoPoint || !matched_points.insert(id).second) {continue;}
+      feature_point[i] = id;
+      corner_taken[i] = 1;
+      map_object.push_back(by_track[i].position);
+      map_image.push_back(record->pixels[i]);
+      map_ids.push_back(id);
+    }
+  }
+  const std::size_t by_track = map_object.size();
+
+  // --- The map, stage two: the local map, by projection ------------------------------
+  //
+  // **This is the phase.** The first stage finds only what the tracker still has an
+  // id for; this one finds map points the tracker has lost — projected with the pose
+  // the first stage predicts, matched on descriptor near where they land. It is what
+  // lets a landmark outlive the keyframe that first saw it *and* the track id it was
+  // first seen under.
+  PnpFit map_fit;
+  std::size_t by_projection = 0;
+  std::size_t local_keyframes = 0;
+  if (local_map_) {
+    const PnpFit predicted_fit = fit_pose_pnp(
+      k, map_object, map_image, min_landmark_pairs_, reprojection_px_, max_reprojection_px_);
+    const cv::Affine3d predicted =
+      predicted_fit.ok ? camera_step(predicted_fit.motion()) : odom_from_camera_now;
+
+    const pimesh_backend::LocalMap local = map_->local_map(map_->newest());
+    local_keyframes = local.keyframes.size();
+    std::vector<std::uint8_t> skip(local.points.size(), 0);
+    for (std::size_t i = 0; i < local.points.size(); ++i) {
+      skip[i] = matched_points.count(local.points[i].id) != 0 ? 1 : 0;
+    }
+    const ProjectionSearch search = search_by_projection(
+      local.points, skip, predicted, k, record->image_size, record->pixels,
+      record->descriptors, corner_taken, projection_);
+    for (const ProjectionMatch & m : search.matches) {
+      const pimesh_backend::PointView & point = local.points[m.point];
+      feature_point[m.corner] = point.id;
+      map_object.push_back(point.position);
+      map_image.push_back(record->pixels[m.corner]);
+      map_ids.push_back(point.id);
+    }
+    by_projection = search.matches.size();
+
+    map_fit = fit_pose_pnp(
+      k, map_object, map_image, min_landmark_pairs_, reprojection_px_, max_reprojection_px_);
+    // The combined solve failing where the track-id one succeeded means the
+    // projection matches dragged it off; the track-id answer stands. Its inlier
+    // indices are still valid — stage one's entries are the first `by_track` of the
+    // combined arrays.
+    if (!map_fit.ok && predicted_fit.ok) {map_fit = predicted_fit;}
+
+    // What tracking tells the map: every point it expected to see, and the ones it
+    // found. A point matched and then rejected by RANSAC was predicted and not found.
+    std::vector<pimesh_backend::PointId> visible(map_ids.begin(), map_ids.begin() +
+      static_cast<std::ptrdiff_t>(by_track));
+    for (std::size_t p : search.in_view) {
+      if (!skip[p]) {visible.push_back(local.points[p].id);}
+    }
+    std::vector<pimesh_backend::PointId> found;
+    if (map_fit.ok) {
+      for (int index : map_fit.inlier_index) {
+        found.push_back(map_ids[static_cast<std::size_t>(index)]);
+      }
+    }
+    map_->record_tracking(visible, found);
+
+    std::lock_guard<std::mutex> lock(map_stats_mutex_);
+    local_keyframe_samples_.push_back(static_cast<double>(local_keyframes));
+    by_track_sum_ += by_track;
+    by_projection_sum_ += by_projection;
+    ++map_tracked_frames_;
+  }
+
+  // Landmarks this frame shares with what it is measured against: the reference
+  // view's in P7's tracker, and the points the map still knows by track id in the
+  // local-map one. It is the number the "lost" keyframe rule reads.
+  const std::size_t shared = local_map_ ? by_track : (solve_pnp_ ? from.size() : to.size());
   pair_sum_ = pair_sum_.load() + static_cast<double>(shared);
 
   // --- The solve ---------------------------------------------------------------
@@ -731,16 +987,19 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
   cv::Affine3d odom_from_camera;
   bool fit_ok = false;
 
-  // The orientation as it stands, read once — used by the control path, and as the
-  // pose to hold when nothing can be fitted.
-  cv::Affine3d pose_now;
-  {
-    std::lock_guard<std::mutex> lock(pose_mutex_);
-    pose_now = pose_;
-  }
-  const cv::Affine3d odom_from_camera_now = pose_now * base_from_optical_;
-
-  if (reference_.valid() && shared >= min_landmark_pairs_) {
+  if (local_map_) {
+    // **Map coordinates, so there is no reference to compose with.** P7's pose is
+    // the reference keyframe's composed with the fitted step; here the 3D points are
+    // already in the map frame, so the fit is the camera's pose outright.
+    if (map_fit.ok) {
+      odom_from_camera = camera_step(map_fit.motion());
+      residual_px = map_fit.residual_px;
+      pairs_used = map_fit.inliers;
+      fit_ok = true;
+      reprojection_sum_px_ = reprojection_sum_px_.load() + map_fit.residual_px;
+      inlier_sum_ = inlier_sum_.load() + static_cast<double>(map_fit.inliers);
+    }
+  } else if (reference_.valid() && shared >= min_landmark_pairs_) {
     if (solve_pnp_) {
       const PnpFit fit = fit_pose_pnp(
         k, from, seen, min_landmark_pairs_, reprojection_px_, max_reprojection_px_);
@@ -912,6 +1171,43 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
       ++keyframes_on_loss_;
     }
 
+    // --- Into the map, through the backend thread ------------------------------
+    //
+    // The same event as P7's keyframe, so the map's keyframes and the reference
+    // views are one sequence. Every feature arrives with the map point tracking
+    // associated it with, and the map checks each claim against the geometry
+    // before it becomes an observation; every unclaimed feature with a depth
+    // reading becomes a new point.
+    //
+    // **Handed over, not inserted here.** P14 did this synchronously, at 0.8-1.0 ms
+    // a keyframe; P15's bundle adjustment is not a millisecond, so the whole of the
+    // map's upkeep moved onto LocalMapper's thread. The keyframe becomes *pending*
+    // and is offered below, on this frame and every one after until the queue takes
+    // it: a full queue defers a keyframe, it does not drop it.
+    {
+      pimesh_backend::KeyframeInput input;
+      input.stamp_ns = when;
+      input.map_from_camera = odom_from_camera;
+      input.k = k;
+      input.pixels = record->pixels;
+      input.track_ids = record->ids;
+      input.descriptors = record->descriptors;
+      input.network_points.assign(n_features, cv::Vec3d(0.0, 0.0, 0.0));
+      input.has_depth.assign(n_features, 0);
+      for (std::size_t j = 0; j < landmark_rows.size(); ++j) {
+        const auto row = static_cast<std::size_t>(landmark_rows[j]);
+        input.network_points[row] = landmark_points[j];
+        input.has_depth[row] = 1;
+      }
+      input.matched = feature_point;
+      if (pending_keyframe_) {
+        // The one real drop in this path, and it is counted: a keyframe still waiting
+        // when the next one is due. gates/ba.sh asserts it stays at zero.
+        ++keyframes_dropped_;
+      }
+      pending_keyframe_ = std::move(input);
+    }
+
     Keyframe frame;
     frame.stamp_ns = when;
     frame.odom_from_camera = odom_from_camera;
@@ -927,6 +1223,23 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
 
     view.odom_from_camera = odom_from_camera;
     reference_ = std::move(view);
+  }
+
+  // --- Offer a pending keyframe to the backend ------------------------------------
+  //
+  // Every depth frame, until the queue takes it. Refused means the backend is still
+  // busy with the ones before; the keyframe is a keyframe at *its* stamp and pose
+  // whenever it gets in, so waiting a frame costs nothing but the wait.
+  if (pending_keyframe_) {
+    if (mapper_->try_push(*pending_keyframe_)) {
+      pending_keyframe_.reset();
+      if (when - last_map_points_ns_ >= static_cast<std::int64_t>(map_points_period_s_ * 1e9)) {
+        last_map_points_ns_ = when;
+        publish_map_points(rclcpp::Time(msg->header.stamp, RCL_ROS_TIME));
+      }
+    } else {
+      ++keyframes_deferred_;
+    }
   }
 
   pose_cost_sum_ms_ = pose_cost_sum_ms_.load() +
@@ -1109,6 +1422,39 @@ void OdometryNode::publish_pose(const rclcpp::Time & stamp)
   odom_pub_->publish(std::move(odom));
 }
 
+void OdometryNode::publish_map_points(const rclcpp::Time & stamp)
+{
+  if (map_points_pub_->get_subscription_count() == 0 &&
+    map_points_pub_->get_intra_process_subscription_count() == 0)
+  {
+    // Latched, but nothing is listening: the next keyframe will publish again, and
+    // building a cloud of ten thousand points for nobody is the kind of work a
+    // viewer's topic must never cost the pipeline.
+    return;
+  }
+  const std::vector<cv::Vec3d> points = map_->positions();
+  auto cloud = std::make_unique<sensor_msgs::msg::PointCloud2>();
+  cloud->header.stamp = stamp;
+  // odom, not map: the map -> odom edge is static identity until milestone H's pose
+  // graph, and these positions are in the frame the poses are in.
+  cloud->header.frame_id = odom_frame_;
+  sensor_msgs::PointCloud2Modifier modifier(*cloud);
+  modifier.setPointCloud2FieldsByString(1, "xyz");
+  modifier.resize(points.size());
+  sensor_msgs::PointCloud2Iterator<float> x(*cloud, "x");
+  sensor_msgs::PointCloud2Iterator<float> y(*cloud, "y");
+  sensor_msgs::PointCloud2Iterator<float> z(*cloud, "z");
+  for (const cv::Vec3d & p : points) {
+    *x = static_cast<float>(p[0]);
+    *y = static_cast<float>(p[1]);
+    *z = static_cast<float>(p[2]);
+    ++x;
+    ++y;
+    ++z;
+  }
+  map_points_pub_->publish(std::move(cloud));
+}
+
 double OdometryNode::net_displacement()
 {
   // **Reported beside the path length because the two answer different
@@ -1195,6 +1541,100 @@ void OdometryNode::log_stats()
     static_cast<unsigned long>(keyframes_on_stall_.load()),
     static_cast<unsigned long>(implausible_.load()),
     static_cast<unsigned long>(malformed_.load()));
+
+  // --- The map, on a line of its own (#11's P14) -----------------------------------
+  //
+  // A second line rather than more fields on the first, and prefixed `stats map` so
+  // that nothing parsing `stats regime=` can pick a number off it — the
+  // gates/keypoints.sh lesson, where a second node logging the same prefix put
+  // `cost_mean=0.00` under an 8 ms budget. Every figure tools/gates/map.sh asserts
+  // or prints is on it.
+  {
+    const pimesh_backend::MapStats map = map_->stats();
+    const pimesh_backend::LocalMapper::Stats backend = mapper_->stats();
+    std::vector<double> local;
+    double by_track_mean = 0.0;
+    double by_projection_mean = 0.0;
+    {
+      std::lock_guard<std::mutex> lock(map_stats_mutex_);
+      local = local_keyframe_samples_;
+      if (map_tracked_frames_ > 0) {
+        by_track_mean = static_cast<double>(by_track_sum_) / static_cast<double>(map_tracked_frames_);
+        by_projection_mean =
+          static_cast<double>(by_projection_sum_) / static_cast<double>(map_tracked_frames_);
+      }
+    }
+    // **-1, not 0, for a figure nothing measured.** An empty local-map distribution
+    // printed as a median of 0 reads as "tracked against nothing", and a triangulation
+    // error of 0.000 reads as perfect; neither is what an empty sample says. An
+    // unmeasured value and a good one must not have the same spelling.
+    auto median = [](const std::vector<double> & v) {
+        return v.empty() ? -1.0 : pimesh_core::percentile(v, 0.5);
+      };
+    auto p95 = [](const std::vector<double> & v) {
+        return v.empty() ? -1.0 : pimesh_core::percentile(v, 0.95);
+      };
+    auto mean = [](double sum, std::uint64_t n) {return n > 0 ? sum / static_cast<double>(n) : -1.0;};
+    RCLCPP_INFO(
+      get_logger(),
+      "stats map local_map=%s keyframes=%zu points=%zu obs3_frac=%.3f triangulated=%zu "
+      "tri_err_px=%.3f depth_ratio=%.3f depth_ratio_p05=%.3f depth_ratio_p95=%.3f "
+      "culled_points=%zu culled_keyframes=%zu judged_points=%zu judged_keyframes=%zu "
+      "cull_runs=%lu "
+      "local_kf_p50=%.1f local_kf_p95=%.1f local_kf_n=%zu by_track=%.1f by_projection=%.1f "
+      "inserted=%lu associated=%lu created=%lu refused_dup=%lu refused_reproj=%lu "
+      "refused_bad=%lu aligned=%lu align_mean=%.4f align_dev=%.4f map_cost=%.2fms",
+      local_map_ ? "true" : "false",
+      map.keyframes, map.points,
+      map.points > 0 ? static_cast<double>(map.points_3plus) / static_cast<double>(map.points) : -1.0,
+      map.triangulated,
+      median(map.triangulation_error_px),
+      median(map.depth_ratio),
+      map.depth_ratio.empty() ? -1.0 : pimesh_core::percentile(map.depth_ratio, 0.05),
+      p95(map.depth_ratio),
+      map.culled_points, map.culled_keyframes, map.judged_points, map.judged_keyframes,
+      static_cast<unsigned long>(backend.processed),
+      median(local), p95(local), local.size(),
+      by_track_mean, by_projection_mean,
+      static_cast<unsigned long>(backend.processed), static_cast<unsigned long>(backend.associated),
+      static_cast<unsigned long>(backend.created),
+      static_cast<unsigned long>(backend.refused_duplicate),
+      static_cast<unsigned long>(backend.refused_reprojection),
+      static_cast<unsigned long>(backend.refused_bad),
+      static_cast<unsigned long>(backend.aligned),
+      mean(backend.align_sum, backend.aligned), mean(backend.align_dev_sum, backend.aligned),
+      median(backend.keyframe_ms));
+
+    // --- The backend thread (#11's P15), on a third line --------------------------
+    //
+    // Every figure tools/gates/ba.sh asserts on. `ba_runs` and `ba_iter` are the
+    // plan's second false green — a BA that never runs is a run identical to the
+    // control — and `kf_dropped` is the queue's promise that a keyframe is deferred
+    // rather than lost.
+    RCLCPP_INFO(
+      get_logger(),
+      "stats backend local_ba=%s ba_runs=%lu ba_refused=%lu ba_iter=%.1f ba_free=%.1f "
+      "ba_fixed=%.1f ba_points=%.0f ba_edges=%.0f ba_ms=%.2f ba_ms_p95=%.2f "
+      "ba_chi2_before=%.1f ba_chi2_after=%.1f ba_outliers=%lu kf_processed=%lu "
+      "kf_deferred=%lu kf_refused_full=%lu kf_dropped=%lu keyframe_ms=%.2f "
+      "keyframe_ms_p95=%.2f niced=%s",
+      local_ba_ ? "true" : "false",
+      static_cast<unsigned long>(backend.ba_runs), static_cast<unsigned long>(backend.ba_refused),
+      mean(static_cast<double>(backend.iterations), backend.ba_runs),
+      mean(static_cast<double>(backend.window_free), backend.ba_runs),
+      mean(static_cast<double>(backend.window_fixed), backend.ba_runs),
+      mean(static_cast<double>(backend.window_points), backend.ba_runs),
+      mean(static_cast<double>(backend.window_edges), backend.ba_runs),
+      median(backend.ba_ms), p95(backend.ba_ms),
+      mean(backend.chi2_before, backend.ba_runs), mean(backend.chi2_after, backend.ba_runs),
+      static_cast<unsigned long>(backend.outliers_dropped),
+      static_cast<unsigned long>(backend.processed),
+      static_cast<unsigned long>(keyframes_deferred_.load()),
+      static_cast<unsigned long>(backend.refused_full),
+      static_cast<unsigned long>(keyframes_dropped_.load()),
+      median(backend.keyframe_ms), p95(backend.keyframe_ms),
+      backend.niced ? "true" : "false");
+  }
 
   // --- The same numbers, on a topic, for P8's dashboard ------------------------
   //

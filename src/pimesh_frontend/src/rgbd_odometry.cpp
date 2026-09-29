@@ -350,6 +350,7 @@ PnpFit fit_pose_pnp(
   fit.translation = cv::Vec3d(
     tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
   fit.inliers = inliers.size();
+  fit.inlier_index = inliers;
 
   // The residual over the **inliers only**, which is the honest denominator: an
   // outlier's reprojection error is unbounded, so averaging it in would make the

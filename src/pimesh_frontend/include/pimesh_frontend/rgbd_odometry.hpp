@@ -210,6 +210,11 @@ struct PnpFit
   double residual_px {0.0};
   std::size_t pairs_in {0};
   std::size_t inliers {0};
+  /// Which of the input pairs RANSAC kept, as indices into `object`/`image`.
+  /// **Needed since P14**: tracking against a map reports back which map points it
+  /// actually *found*, and a point that was matched but rejected as an outlier was
+  /// predicted and not found — which is exactly the evidence the map's cull reads.
+  std::vector<int> inlier_index;
 
   cv::Affine3d motion() const {return cv::Affine3d(rotation, translation);}
 };

@@ -262,6 +262,7 @@ Available recipes:
     view-camera seconds="600"                      # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
     view-depth seconds="600" bag=""                # The room as a depth cloud, in RViz. bag = optional, else the camera
     view-keypoints seconds="600" bag=""            # ORB corners and the pose, in RViz. bag = optional, else the camera
+    view-map seconds="600" bag="" ba="true"        # Map points and the trail, in RViz. ba = true (default) or false, the control
     view-mesh seconds="600" bag=""                 # The room as a triangle surface, in RViz. bag = optional, else the camera
     view-odom seconds="600" bag="" regime="sixdof" # The camera's trajectory, in RViz. regime = sixdof (default) or rotation_only
 ```
