@@ -430,5 +430,37 @@ measurement invalid. **Handing somebody a number you have just called wrong is
 worse than printing nothing**, because the number is plausible and the warning is
 three lines further up. It prints no scale at all now when a check has failed.
 
+**Milestone G, 2026-09-29/30: a map and a backend, and both claims measured
+unmet.** #11's P14 and P15 are built — `pimesh_backend` (map points observed by many
+keyframes, covisibility, triangulation, culling, g2o local bundle adjustment on a
+niced backend thread) and local-map tracking in `odometry_node` — and both gates
+run and **fail on exactly one assertion each, the ATE**, with every structural claim
+passing. That is the order this file keeps arguing for: the preconditions green, the
+claim that was the point red, and the gate saying so rather than passing on the
+preconditions.
+
+**P14: tracking against the map was worse than tracking against one keyframe.**
+`gates/map.sh`, three runs a side on fr1/desk: 0.46–0.50 m against P7's 0.28–0.46.
+Seven variants over 24 more runs never beat P7, and each was a hypothesis with a
+measurement behind it: *scale drift from full alignment* (confirmed — a fitted Sim(3)
+scale of 0.699), *triangulation removing the scale anchor* (rejected — turning it off
+was worse), *the projection search* (rejected — stage one alone was just as bad),
+*stale first readings* (confirmed — freshest readings recovered ~0.1 m). What none
+of them removes is on the `stats map` line as `align_dev`: **the depth network's
+scale differs by 15–21% between consecutive keyframes.** P7 never mixes two depth
+maps; a map is nothing else.
+
+**P15: bundle adjustment helps, and three runs cannot prove it.** `gates/ba.sh`: BA
+median **0.259 m** against no-BA's 0.429 and P7's 0.309, and its best run, **0.151 m**,
+is the best fr1/desk figure this project has recorded — but its worst (0.418) is
+above no-BA's best (0.318), so the non-overlap assertion fails. Every upstream stage
+held its rate. The temptation here is the one `MIN_AGREE` recorded on 2026-09-29:
+re-run until the distributions separate. It was not taken.
+
+**One finding worth more than either number: this g2o aborts.** Built with asserts
+on at both ends, it kills the process on a window with no free pose — found by the
+first probe, before any BA code existed, which is the cheapest place a crash of the
+whole container could have been found.
+
 Do not write "the node publishes X at Y Hz" until a node has published X and you
 have watched it do Y.

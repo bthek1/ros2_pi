@@ -52,12 +52,12 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 478 tests across thirty-one suites, identical on both distros**
-(`bash tools/gates/test.sh`, 2026-09-25).
+**Status: 541 tests across thirty-six suites, identical on both distros**
+(`bash tools/gates/test.sh`, 2026-09-30).
 
 ## The suites
 
-478 across thirty-one suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+541 across thirty-six suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
 
 **`test_map`, `test_triangulation`, `test_local_map_match`, `test_local_ba` and
 `test_local_mapper`** (added 2026-09-29/30, #11's P14 and P15) cover milestone G,

@@ -222,8 +222,6 @@ EXEMPT_PATHS = {
     'src/pimesh_hello':
         'deleted 2026-09-23; CLAUDE.md names it in the record of its deletion',
     # Gates that milestones F-I will write. Each goes when its phase lands.
-    'tools/gates/map.sh': 'written by #11 P14',
-    'tools/gates/ba.sh': 'written by #11 P15',
     'tools/gates/place.sh': 'written by #12 P16',
     'tools/gates/loop.sh': 'written by #12 P17',
     'tools/gates/rebuild.sh': 'written by #12 P18',

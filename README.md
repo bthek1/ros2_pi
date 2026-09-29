@@ -94,8 +94,8 @@ just --list         # everything you type on a normal day
 ```
 
 The tests are the `tools/gates/*.sh` scripts, run directly — each exits 0 or
-non-zero and prints the number it asserted on — plus **478 unit tests across
-thirty-one suites**, identical on both machines (`bash tools/test.sh`, catalogue
+non-zero and prints the number it asserted on — plus **541 unit tests across
+thirty-six suites**, identical on both machines (`bash tools/test.sh`, catalogue
 in [docs/info/testing.md](docs/info/testing.md)). Each closed milestone issue
 records what its gates printed: [#4](https://github.com/bthek1/ros2_pi/issues/4)
 capture, [#5](https://github.com/bthek1/ros2_pi/issues/5) decode and keypoints,
