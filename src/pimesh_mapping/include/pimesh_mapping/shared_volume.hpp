@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -168,6 +169,22 @@ public:
       }
     }
     return out;
+  }
+
+  /// Swap in a volume built elsewhere (#12's P18) and hand the old one back.
+  ///
+  /// **The old one is returned rather than destroyed here**, because it can be a
+  /// gigabyte of blocks and freeing it takes time: done under this lock it would stall
+  /// the live integration and mesh_node's snapshot for as long as the free took. The
+  /// caller lets it go out of scope after the lock is released. `frames` becomes the
+  /// integrated count, since the new volume is exactly that many frames.
+  std::unique_ptr<TsdfVolume> replace(std::unique_ptr<TsdfVolume> volume, std::uint64_t frames)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::swap(volume_, volume);
+    configured_ = volume_ != nullptr;
+    frames_integrated_ = frames;
+    return volume;
   }
 
   void note_integrated()

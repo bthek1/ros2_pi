@@ -33,6 +33,7 @@ add_library(mapping_components SHARED
   src/mesh_cleanup.cpp
   src/mesh_node.cpp
   src/mesh_io.cpp
+  src/rebuild.cpp
   src/scale_aligner.cpp
   src/shared_volume.cpp
   src/tsdf_volume.cpp
@@ -100,6 +101,13 @@ install(TARGETS fusion_node mesh_node
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 
+  # P18's rebuild: the memory thins rather than forgets, a frame takes its reference
+  # keyframe's correction and not an interpolation, and a rebuild at corrected poses
+  # removes the ghost its control keeps.
+  ament_add_gtest(test_rebuild test/test_rebuild.cpp)
+  if(TARGET test_rebuild)
+    target_link_libraries(test_rebuild mapping_components)
+  endif()
   ament_add_gtest(test_tsdf_volume test/test_tsdf_volume.cpp)
   if(TARGET test_tsdf_volume)
     target_link_libraries(test_tsdf_volume mapping_components)

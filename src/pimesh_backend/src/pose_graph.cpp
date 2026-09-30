@@ -108,6 +108,18 @@ std::vector<std::pair<std::int64_t, cv::Affine3d>> PoseGraph::trajectory() const
   return out;
 }
 
+std::vector<std::pair<std::int64_t, cv::Affine3d>> PoseGraph::corrections() const
+{
+  std::vector<std::pair<std::int64_t, cv::Affine3d>> out;
+  out.reserve(keyframes_.size());
+  for (const Node & n : keyframes_) {
+    // Identity exactly, not `corrected * odom^-1` rounded, until something has been
+    // solved: the control has to be the uncorrected poses to the bit.
+    out.emplace_back(n.stamp_ns, solved_once_ ? n.corrected * n.odom.inv() : cv::Affine3d::Identity());
+  }
+  return out;
+}
+
 PoseGraphResult PoseGraph::optimize()
 {
   PoseGraphResult result;
@@ -194,6 +206,7 @@ PoseGraphResult PoseGraph::optimize()
   const cv::Affine3d odom_newest = keyframes_.back().odom;
   const cv::Affine3d after = keyframes_.back().corrected;
   correction_ = after * odom_newest.inv();
+  solved_once_ = true;
   result.correction_m = cv::norm(after.translation() - odom_newest.translation());
   result.correction_deg = rotation_deg(after.rotation().t() * odom_newest.rotation());
   result.ran = true;

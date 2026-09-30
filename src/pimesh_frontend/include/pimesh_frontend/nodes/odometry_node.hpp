@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "nav_msgs/msg/odometry.hpp"
+#include "nav_msgs/msg/path.hpp"
 #include "opencv2/core.hpp"
 #include "pimesh_msgs/msg/keypoints.hpp"
 #include "pimesh_msgs/msg/pipeline_stats.hpp"
@@ -195,6 +196,10 @@ private:
   /// it; published at most every `map_points_period_s`, from the pose worker, when a
   /// keyframe has changed the map.
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_points_pub_;
+  /// #12's P18: each keyframe's `map <- odom` correction, latched, after every solve.
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr corrections_pub_;
+  std::uint64_t corrections_published_for_ {0};
+  void publish_corrections();
   rclcpp::TimerBase::SharedPtr stats_timer_;
 
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;

@@ -557,6 +557,36 @@ estimated/true ratio of 0.90 that spreads 0.70–1.30 — drift on a clip that t
 a second, not a sign error. The closures are an order of magnitude better, which is
 the case for P17 in one line.
 
+### Stage 3e — The pose graph and `map -> odom` (`PoseGraph`, inside the same thread) — **built and gated 2026-09-30**
+
+[#12](https://github.com/bthek1/ros2_pi/issues/12) P17. With `loop_closure:=true`
+(default **false**) every keyframe becomes a vertex of an SE(3) pose graph
+(`pimesh_backend::PoseGraph`, g2o `EdgeSE3Expmap`), consecutive keyframes are joined
+by odometry's relative pose, each P16 closure adds a loop edge, and the graph is
+solved after every closure on the place-recognition thread — the arrangement
+ORB-SLAM's LoopClosing uses. **Every sigma in it was measured, not chosen**:
+odometry edges get 7°/s and 0.15 m/s of the time they span (the tracker's drift
+against ground truth), loop edges 3° and 0.06 m (P16's closures against the same
+truth), loop edges alone under a Huber kernel. The correction at the newest
+keyframe is `map -> odom`, published by `odometry_node` beside `odom -> base_link`
+with the same stamp; the static identity publisher is left out whenever the
+pipeline runs.
+
+**Measured** (`gates/loop.sh`, TUM fr1/desk, three runs each, alternating): keyframe
+ATE **0.118 / 0.129 / 0.153 m** with loop closure against **0.361 / 0.453 / 0.533 m**
+without, 9–11 closures a run, **0.7–0.9 ms a solve**, corrections of 0.5–1.7 m and
+13–37° at the end of the clip, 0 inconsistent loops and 0 TF warnings. Through
+`bags/walk1`'s return: 2 closures, a 0.87 m / 25° correction, the tree intact.
+
+**What the gate does not score**: that ATE is over the *final* keyframe trajectory,
+the graph's answer after the last solve. What `fusion_node` integrated with was the
+correction *as it stood at each frame* — the online trajectory — and a TSDF bakes
+that into every voxel, so the room is where the pre-correction poses put it. Moving
+it is P18. The graph's own consistency check is also **not** a defence at these
+sigmas: `test_pose_graph` pins that a 5 m false closure on a 16 m loop is absorbed
+with zero inconsistent loops, which is why P16's zero wrong-place closures is the
+assertion that matters.
+
 ## Stage 4 — Depth (`depth_node`, dev box, GPU)
 
 **Job:** one RGB frame in, one metric depth map out.

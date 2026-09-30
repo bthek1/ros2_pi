@@ -41,10 +41,14 @@
     # rest of the tree stay in the body convention.
     rotation: {x: -0.5, y: 0.5, z: -0.5, w: 0.5}
 
-# The map -> odom edge, published as static identity until there is a pose-graph
-# backend to publish it for real (P8). Stated here rather than hidden, because
-# "the frame exists so RViz has a fixed frame" and "the map is being corrected"
-# look identical in a TF tree and are not the same claim.
+# The map -> odom edge, **static identity only with pipeline:=false**. Since #12's
+# P17 (2026-09-30) odometry_node publishes this edge whenever the pipeline runs —
+# the pose graph's correction with loop_closure:=true, identity with it off — and
+# the launch file leaves this publisher out then, because two authorities for one
+# edge flicker. It stays for replay viewers, which have no node to own the edge.
+# Stated here rather than hidden, because "the frame exists so RViz has a fixed
+# frame" and "the map is being corrected" look identical in a TF tree and are not
+# the same claim.
 /**/map_to_odom:
   ros__parameters:
     frame_id: map

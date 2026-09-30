@@ -513,5 +513,28 @@ stamp, reported the clip as 0.0 s long, and so accepted any closure as "the retu
 The closure it found was the real one; the check was fixed by key and then run
 against a saved walk1 log (2 returns) and a saved desk1 log (0) before being kept.
 
+**P17 passed on its first run, and the interesting parts were before it.** A pose
+graph over every keyframe, each P16 closure a loop edge, and `map -> odom` published
+for real: keyframe ATE on fr1/desk **0.118–0.153 m against 0.361–0.533 m** without
+it, three runs each, non-overlapping by 0.21 m. Three things came first:
+
+- **#12's P17 test could not have been run as written.** It asked for an ATE on
+  `bags/walk1`, which has no ground truth. The ATE moved to fr1/desk, which has
+  motion capture and ten loops a run; walk1 kept the question it can answer, whether
+  the TF tree survives the correction it was recorded to cause.
+- **The control has to be exact, and it was not.** The first `PoseGraph` recomputed
+  the correction per keyframe as `corrected · odom⁻¹` — identity to 1e-14, and
+  compounding — on the arm that must *be* odometry. `test_pose_graph` caught it by
+  asserting equality rather than nearness.
+- **The graph's consistency check is no safety net here.** Expecting a 5 m false
+  closure to be flagged, the test found it absorbed silently: seven degrees a second
+  of odometry uncertainty over eight edges bends a 16 m square around the lie. So the
+  real defence against a false closure is upstream, in P16's zero wrong-place
+  closures, and that is now pinned by a test rather than assumed.
+
+And the thing this gate does not score is written down beside it: the ATE is over
+the graph's final keyframe poses, while the TSDF was integrated at the correction as
+it stood at each frame. That is the gap P18 exists to close.
+
 Do not write "the node publishes X at Y Hz" until a node has published X and you
 have watched it do Y.

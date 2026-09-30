@@ -593,6 +593,13 @@ OdometryNode::OdometryNode(const rclcpp::NodeOptions & options)
   rclcpp::QoS map_qos(rclcpp::KeepLast(1));
   map_qos.reliable().transient_local();
   map_points_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>("/map/points", map_qos);
+  // **A Path whose poses are corrections, not camera poses** — each is `map <- odom`
+  // stamped at a keyframe. nav_msgs/Path is the nearest standard shape (stamped
+  // poses, in order) and RViz can draw it, but reading one as a trajectory would be
+  // reading it wrong: identity everywhere means "no correction", not "the camera
+  // stood at the origin". Latched, for fusion_node's rebuild (#12's P18), and
+  // published only after a solve.
+  corrections_pub_ = create_publisher<nav_msgs::msg::Path>("/pose_graph/corrections", map_qos);
 
   pose_worker_ = std::thread([this] {this->pose_work();});
 
@@ -1361,6 +1368,8 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
     }
   }
 
+  publish_corrections();
+
   pose_cost_sum_ms_ = pose_cost_sum_ms_.load() +
     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
@@ -1607,6 +1616,34 @@ double OdometryNode::net_displacement()
   // smoothly it got there.
   std::lock_guard<std::mutex> lock(pose_mutex_);
   return cv::norm(cv::Vec3d(pose_.translation()));
+}
+
+void OdometryNode::publish_corrections()
+{
+  if (!places_) {return;}
+  const std::uint64_t solves = places_->stats().solves;
+  if (solves == corrections_published_for_) {return;}
+  corrections_published_for_ = solves;
+  auto path = std::make_unique<nav_msgs::msg::Path>();
+  path->header.frame_id = map_frame_;
+  for (const auto & [stamp_ns, correction] : places_->corrections()) {
+    geometry_msgs::msg::PoseStamped p;
+    p.header.stamp = rclcpp::Time(stamp_ns, RCL_ROS_TIME);
+    p.header.frame_id = odom_frame_;
+    const cv::Vec3d t(correction.translation());
+    const cv::Vec4d q = quaternion_from_rotation(correction.rotation());
+    p.pose.position.x = t[0];
+    p.pose.position.y = t[1];
+    p.pose.position.z = t[2];
+    p.pose.orientation.x = q[0];
+    p.pose.orientation.y = q[1];
+    p.pose.orientation.z = q[2];
+    p.pose.orientation.w = q[3];
+    path->poses.push_back(p);
+  }
+  if (path->poses.empty()) {return;}
+  path->header.stamp = path->poses.back().header.stamp;
+  corrections_pub_->publish(std::move(path));
 }
 
 void OdometryNode::write_keyframe_trajectory()

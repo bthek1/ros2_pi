@@ -203,6 +203,9 @@ public:
   /// Every keyframe's stamp and pose in `map`, for the gate's ATE. Call after
   /// flush() for the whole session.
   std::vector<std::pair<std::int64_t, cv::Affine3d>> trajectory() const;
+  /// Every keyframe's `map <- odom` correction as of the last solve, in order —
+  /// PoseGraph::corrections(), copied out under the lock. What P18's rebuild reads.
+  std::vector<std::pair<std::int64_t, cv::Affine3d>> corrections() const;
 
 private:
   void run();
@@ -213,6 +216,7 @@ private:
   pimesh_backend::PoseGraph graph_;
   cv::Affine3d map_from_odom_ {cv::Affine3d::Identity()};
   std::vector<std::pair<std::int64_t, cv::Affine3d>> trajectory_;
+  std::vector<std::pair<std::int64_t, cv::Affine3d>> corrections_;
   mutable std::mutex mutex_;
   std::condition_variable wake_;
   std::condition_variable drained_;

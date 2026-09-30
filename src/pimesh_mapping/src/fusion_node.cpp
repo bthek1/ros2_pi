@@ -200,6 +200,62 @@ FusionNode::FusionNode(const rclcpp::NodeOptions & options)
 
   volume_ = VolumeRegistry::get(volume_key);
   volume_->configure(volume);
+  volume_options_ = volume;
+
+  // --- The rebuild (#12's P18) ------------------------------------------------------
+  //
+  // **Off by default until gates/rebuild.sh says otherwise.** Needs the pose graph's
+  // corrections, so it only does anything with odometry_node's loop_closure on.
+  rebuild_ = declare_parameter(
+    "rebuild", false,
+    describe(
+      "Remember integrated frames and, when the pose graph's corrections move them "
+      "far enough, integrate the volume again from scratch at the corrected poses. "
+      "Without it a loop closure corrects the trajectory and leaves the surface "
+      "where the drifted poses put it."));
+  rebuild_control_ = declare_parameter(
+    "rebuild_control", false,
+    describe(
+      "Also rebuild the same memory at the uncorrected poses, and log both volumes' "
+      "paired-surface gap — tools/gates/rebuild.sh's control, costing a second "
+      "rebuild. Not for normal use."));
+  rebuild_min_shift_m_ = declare_parameter(
+    "rebuild_min_shift_m", 0.05,
+    describe_double(
+      "Rebuild when the corrections move some remembered frame this far or more. "
+      "Below a truncation band (6 cm) the live volume absorbs the change.", 0.0, 100.0));
+  rebuild_min_shift_deg_ = declare_parameter(
+    "rebuild_min_shift_deg", 2.0,
+    describe_double("Or turn some frame this far.", 0.0, 180.0));
+  rebuild_nice_ = static_cast<int>(declare_parameter(
+    "rebuild_nice", 10,
+    describe_int(
+      "Nice value of the rebuild thread alone: a rebuild is seconds of CPU, and at "
+      "equal priority mesh_node's extraction took depth_node from 17.8 to 14.6 Hz.",
+      0, 19)));
+  memory_downsample_ = static_cast<int>(declare_parameter(
+    "memory_downsample", 4,
+    describe_int(
+      "Remembered frames are stored at the integrated resolution divided by this. "
+      "4 is 320x180: ~0.29 MB a frame against 6.4 MB live.", 1, 16)));
+  const auto memory_max_frames = declare_parameter(
+    "memory_max_frames", 600,
+    describe_int(
+      "Frames the memory holds before it thins the whole session to every other one.",
+      2, 100000));
+  odom_frame_ = declare_parameter(
+    "odom_frame", std::string("odom"),
+    describe("The frame a correction is applied in: frames are remembered at odom <- optical."));
+  if (rebuild_) {
+    memory_ = std::make_unique<FrameMemory>(FrameMemory::Config{
+      static_cast<std::size_t>(memory_max_frames), memory_downsample_});
+    rclcpp::QoS latched(rclcpp::KeepLast(1));
+    latched.reliable().transient_local();
+    corrections_sub_ = create_subscription<nav_msgs::msg::Path>(
+      "/pose_graph/corrections", latched,
+      [this](nav_msgs::msg::Path::ConstSharedPtr msg) {on_corrections(std::move(msg));});
+    rebuild_worker_ = std::thread([this] {rebuild_work();});
+  }
 
   // --- QoS ------------------------------------------------------------------
   //
@@ -267,6 +323,12 @@ FusionNode::~FusionNode()
 {
   mailbox_.stop();
   if (worker_.joinable()) {worker_.join();}
+  {
+    std::lock_guard<std::mutex> lock(rebuild_mutex_);
+    rebuild_stop_ = true;
+  }
+  rebuild_wake_.notify_all();
+  if (rebuild_worker_.joinable()) {rebuild_worker_.join();}
 }
 
 void FusionNode::on_camera_info(sensor_msgs::msg::CameraInfo::ConstSharedPtr msg)
@@ -498,6 +560,7 @@ void FusionNode::process(Frame & frame)
   const auto result = volume_->with_volume(
     [&](TsdfVolume & v) {return v.integrate(*to_integrate, colour, k, world_from_camera);});
   const double integrate_ms = ms_since(integrate_started);
+  if (rebuild_) {remember(depth->header.stamp, *to_integrate, colour, k, world_from_camera);}
 
   if (result.blocks_refused > 0) {
     refused_.fetch_add(result.blocks_refused, std::memory_order_relaxed);

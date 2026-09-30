@@ -52,12 +52,31 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 587 tests across thirty-nine suites, identical on both distros**
+**Status: 600 tests across forty suites, identical on both distros**
 (`bash tools/gates/test.sh`, 2026-09-30, after #12's P16).
 
 ## The suites
 
-587 across thirty-nine suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+600 across forty suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+
+**`test_pose_graph`** (added 2026-09-30, #12's P17) exists because every way a pose
+graph is wrong *converges*. It pins g2o's edge convention against answers worked by
+hand — a closure 2 m ahead of a 1 m odometry edge must land the pose past 1 m, and a
+measurement taken inverted pulls it back past the origin; a closure trusted in
+rotation and ignored in translation must leave translation alone, and the
+information matrix's halves swapped does the opposite — and both mutations were run
+and caught. **Its first run found a real flaw**: the correction was recomputed per
+keyframe as `corrected · odom⁻¹`, identity only to 1e-14 and compounding, on the
+control that must be odometry *exactly*; it is stored now. **And its second found a
+property worth more than a fix**: under the odometry noise model measured on
+fr1/desk, a 5 m false closure on a 16 m loop is absorbed with zero inconsistent
+loops. `UnderTheMeasuredOdometryModelAFalseClosureIsAbsorbedSilently` pins that, so
+nobody mistakes `inconsistent_loops == 0` for a safety check — the defence is P16's
+precision. `test_place_recognition` gained the thread's half: a closure moves
+`map_from_odom` only with `close_loops` on, and every keyframe of a backlog reaches
+the graph (a skipped *query* is fine; a missing odometry edge is not) — both mutations
+caught. `test_transforms` pins that `map → odom` has exactly one publisher with
+`pipeline` either way, and `test_gate_contract` the keys `loop.sh` reads.
 
 **`test_place_recognition` and `test_place_truth`** (added 2026-09-30, #12's P16)
 cover place recognition and the instrument that judges it, and both exist because

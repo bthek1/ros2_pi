@@ -217,3 +217,35 @@ TEST(PoseGraph, AClosureBetweenUnknownKeyframesIsRefused)
   PoseGraph empty(PoseGraphConfig{});
   EXPECT_STREQ(empty.optimize().refusal, "fewer than two keyframes");
 }
+
+TEST(PoseGraph, PerKeyframeCorrectionsAreExactIdentityUntilASolveAndConsistentAfter)
+{
+  // What P18's rebuild reads. Before any solve every correction must be identity to
+  // the bit — the rebuild's control is "the same memory at the uncorrected poses",
+  // and a correction of 1e-14 would make it a rebuild at *nearly* those poses. After
+  // one, applying keyframe k's correction to its odometry pose must give its
+  // corrected pose, for every k, not only the newest.
+  const auto truth = square_truth();
+  const auto odom = drifting(truth);
+  PoseGraph graph(PoseGraphConfig{});
+  for (std::size_t i = 0; i < odom.size(); ++i) {graph.add_keyframe(static_cast<std::int64_t>(i) * kSecond, odom[i]);}
+  for (const auto & [stamp, c] : graph.corrections()) {
+    (void)stamp;
+    EXPECT_EQ(cv::norm(c.translation()), 0.0);
+    EXPECT_EQ(cv::norm(cv::Mat(c.rotation() - cv::Matx33d::eye())), 0.0);
+  }
+  const std::int64_t last = static_cast<std::int64_t>(odom.size() - 1) * kSecond;
+  ASSERT_TRUE(graph.add_loop(last, 0, truth.back().inv() * truth.front()));
+  ASSERT_TRUE(graph.optimize().ran);
+  const auto corrections = graph.corrections();
+  const auto traj = graph.trajectory();
+  ASSERT_EQ(corrections.size(), odom.size());
+  double moved = 0.0;
+  for (std::size_t k = 0; k < odom.size(); ++k) {
+    EXPECT_EQ(corrections[k].first, traj[k].first);
+    const cv::Affine3d applied = corrections[k].second * odom[k];
+    EXPECT_LT(cv::norm(applied.translation() - traj[k].second.translation()), 1e-9) << k;
+    moved = std::max(moved, cv::norm(corrections[k].second.translation()));
+  }
+  EXPECT_GT(moved, 1.0) << "the corrections differ from identity after a real closure";
+}

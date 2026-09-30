@@ -2,6 +2,7 @@
 #define PIMESH_WORLD__FUSION_NODE_HPP_
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -11,9 +12,11 @@
 #include <vector>
 
 #include "opencv2/core.hpp"
+#include "nav_msgs/msg/path.hpp"
 #include "opencv2/core/affine.hpp"
 #include "pimesh_msgs/msg/pipeline_stats.hpp"
 #include "pimesh_core/mailbox.hpp"
+#include "pimesh_mapping/rebuild.hpp"
 #include "pimesh_mapping/scale_aligner.hpp"
 #include "pimesh_mapping/shared_volume.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -97,6 +100,12 @@ private:
   sensor_msgs::msg::Image::ConstSharedPtr colour_for(const builtin_interfaces::msg::Time & stamp);
   bool pose_at(const builtin_interfaces::msg::Time & stamp, cv::Affine3d & world_from_camera);
   void log_stats();
+  // --- #12's P18: frame memory and the rebuild ---------------------------------
+  void remember(
+    const builtin_interfaces::msg::Time & stamp, const cv::Mat & integrated_depth,
+    const cv::Mat & colour, const cv::Matx33d & k, const cv::Affine3d & world_from_camera);
+  void on_corrections(nav_msgs::msg::Path::ConstSharedPtr msg);
+  void rebuild_work();
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depth_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr rgb_sub_;
@@ -128,6 +137,46 @@ private:
   bool have_k_ {false};
   int k_width_ {0};
   int k_height_ {0};
+
+  /// The rebuild (#12's P18). Everything below is off unless `rebuild` is set.
+  bool rebuild_ {false};
+  bool rebuild_control_ {false};
+  double rebuild_min_shift_m_ {0.05};
+  double rebuild_min_shift_deg_ {2.0};
+  int rebuild_nice_ {10};
+  int memory_downsample_ {4};
+  std::string odom_frame_ {"odom"};
+  TsdfVolume::Options volume_options_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr corrections_sub_;
+  /// The memory is written by the integration worker and copied — shallowly, the
+  /// images are reference-counted and never modified — by the rebuild thread.
+  std::mutex memory_mutex_;
+  std::unique_ptr<FrameMemory> memory_;
+  std::atomic<std::uint64_t> remember_no_odom_ {0};
+  std::mutex rebuild_mutex_;
+  std::condition_variable rebuild_wake_;
+  Corrections pending_corrections_;
+  bool corrections_pending_ {false};
+  bool rebuild_stop_ {false};
+  std::thread rebuild_worker_;
+  /// Under rebuild_mutex_. -1 for anything not yet measured.
+  struct RebuildStats
+  {
+    std::uint64_t corrections_received {0};
+    std::uint64_t rebuilds {0};
+    std::uint64_t skipped_small {0};
+    double last_shift_m {-1.0};
+    double last_shift_deg {-1.0};
+    double last_ms {-1.0};
+    std::size_t last_integrated {0};
+    std::size_t last_memory {0};
+    std::size_t last_caught_up {0};
+    double gap_corrected {-1.0};
+    double gap_control {-1.0};
+    double agree_corrected {-1.0};
+    double agree_control {-1.0};
+    bool niced {false};
+  } rebuild_stats_;
 
   std::string world_frame_ {"map"};
   std::string optical_frame_ {"camera_optical_frame"};

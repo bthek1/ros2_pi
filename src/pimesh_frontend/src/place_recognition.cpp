@@ -317,6 +317,12 @@ std::vector<std::pair<std::int64_t, cv::Affine3d>> PlaceRecognizer::trajectory()
   return trajectory_;
 }
 
+std::vector<std::pair<std::int64_t, cv::Affine3d>> PlaceRecognizer::corrections() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return corrections_;
+}
+
 void PlaceRecognizer::run()
 {
   const bool niced = config_.nice == 0 || setpriority(PRIO_PROCESS, 0, config_.nice) == 0;
@@ -368,11 +374,13 @@ void PlaceRecognizer::run()
     }
     const cv::Affine3d correction = graph_.map_from_odom();
     auto trajectory = graph_.trajectory();
+    auto corrections = graph_.corrections();
 
     {
       std::lock_guard<std::mutex> lock(mutex_);
       map_from_odom_ = correction;
       trajectory_ = std::move(trajectory);
+      corrections_ = std::move(corrections);
       if (solve_ms >= 0.0) {
         ++stats_.loops;
         if (solved.ran) {

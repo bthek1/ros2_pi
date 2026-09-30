@@ -93,6 +93,12 @@ public:
   cv::Affine3d map_from_odom() const;
   /// Every keyframe's stamp and corrected pose, in order.
   std::vector<std::pair<std::int64_t, cv::Affine3d>> trajectory() const;
+  /// Every keyframe's stamp and its correction `map <- odom` (`corrected *
+  /// odom^-1`), in order. What P18's rebuild needs: a frame is posed against its
+  /// reference keyframe, so its corrected pose is the correction of the latest
+  /// keyframe at or before it applied to its odometry pose. Exact identity for every
+  /// keyframe until a closure has been optimised.
+  std::vector<std::pair<std::int64_t, cv::Affine3d>> corrections() const;
   std::size_t size() const {return keyframes_.size();}
   std::size_t loops() const {return loops_.size();}
 
@@ -117,6 +123,7 @@ private:
   /// and applied to every new keyframe it compounds — measured by the first run of
   /// test_pose_graph at 1e-14 per keyframe, on a control that must be exact.
   cv::Affine3d correction_ {cv::Affine3d::Identity()};
+  bool solved_once_ {false};
   std::vector<Node> keyframes_;
   std::vector<Loop> loops_;
 };
