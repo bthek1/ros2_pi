@@ -29,6 +29,10 @@ install(DIRECTORY launch config rviz
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_transforms test/test_transforms.py)
+  # The keys tools/gates/map.sh and ba.sh read off odometry_node's log lines,
+  # against the keys the node writes: typed twice across a language boundary, and
+  # a mismatch reads as a failure of the map rather than of the parser.
+  ament_add_pytest_test(test_gate_contract test/test_gate_contract.py)
 
 endif()
 

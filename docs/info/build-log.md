@@ -457,6 +457,12 @@ above no-BA's best (0.318), so the non-overlap assertion fails. Every upstream s
 held its rate. The temptation here is the one `MIN_AGREE` recorded on 2026-09-29:
 re-run until the distributions separate. It was not taken.
 
+**And a test that tested nothing, found the day after.** Mutating `LocalMapper`'s
+destructor so it never woke its worker left `AnIdleThreadStopsToo` green: the test
+destroyed the mapper before the worker had reached its wait, so the worker saw the
+stop flag on the way in and never needed waking. The idle case it was named for was
+never reached. It parks the worker first now, and the mutation hangs it.
+
 **One finding worth more than either number: this g2o aborts.** Built with asserts
 on at both ends, it kills the process on a window with no free pose — found by the
 first probe, before any BA code existed, which is the cheapest place a crash of the

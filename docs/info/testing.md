@@ -52,12 +52,12 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 541 tests across thirty-six suites, identical on both distros**
+**Status: 555 tests across thirty-seven suites, identical on both distros**
 (`bash tools/gates/test.sh`, 2026-09-30).
 
 ## The suites
 
-541 across thirty-six suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+555 across thirty-seven suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
 
 **`test_map`, `test_triangulation`, `test_local_map_match`, `test_local_ba` and
 `test_local_mapper`** (added 2026-09-29/30, #11's P14 and P15) cover milestone G,
@@ -94,6 +94,22 @@ that the backend's queue *refuses* when full rather than dropping — the one qu
 this project that is not newest-wins, because a dropped keyframe is a hole in the
 map — and that with bundle adjustment on, every keyframe after the first is solved
 with iterations above zero.
+
+**`test_gate_contract`** (added 2026-09-30, #11) is `test_dashboard_contract`'s
+method applied to the two new gates: `tools/gates/map.sh` and `ba.sh` pull ~35 keys
+off `odometry_node`'s `stats map` and `stats backend` lines in awk, and the node
+writes them as C printf format strings. A renamed key parses as an empty string,
+which those gates read as *the local map was the reference alone* or *zero culls*
+— a failure of the map, reported against a map that was fine. The suite extracts
+both sides as text and asserts subset, and asserts a **floor** on each extraction
+first, because an extractor that finds nothing makes a subset check vacuously true.
+
+**The second mutation sweep over milestone G's suites found one test that tested
+nothing.** `LocalMapper.AnIdleThreadStopsToo` destroyed the mapper straight after
+`start()`, before the worker had reached its condition variable, so the worker saw
+the stop flag on its way in and a destructor that never notified passed it. It now
+parks the worker first — one keyframe, a flush, a moment — and the same mutation
+hangs it until `timeout` kills it. Six mutations, six caught, after that change.
 
 **`test_depth_patch`** (added 2026-09-25, #10's P12) covers the statistic this
 project's *unit* comes out of. `tools/gates/scale.sh` divides a tape measure by

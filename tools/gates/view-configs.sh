@@ -270,9 +270,15 @@ for config in "${configs[@]}"; do
         sleep 1
         [[ -z $node ]] && node=$(timeout 10 ros2 node list 2>/dev/null | grep -m1 '^/rviz' || true)
         [[ -z $node ]] && continue
+        # **`|| true`, or a slow graph query ends the gate silently.** Under
+        # `set -euo pipefail` a `ros2 node info` that times out fails the whole
+        # pipeline, the assignment inherits it, and the script exits 1 with no FAIL
+        # line — seen 2026-09-30, stage 2 stopping after depth.rviz with nothing
+        # printed, then passing on the next two runs. An empty answer here is
+        # already handled: the loop asks again.
         subs=$(timeout 10 ros2 node info "$node" 2>/dev/null |
                sed -n '/Subscribers:/,/Publishers:/p' |
-               awk 'NF && $1 ~ /^\// {sub(/:$/, "", $1); print $1}')
+               awk 'NF && $1 ~ /^\// {sub(/:$/, "", $1); print $1}') || subs=""
         [[ -n $subs ]] || continue
         missing=0
         while read -r _ topic; do

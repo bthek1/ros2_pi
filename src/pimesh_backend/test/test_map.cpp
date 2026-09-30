@@ -628,6 +628,80 @@ TEST(MapApplyBa, MovesWhatStillExistsAndDropsOutlierObservations)
   EXPECT_LT(cv::norm(map.lookup_tracks({0})[0].position - solved), 1e-12);
 }
 
+TEST(MapApplyBa, APointCulledWhileTheSolveRanIsNotResurrected)
+{
+  // The backend snapshots, solves without the lock, and writes back — and tracking
+  // can cull a point in between (its found ratio collapses). The write-back must
+  // skip it: a culled point given a fresh position would be a live-looking object
+  // in nobody's index, and one given back to a keyframe would be a landmark the map
+  // has already decided is wrong.
+  const World world(40);
+  Map map(Map::Config{});
+  insert_tracked(map, world, camera_at({0, 0, 0}));
+  const KeyframeId b = insert_tracked(map, world, camera_at({0.1, 0, 0}));
+  const auto problem = map.ba_window(b, 10, 20);
+  const auto victim = map.lookup_tracks({3})[0].id;
+  ASSERT_NE(victim, kNoPoint);
+  for (int i = 0; i < 20; ++i) {map.record_tracking({victim}, {});}
+  ASSERT_GE(map.cull(b).points, 1u);
+  const std::size_t live = map.stats().points;
+
+  pimesh_backend::BaResult result;
+  result.ran = true;
+  for (const auto & kf : problem.keyframes) {result.map_from_camera.push_back(kf.map_from_camera);}
+  for (const auto & p : problem.points) {result.positions.push_back(p.position);}
+  result.outlier.assign(problem.observations.size(), 0);
+  const auto applied = map.apply_ba(problem, result);
+  EXPECT_EQ(applied.points, problem.points.size() - 1);
+  EXPECT_EQ(map.stats().points, live);
+  EXPECT_EQ(map.lookup_tracks({3})[0].id, kNoPoint);
+}
+
+TEST(MapBaWindow, HoldsNoMoreFixedKeyframesThanItIsAllowed)
+{
+  // Twelve keyframes seeing one room, a window of two: ten candidates for fixing,
+  // and a cap of three. Every fixed keyframe costs its edges in the solve, so the
+  // cap is what bounds a solve's cost on a map that has seen one place many times.
+  const World world(120);
+  Map::Config config;
+  config.redundant_fraction = 2.0;  // never redundant: keep every keyframe
+  Map map(config);
+  KeyframeId last = 0;
+  for (int k = 0; k < 12; ++k) {last = insert_tracked(map, world, camera_at({0.01 * k, 0, 0}));}
+  const auto problem = map.ba_window(last, 2, 3);
+  std::size_t free = 0;
+  std::size_t fixed = 0;
+  for (const auto & kf : problem.keyframes) {(kf.fixed ? fixed : free) += 1;}
+  EXPECT_EQ(free, 2u);
+  EXPECT_EQ(fixed, 3u);
+}
+
+TEST(MapBaWindow, AnEmptyMapIsAnEmptyProblem)
+{
+  Map map(Map::Config{});
+  const auto problem = map.ba_window(0, 10, 20);
+  EXPECT_TRUE(problem.keyframes.empty());
+  EXPECT_TRUE(problem.observations.empty());
+}
+
+TEST(MapClear, StartsOverFromIdZero)
+{
+  // odometry_node has no reset service today; the day it does, a map that cleared
+  // its containers and kept its counters would hand out point ids that collide with
+  // nothing and a first keyframe id that is not the one it never culls.
+  const World world(40);
+  Map map(Map::Config{});
+  insert_tracked(map, world, camera_at({0, 0, 0}));
+  insert_tracked(map, world, camera_at({0.1, 0, 0}));
+  EXPECT_EQ(map.positions().size(), map.stats().points);
+  map.clear();
+  EXPECT_EQ(map.stats().points, 0u);
+  EXPECT_EQ(map.stats().keyframes, 0u);
+  EXPECT_EQ(map.newest(), pimesh_backend::kNoKeyframe);
+  EXPECT_EQ(map.lookup_tracks({0})[0].id, kNoPoint);
+  EXPECT_EQ(insert_tracked(map, world, camera_at({0, 0, 0})), 0);
+}
+
 TEST(MapApplyBa, AMismatchedResultIsIgnoredRatherThanAppliedByIndex)
 {
   const World world(40);

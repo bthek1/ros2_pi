@@ -465,6 +465,45 @@ rotation increment silently missing from a chain. Its callback does a bounded co
 and, in the control regime only, the rotation fit itself, measured at **0.12 ms**
 per frame at 56.6 Hz against the 6.8 ms ORB spends on the same frame.
 
+### Stage 3c — The map and the backend (`pimesh_backend`, inside `odometry_node`) — **built 2026-09-29/30, not closed**
+
+[#11](https://github.com/bthek1/ros2_pi/issues/11) P14–P15. Everything above poses
+each frame against **the newest keyframe's landmarks** and nothing else; a landmark
+dies with its keyframe. This stage adds the noun SLAM has and this pipeline did
+not: a **map point**, observed by many keyframes, with a covisibility graph between
+the keyframes that share them.
+
+**Tracking against the local map** (`local_map:=true`, default **false**) matches in
+two stages — by track id against every point the map knows, then by projecting the
+reference keyframe's covisible neighbours' points into the frame and matching
+descriptors near where they land (~27 points a frame the tracker had already lost)
+— and solves one PnP over both in map coordinates. **The map's upkeep** — insert,
+triangulate, cull, and with `local_ba:=true` bundle-adjust the covisible window —
+runs on `LocalMapper`'s thread: niced, fed through a bounded queue that defers a
+keyframe rather than dropping one, 5–6 ms per solve with a p95 under 9 ms, and no
+upstream stage measurably slower.
+
+**What was measured, on TUM fr1/desk (Sim(3) ATE, three runs each):**
+
+| | min | median | max |
+|---|---|---|---|
+| P7's tracker (`local_map:=false`) | 0.283–0.288 | 0.309–0.317 | 0.411–0.459 |
+| local map | 0.318–0.461 | 0.429–0.486 | 0.503–0.530 |
+| local map + BA | **0.151** | **0.259** | 0.418 |
+
+(Two sets of runs a day apart, `gates/map.sh` and `gates/ba.sh`.) **The local map on
+its own is worse than P7, and the reason is the depth network.** Its scale differs
+by 15–21% between consecutive keyframes (`align_dev`); P7 never mixes two depth
+maps, and a map is nothing but mixed depth maps. Three decisions in the map are
+measurements rather than design, each written up where it lives: a point sits at its
+**freshest** reading, not its first; a new depth map is moved **half-way** onto the
+map's scale, because moving it all the way is a random walk (a fitted scale of
+0.699 on one run); and triangulation is kept as a *measurement* — the triangulated
+over network depth ratio, median 1.01–1.02 — and does not move points, because it
+has no scale anchor of its own. Bundle adjustment, with every depth reading as a
+prior, is the first thing in milestone G to beat P7's median; at three runs it does
+not yet separate from its own control.
+
 ## Stage 4 — Depth (`depth_node`, dev box, GPU)
 
 **Job:** one RGB frame in, one metric depth map out.

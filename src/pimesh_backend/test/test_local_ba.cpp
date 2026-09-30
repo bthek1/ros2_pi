@@ -224,3 +224,49 @@ TEST(LocalBa, AMismatchedObservationIsCalledAnOutlierAndDoesNotMoveThePose)
   EXPECT_EQ(flagged, 1u);
   EXPECT_LT(pose_error_m(r.map_from_camera, s.poses), 0.005);
 }
+
+TEST(LocalBa, ASecondRoundWithNoFreePoseLeftIsSkippedNotAborted)
+{
+  // **The third route to the abort.** A free keyframe initialised facing the wrong
+  // way sees every point behind it; round one cannot turn it round, round one's
+  // outlier pass switches off every one of its edges, and re-initialising at level 0
+  // would leave g2o an active set with no pose in it. The second round is skipped
+  // and the first round's answer stands — and every one of that keyframe's
+  // observations is reported as an outlier, which the map then drops.
+  Scene s;
+  for (std::size_t k = 1; k < s.problem.keyframes.size(); ++k) {s.problem.keyframes[k].fixed = true;}
+  auto & turned = s.problem.keyframes[0];
+  turned.fixed = false;
+  turned.map_from_camera = cv::Affine3d(yaw(CV_PI), turned.map_from_camera.translation());
+  s.problem.keyframes[1].fixed = true;
+  BaConfig config;
+  const BaResult r = solve_local_ba(s.problem, config);
+  ASSERT_TRUE(r.ran) << r.refusal;
+  EXPECT_LE(r.iterations, config.first_iterations);
+  std::size_t flagged = 0;
+  std::size_t of_turned = 0;
+  for (std::size_t i = 0; i < s.problem.observations.size(); ++i) {
+    if (s.problem.observations[i].keyframe != 0) {continue;}
+    ++of_turned;
+    flagged += r.outlier[i];
+  }
+  ASSERT_GT(of_turned, 0u);
+  EXPECT_EQ(flagged, of_turned);
+}
+
+TEST(LocalBa, AnObservationWithoutDepthIsAMonocularEdge)
+{
+  // Roughly half of a frame's corners have no usable depth reading; they still
+  // constrain the pose through their pixels, as two-dimensional edges.
+  Scene s;
+  std::size_t without = 0;
+  for (std::size_t i = 0; i < s.problem.observations.size(); i += 2) {
+    s.problem.observations[i].depth = 0.0;
+    ++without;
+  }
+  const BaResult r = solve_local_ba(s.problem, BaConfig{});
+  ASSERT_TRUE(r.ran);
+  EXPECT_EQ(r.edges, s.problem.observations.size());
+  EXPECT_EQ(r.depth_edges, s.problem.observations.size() - without);
+}
+

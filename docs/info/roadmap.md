@@ -7,7 +7,7 @@ mapping back end that fuses a surface out of it. What they do **not** build is
 the part that closes the loop: nothing recognises a place it has seen before, so
 drift is bounded per step and unbounded over a session. That is M10–M19.
 
-Status as of **2026-09-29**: M0–M12 done — **milestone F is closed**, and with it
+Status as of **2026-09-30**: M0–M12 done — **milestone F is closed**, and with it
 the three things P0–P10 could not do. **M10** is the first number about the pose
 that this project did not produce (a Sim(3)-aligned ATE of 0.27–0.36 m against TUM
 fr1/desk's motion-capture truth). **M11** is the first number that makes the rest
@@ -15,7 +15,12 @@ of them metres: `depth_scale` = 4.6002 off a tape measure. **M12** is the first
 clip carrying real translation, and it settled a question open since P7 — 6-DoF
 odometry beats rotation-only, 0.4545 m of paired-surface gap against 0.6688 m,
 which `bags/desk1` could never show because a pan is explained by rotation alone.
-M13–M19 remain, and none of them needs a person in a room. The last thing to close
+M13 and M14 are **built and not done** (2026-09-30): the map and local bundle
+adjustment exist and both gates run, and each fails on its ATE alone — the local map
+tracks worse than P7 because the depth network's scale differs 15–21% between
+keyframes and a map mixes depth maps, and BA's median beats both (0.259 m against
+0.429 and 0.309) without separating from no-BA at three runs. M15–M19 remain, and
+none of them needs a person in a room. The last thing to close
 before M12 was M11 on 2026-09-28; M10 on 2026-09-25, M8 and M9 on 2026-09-19, M5
 on 2026-09-15, M4 on 2026-09-13, M2.5 and M3 the day before.
 

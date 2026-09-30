@@ -7,7 +7,9 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <random>
+#include <thread>
 #include <vector>
 
 #include "pimesh_backend/local_mapper.hpp"
@@ -139,3 +141,43 @@ TEST(LocalMapper, TheThreadIsNiced)
   mapper.flush();
   EXPECT_TRUE(mapper.stats().niced);
 }
+
+TEST(LocalMapper, StopsPromptlyWithKeyframesStillQueued)
+{
+  // odometry_node's destructor joins this thread while the container shuts down. A
+  // stop that waited for the queue to drain would hold up the whole container's
+  // teardown behind bundle adjustment, and a stop that never woke a thread idle on
+  // its condition variable would hang it outright — gates/teardown.sh would see the
+  // container as a straggler. Destroyed with two keyframes queued and one being
+  // processed, it must return.
+  Map map(Map::Config{});
+  LocalMapper::Config config;
+  config.bundle_adjust = true;
+  {
+    LocalMapper mapper(map, config);
+    mapper.start();
+    ASSERT_TRUE(mapper.try_push(keyframe_at(0.0)));
+    ASSERT_TRUE(mapper.try_push(keyframe_at(0.1)));
+  }
+  SUCCEED();
+}
+
+TEST(LocalMapper, AnIdleThreadStopsToo)
+{
+  // **Idle means parked on the condition variable**, and the first version of this
+  // test never got it there: destroyed straight after start(), the worker had not
+  // reached its wait yet, saw the stop flag on the way in, and left — so a
+  // destructor that set the flag and never notified passed it. Caught by mutation.
+  // One keyframe processed, the queue flushed, and a moment for the worker to go
+  // back to sleep; *then* the destructor has something to wake.
+  Map map(Map::Config{});
+  {
+    LocalMapper mapper(map, LocalMapper::Config{});
+    mapper.start();
+    ASSERT_TRUE(mapper.try_push(keyframe_at(0.0)));
+    mapper.flush();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  SUCCEED();
+}
+
