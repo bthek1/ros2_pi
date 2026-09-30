@@ -52,12 +52,43 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 559 tests across thirty-seven suites, identical on both distros**
-(`bash tools/gates/test.sh`, 2026-09-30).
+**Status: 587 tests across thirty-nine suites, identical on both distros**
+(`bash tools/gates/test.sh`, 2026-09-30, after #12's P16).
 
 ## The suites
 
-559 across thirty-seven suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+587 across thirty-nine suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+
+**`test_place_recognition` and `test_place_truth`** (added 2026-09-30, #12's P16)
+cover place recognition and the instrument that judges it, and both exist because
+the failure is a *confident* one. `test_place_recognition`'s sharpest case is a
+candidate carrying the query's own descriptors over **shuffled** landmarks: it wins
+the descriptor vote outright and only the PnP can refuse it — accept on match count
+and that test fails, which was checked by doing it. `AViewTheTrackerStillFollowsIsNotARevisit`
+pins the rule bags/desk1 forced (7 of 16 queries "closed" onto the keyframe just
+before them), and `TheGuidedSearchFindsWhatTheBlindOneCouldNot` asserts the RANSAC
+seed *below* the floor and the final count above it, so it cannot pass by the blind
+search succeeding; disabling the guided search fails it. The first version of the
+suite also found a bug in the code: a stamp of 0 was the "no candidate" sentinel, and
+the first test's genuine candidate was stamped 0 — refused at 205 inliers.
+`test_place_truth` covers `tools/eval/place_truth.py`, which decides
+`gates/place.sh`, and every way it can be wrong **flatters** the detector: an unjudged
+closure counted true, a relative pose compared inverted (an asymmetric scene is what
+catches it — both mutations checked), a precision of 1.000 printed over nothing, a
+neighbour counted as a revisit the detector should have found, and "beats odometry"
+decided by comparing the two poses with each other instead of each with the truth.
+`test_gate_contract` gained the three new reader/writer pairs the gate adds.
+
+Four more cases were added the same evening, after an audit of what the suite still
+could not see: that one candidate corner cannot collect matches from the whole query
+(one-to-one), that a query never finds itself even with the gap at 0 (the thread
+searches *before* inserting), that the thread stops with a backlog queued, and that
+**ragged keyframes are not read past the end** — `Keyframe` is struct-of-arrays, the
+hazard `keypoints_view` had. **That last one passed over the bug it was written
+for**: with the `landmark_row` bound check deleted, a row 50 past the end wrote into
+mapped heap and the test stayed green. It now points 2^28 rows past the end, and the
+same mutation segfaults inside that test. Mutations for the other three are each
+caught by the case that claims them.
 
 **`test_map`, `test_triangulation`, `test_local_map_match`, `test_local_ba` and
 `test_local_mapper`** (added 2026-09-29/30, #11's P14 and P15) cover milestone G,

@@ -30,6 +30,12 @@ if(BUILD_TESTING)
   # be wrong move the number *up* and make the gate agree better: many-to-one
   # matching, and scoring a featureless frame as zero.
   ament_add_pytest_test(test_orb_reference test/test_orb_reference.py)
+
+  # P16's judge. gates/place.sh closes the phase on the precision this computes
+  # against motion capture, and every way it can be wrong flatters the detector:
+  # an unjudged closure counted true, a relative pose compared inverted, a
+  # precision of 1.000 printed over no closures at all.
+  ament_add_pytest_test(test_place_truth test/test_place_truth.py)
 endif()
 
 ament_package()

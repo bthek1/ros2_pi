@@ -49,6 +49,7 @@ add_library(frontend_components SHARED
   probes/odom_probe.cpp
   src/odometry_node.cpp
   src/orb_tracker.cpp
+  src/place_recognition.cpp
   src/rgbd_odometry.cpp
   src/rotation_fit.cpp
 )
@@ -180,6 +181,10 @@ if(BUILD_TESTING)
   # wrong still produces matches: a corner claimed by two points, an ambiguous match
   # accepted, a point behind the camera "found" on the sensor — and each of them is a
   # correspondence PnP will happily use.
+  ament_add_gtest(test_place_recognition test/test_place_recognition.cpp)
+  if(TARGET test_place_recognition)
+    target_link_libraries(test_place_recognition frontend_components)
+  endif()
   ament_add_gtest(test_local_map_match test/test_local_map_match.cpp)
   if(TARGET test_local_map_match)
     target_link_libraries(test_local_map_match frontend_components)

@@ -22,6 +22,7 @@
 #include "pimesh_core/mailbox.hpp"
 #include "pimesh_frontend/local_map_match.hpp"
 #include "pimesh_frontend/orb_tracker.hpp"
+#include "pimesh_frontend/place_recognition.hpp"
 #include "pimesh_frontend/rgbd_odometry.hpp"
 #include "pimesh_frontend/rotation_fit.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -356,6 +357,13 @@ private:
   /// A keyframe the backend's queue has not taken yet. Offered again every depth
   /// frame until it is.
   std::optional<pimesh_backend::KeyframeInput> pending_keyframe_;
+  /// Place recognition (#12's P16), on its own thread over its own copy of the
+  /// keyframes. Built on the first keyframe, because its pixel tolerance is converted
+  /// into bearing units by the focal length, which arrives with camera_info. Null
+  /// with `place_recognition:=false`.
+  std::unique_ptr<PlaceRecognizer> places_;
+  bool place_recognition_ {true};
+  PlaceRecognizer::Config place_config_;
   std::atomic<std::uint64_t> keyframes_deferred_ {0};
   std::atomic<std::uint64_t> keyframes_dropped_ {0};
   double map_points_period_s_ {1.0};

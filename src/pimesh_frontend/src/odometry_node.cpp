@@ -440,6 +440,30 @@ OdometryNode::OdometryNode(const rclcpp::NodeOptions & options)
         "Nice value of the backend thread alone. Measured on mesh_node: a CPU-heavy "
         "thread at equal priority took depth_node from 17.8 to 14.6 Hz with its "
         "per-frame cost unchanged.", 0, 19)));
+  // --- Place recognition (#12's P16) -----------------------------------------------
+  //
+  // **On by default, because it changes nothing.** It reads the keyframe store and
+  // reports; no pose, map or transform depends on what it finds until P17 gives a
+  // closure somewhere to go. Its cost is a niced thread, which gates/place.sh
+  // measures.
+  place_recognition_ = declare_parameter(
+    "place_recognition", true,
+    describe(
+      "Search every keyframe older than place_min_gap_s for the place each new "
+      "keyframe shows, and verify a candidate by PnP before reporting it. Reports "
+      "only: nothing downstream reads a closure yet."));
+  place_config_.place.min_gap_s = declare_parameter(
+    "place_min_gap_s", 3.0,
+    describe_double(
+      "A candidate keyframe must be at least this much older than the query. Younger "
+      "is the tracker's business.", 0.0, 3600.0));
+  place_config_.place.min_inliers = static_cast<std::size_t>(
+    declare_parameter(
+      "place_min_inliers", 30,
+      describe_int(
+        "PnP inliers a candidate needs to be accepted as the same place — the one "
+        "number standing between a descriptor match and a closure.", 6, 1000)));
+  place_config_.max_keyframes = static_cast<std::size_t>(max_keyframes);
   mapper_ = std::make_unique<pimesh_backend::LocalMapper>(*map_, mapper_config);
   mapper_->start();
   map_points_period_s_ = declare_parameter(
@@ -583,6 +607,7 @@ OdometryNode::~OdometryNode()
 {
   depth_mailbox_.stop();
   if (pose_worker_.joinable()) {pose_worker_.join();}
+  places_.reset();
 }
 
 void OdometryNode::on_keypoints(pimesh_msgs::msg::Keypoints::ConstSharedPtr msg)
@@ -1233,7 +1258,31 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
     }
     frame.landmark_row = std::move(landmark_rows);
     frame.landmarks = std::move(landmark_points);
-    keyframes_.maybe_insert(std::move(frame));
+    // A keyframe the store admits is a keyframe place recognition searches from and,
+    // afterwards, searches *for*. A deep copy: the descriptors are the tracker's
+    // matrix, and the search thread must not share memory with the pose thread.
+    std::optional<Keyframe> for_places;
+    if (place_recognition_ && keyframes_.would_insert(frame.odom_from_camera)) {
+      for_places = frame;
+      for_places->descriptors = frame.descriptors.clone();
+    }
+    if (keyframes_.maybe_insert(std::move(frame)) && for_places) {
+      if (!places_) {
+        place_config_.place.focal_px = k(0, 0);
+        places_ = std::make_unique<PlaceRecognizer>(place_config_);
+        places_->start();
+        // Read by gates/place.sh, so the instrument judges availability by the rule
+        // the node used rather than by a second copy of it.
+        RCLCPP_INFO(
+          get_logger(),
+          "place recognition up: min_gap_s=%.2f max_shared_tracks=%zu min_ransac_inliers=%zu "
+          "min_inliers=%zu focal_px=%.1f max_keyframes=%zu",
+          place_config_.place.min_gap_s, place_config_.place.max_shared_tracks,
+          place_config_.place.min_ransac_inliers, place_config_.place.min_inliers,
+          place_config_.place.focal_px, place_config_.max_keyframes);
+      }
+      places_->submit(std::move(*for_places));
+    }
 
     view.odom_from_camera = odom_from_camera;
     reference_ = std::move(view);
@@ -1253,6 +1302,32 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
       }
     } else {
       ++keyframes_deferred_;
+    }
+  }
+
+  // --- What place recognition found since the last frame ---------------------------
+  //
+  // One line per query, at the keyframe rate (~2 Hz), because gates/place.sh judges
+  // every one of them against ground truth — the refused as well as the accepted,
+  // since a revisit that was missed is the recall and a refusal's margin is the
+  // distance to a false closure. The rotation is a Rodrigues vector.
+  if (places_) {
+    for (const PlaceResult & r : places_->take_results()) {
+      const cv::Vec3d rvec = r.best.query_from_candidate.rvec();
+      const cv::Vec3d t = r.best.query_from_candidate.translation();
+      const cv::Vec3d orvec = r.best.odom_query_from_candidate.rvec();
+      const cv::Vec3d ot = r.best.odom_query_from_candidate.translation();
+      RCLCPP_INFO(
+        get_logger(),
+        "place query_ns=%lld accepted=%d searched=%zu too_recent=%zu still_tracked=%zu verified=%zu "
+        "match_ns=%lld matches=%zu with_landmark=%zu ransac_inliers=%zu inliers=%zu "
+        "rx=%.5f ry=%.5f rz=%.5f tx=%.4f ty=%.4f tz=%.4f odom_rot_dis_deg=%.2f "
+        "orx=%.5f ory=%.5f orz=%.5f otx=%.4f oty=%.4f otz=%.4f",
+        static_cast<long long>(r.query_stamp_ns), r.accepted ? 1 : 0, r.searched, r.too_recent,
+        r.still_tracked, r.verified, r.verified > 0 ? static_cast<long long>(r.best.candidate_stamp_ns) : -1LL,
+        r.best.matches, r.best.with_landmark, r.best.ransac_inliers, r.best.inliers,
+        rvec[0], rvec[1], rvec[2], t[0], t[1], t[2], r.best.odom_rotation_disagreement_deg,
+        orvec[0], orvec[1], orvec[2], ot[0], ot[1], ot[2]);
     }
   }
 
@@ -1650,6 +1725,30 @@ void OdometryNode::log_stats()
       backend.niced ? "true" : "false",
       mean(backend.scale_dev_sum, backend.scale_solved),
       static_cast<unsigned long>(backend.scale_solved));
+  }
+
+  // --- Place recognition (#12's P16), on a line of its own -------------------------
+  //
+  // Cumulative. `queries` against `submitted` is how far behind the search thread
+  // is; -1 for a cost nothing measured.
+  {
+    PlaceRecognizer::Stats places;
+    if (places_) {places = places_->stats();}
+    auto median = [](const std::vector<double> & v) {
+        return v.empty() ? -1.0 : pimesh_core::percentile(v, 0.5);
+      };
+    auto p95 = [](const std::vector<double> & v) {
+        return v.empty() ? -1.0 : pimesh_core::percentile(v, 0.95);
+      };
+    RCLCPP_INFO(
+      get_logger(),
+      "stats place enabled=%s submitted=%lu queries=%lu skipped=%lu accepted=%lu "
+      "verified=%lu database=%zu query_ms=%.2f query_ms_p95=%.2f niced=%s",
+      place_recognition_ ? "true" : "false",
+      static_cast<unsigned long>(places.submitted), static_cast<unsigned long>(places.queries),
+      static_cast<unsigned long>(places.skipped), static_cast<unsigned long>(places.accepted),
+      static_cast<unsigned long>(places.verified), places.database,
+      median(places.query_ms), p95(places.query_ms), places.niced ? "true" : "false");
   }
 
   // --- The same numbers, on a topic, for P8's dashboard ------------------------

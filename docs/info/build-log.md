@@ -482,5 +482,36 @@ on at both ends, it kills the process on a window with no free pose — found by
 first probe, before any BA code existed, which is the cheapest place a crash of the
 whole container could have been found.
 
+**Milestone H, started 2026-09-30, and the plan's own control was the first thing
+measured wrong.** #12's trigger asked for `gates/ba.sh` green; that was dropped, in
+the issue body and with the reason — run-to-run spread larger than the differences
+G measures, and nothing in H depending on BA. P16's place recognition then ran
+straight into three measurements, each of which changed the design:
+
+- **A time gap is not a loop.** #12 named zero closures on `bags/desk1` as the
+  control, because desk1 "revisits nothing". The first run accepted 7 of 16 —
+  every one onto the keyframe just before, 2–5 s back, which is how far apart
+  desk1's keyframes are. Excluding candidates that share track ids with the query
+  (this pipeline's covisibility) took it to 0. Then guided matching took it back to
+  3–4, and **those closures agree with desk1's odometry to 1–5°** where a wrong place
+  would be random: desk1 pans back over what it saw. The premise was wrong, the
+  control moved to fr1/desk where motion capture can judge it, and desk1 is printed.
+- **No threshold on blind inliers separated right from wrong**: walk1's genuine
+  revisit at 15–18, desk1's doubtful candidates at 22–27. Guided matching — project
+  every landmark through the seed pose and search near where it lands — separates
+  them by an order of magnitude, and was added only after that measurement.
+- **The obvious second opinion was measured useless.** "Odometry's rotation drifts
+  slowly, so check the closure against it" — on fr1/desk the ground-truth-verified
+  closures disagreed with odometry by 5–43°, because odometry's rotation error there
+  is 26° over 5 s. That became a finding about the tracker, not a refusal rule.
+
+The gate, run once: 0 wrong-place closures of 37, walk1's return found — **and one
+closure 1.4° worse than odometry, which fails "every closure beats odometry"**, an
+assertion written before the run and left failing. **And the gate had a bug the run
+exposed**: the walk1 check split its line by position, read the word `place` as the
+stamp, reported the clip as 0.0 s long, and so accepted any closure as "the return".
+The closure it found was the real one; the check was fixed by key and then run
+against a saved walk1 log (2 returns) and a saved desk1 log (0) before being kept.
+
 Do not write "the node publishes X at Y Hz" until a node has published X and you
 have watched it do Y.

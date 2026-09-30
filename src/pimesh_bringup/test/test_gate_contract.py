@@ -123,3 +123,43 @@ def test_the_stats_lines_cannot_be_mistaken_for_the_main_one():
     # budget, arriving through a second prefix.
     assert '"stats map ' in _ODOMETRY and '"stats backend ' in _ODOMETRY
     assert not re.search(r'"stats (map|backend) [^"]*regime=', _ODOMETRY)
+
+
+# --- #12's P16: place recognition --------------------------------------------------
+#
+# Three readers of two lines. tools/gates/place.sh reads `stats place` in awk and
+# the per-query `place query_ns=` line in awk; tools/eval/place_truth.py reads the
+# per-query line in Python. A renamed key parses as missing, and every way that
+# fails is plausible: a missing `skipped` compares unequal to 0 and fails a thread
+# that kept up; a missing `orx` makes the judge skip the odometry comparison, which
+# the gate then reports as closures "nobody compared".
+
+_PLACE_SH = _read('tools', 'gates', 'place.sh')
+_PLACE_TRUTH = _read('tools', 'eval', 'place_truth.py')
+
+
+def test_every_key_place_sh_reads_off_stats_place_is_written():
+    written = _format_keys(_ODOMETRY, 'stats place ')
+    read = _shell_keys(_PLACE_SH, 'place_value')
+    assert len(written) >= 9, f'only {len(written)} keys found in the stats place format'
+    assert len(read) >= 5, f'only {len(read)} keys found in place.sh'
+    assert not (read - written), f'place.sh reads {sorted(read - written)} off `stats place`'
+
+
+def test_every_key_the_per_query_readers_use_is_written():
+    written = _format_keys(_ODOMETRY, 'place query_ns=')
+    by_judge = set(re.findall(r"q\[\s*'(\w+)'\s*\]", _PLACE_TRUTH)) | \
+        set(re.findall(r"q\.get\(\s*'(\w+)'", _PLACE_TRUTH)) | \
+        set(re.findall(r"'(\w+)' in q\b", _PLACE_TRUTH))
+    by_gate = set(re.findall(r'v\["(\w+)"\]', _PLACE_SH))
+    assert len(written) >= 20, f'only {len(written)} keys found in the place query format'
+    assert len(by_judge) >= 10, f'only {len(by_judge)} keys found in place_truth.py'
+    assert len(by_gate) >= 5, f'only {len(by_gate)} keys found in place.sh'
+    assert not (by_judge - written), f'place_truth.py reads {sorted(by_judge - written)}'
+    assert not (by_gate - written), f'place.sh reads {sorted(by_gate - written)}'
+
+
+def test_the_gap_the_gate_judges_by_is_the_one_the_node_logs():
+    # place.sh passes the node's own min_gap_s to the judge rather than typing it.
+    assert 'min_gap_s' in _format_keys(_ODOMETRY, 'place recognition up: ')
+    assert re.search(r"place recognition up: .*min_gap_s=", _PLACE_SH)

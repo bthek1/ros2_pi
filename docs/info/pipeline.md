@@ -514,6 +514,49 @@ and numeric Jacobians. The solved scale is reported and **never written back** i
 the readings: the prior is about 0 each solve, because re-centring on the last answer
 is the inheritance P14 measured as a random walk.
 
+### Stage 3d — Place recognition (`PlaceRecognizer`, inside `odometry_node`) — **built 2026-09-30, not closed**
+
+[#12](https://github.com/bthek1/ros2_pi/issues/12) P16: the keyframe store's second
+reader. Each keyframe the store admits is searched for among **every** older one, on
+a niced thread that owns its own copy of the keyframes (a keyframe missing from that
+database is a place that can never be recognised, so none is dropped; a *query* may be
+skipped when the thread falls behind, and that is counted). `place_recognition`
+defaults **true** because it only reports — nothing reads a closure until P17.
+
+The search, in order, and each step is there because the one before it was measured
+insufficient:
+
+1. **Exclusion.** Candidates younger than `place_min_gap_s` (3 s) **or sharing more
+   than 5 track ids with the query** are skipped. The second rule came from
+   `bags/desk1`: with the gap alone, 7 of 16 queries "closed" onto the keyframe just
+   before them — right as places, useless as loops, because the tracker never lost
+   them. Shared track ids are this pipeline's covisibility.
+2. **Blind matching** — brute-force Hamming, ratio 0.8, one-to-one — ranks candidates;
+   the top 3 by match count go on.
+3. **A RANSAC seed** — the candidate's depth-backed landmarks against the query's
+   bearings, ≥ 12 inliers.
+4. **Guided matching** — every candidate landmark projected through the seed into the
+   query, matched against corners within 8 px at a looser Hamming limit, then the pose
+   refit on everything found. **Acceptance is on this count, ≥ 30.** Before it,
+   `bags/walk1`'s revisit of its own start scored 15–18 blind inliers while desk1's
+   best refused candidates scored 22–27, so no threshold on the blind count separated
+   them; after it the revisit scores 127–134 and a geometrically wrong candidate
+   *collapses* (13 seed → 20 final, refused).
+
+**Measured on TUM fr1/desk against motion capture** (`gates/place.sh`, three runs):
+**0 wrong-place closures of 37 accepted**, 10–11 confirmed loops a run, median closure
+rotation error 2.3–3.7° against **odometry's 18–29° for the same keyframe pairs**;
+4–5 ms per query, p95 15–22 ms, none skipped. One closure of 37 was 1.4° worse than
+odometry, on a short pair odometry had right, which fails the gate's "every closure
+beats odometry". On `bags/walk1` the return to the start is found.
+
+**And the tracker's rotation drift is larger than anyone had measured.** Against
+TUM's ground truth the odometry's relative rotation error is a median **6.7° over
+~1 s, 26° over ~5 s, 41° over ~10 s** (`evo_rpe --pose_relation angle_deg`), with an
+estimated/true ratio of 0.90 that spreads 0.70–1.30 — drift on a clip that turns 23°
+a second, not a sign error. The closures are an order of magnitude better, which is
+the case for P17 in one line.
+
 ## Stage 4 — Depth (`depth_node`, dev box, GPU)
 
 **Job:** one RGB frame in, one metric depth map out.
