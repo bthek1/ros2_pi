@@ -62,6 +62,12 @@ public:
     std::uint64_t outliers_dropped {0};
     double chi2_before {0.0};
     double chi2_after {0.0};
+    /// Over every free keyframe that had a scale vertex: how many, and the sum of
+    /// `|s - 1|`. Their ratio is `ba_scale_dev` on the stats line — 0 with scale
+    /// modelling off, and the number that says whether the vertices absorbed the
+    /// breathing P14 measured as `align_dev`.
+    std::uint64_t scale_solved {0};
+    double scale_dev_sum {0.0};
     /// Per solve, in milliseconds, for a p95 — and per keyframe for the whole of what
     /// the thread did with it.
     std::vector<double> ba_ms;

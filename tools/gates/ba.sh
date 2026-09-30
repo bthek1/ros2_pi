@@ -37,6 +37,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh" --overlay
 echo "== gate-ba =="
 
 RUNS=${PIMESH_BA_RUNS:-3}
+# The BA arm's depth model: 0 is one independent prior per reading, positive is a
+# scale per keyframe that its readings share, with a log prior this wide. Only the
+# ba arm gets it — the controls are what they were.
+SCALE_SIGMA=${PIMESH_BA_SCALE_SIGMA:-0.0}
 # The plan: "window size > 1". Free keyframes per solve, mean over the run.
 MIN_WINDOW_FREE=1.5
 # Slack over the measured noise floor, as a fraction.
@@ -65,11 +69,12 @@ work=$(mktemp -d)
 SEQ_SECONDS=$(awk '!/^#/ && NF { if (!s) s = $1; e = $1 } END { printf "%d", e - s }' "$SEQ/rgb.txt")
 MEASURE_S=$(( SEQ_SECONDS + 8 ))
 
-run_dataset() {          # $1 = log, $2 = local_map, $3 = local_ba, $4 = trajectory
-    local log=$1 local_map=$2 local_ba=$3 traj=$4
+run_dataset() {          # $1 = log, $2 = local_map, $3 = local_ba, $4 = trajectory, $5 = scale sigma
+    local log=$1 local_map=$2 local_ba=$3 traj=$4 scale_sigma=${5:-0.0}
     timeout -s INT $(( MEASURE_S + 45 )) ros2 launch pimesh_bringup pimesh.launch.py \
         source:=dataset_node dataset_dir:="$SEQ" odom_regime:=sixdof \
-        local_map:="$local_map" local_ba:="$local_ba" probe:=odom_probe \
+        local_map:="$local_map" local_ba:="$local_ba" ba_depth_scale_sigma:="$scale_sigma" \
+        probe:=odom_probe \
         probe_duration_s:="$(( MEASURE_S + 4 ))" trajectory_path:="$traj" \
         >"$log" 2>&1 &
     local ready=0
@@ -111,17 +116,18 @@ ate_of() {
 
 declare -A ate rate_kp rate_fusion rate_depth
 echo
-echo "sequence: ${SEQ} (${SEQ_SECONDS}s), ${RUNS} run(s) per arm"
+echo "sequence: ${SEQ} (${SEQ_SECONDS}s), ${RUNS} run(s) per arm; BA arm ba_depth_scale_sigma:=${SCALE_SIGMA}"
 for i in $(seq "$RUNS"); do
     for arm in ba noba p7; do
+        sigma=0.0
         case $arm in
-            ba) lm=true; lba=true ;;
+            ba) lm=true; lba=true; sigma=$SCALE_SIGMA ;;
             noba) lm=true; lba=false ;;
             p7) lm=false; lba=false ;;
         esac
         log="$work/$arm.$i.log"
         echo "-- run ${i}, ${arm} (local_map:=${lm} local_ba:=${lba}) --"
-        run_dataset "$log" "$lm" "$lba" "$work/$arm.$i.tum" || { echo "FAIL gate-ba"; exit 1; }
+        run_dataset "$log" "$lm" "$lba" "$work/$arm.$i.tum" "$sigma" || { echo "FAIL gate-ba"; exit 1; }
         [[ -s $work/$arm.$i.tum ]] || { note "run ${i} ${arm} wrote no trajectory"; continue; }
         ate[$arm.$i]=$(ate_of "$work/$arm.$i.tum")
         rate_depth[$arm.$i]=$(probe_value "$log" rate)
@@ -136,6 +142,14 @@ for i in $(seq "$RUNS"); do
                 "$(backend_value "$log" ba_fixed)" "$(backend_value "$log" ba_ms)" \
                 "$(backend_value "$log" ba_ms_p95)" "$(backend_value "$log" ba_chi2_before)" \
                 "$(backend_value "$log" ba_chi2_after)" "$(backend_value "$log" ba_outliers)"
+            # -1 is "no scale was solved", which is the right answer with the model
+            # off and a failure with it on: the vertices were never built.
+            printf '   depth-map scale: mean |s - 1| %s over %s free keyframes\n' \
+                "$(backend_value "$log" ba_scale_dev)" "$(backend_value "$log" ba_scale_n)"
+            if [[ $SCALE_SIGMA != 0.0 && $SCALE_SIGMA != 0 ]]; then
+                (( $(backend_value "$log" ba_scale_n) > 0 )) ||
+                    note "run ${i}: ba_depth_scale_sigma:=${SCALE_SIGMA} and no scale was solved — the model never ran"
+            fi
             # --- The second false green: a BA that never runs -----------------------
             (( $(backend_value "$log" ba_runs) > 0 )) || note "run ${i}: bundle adjustment never ran"
             in_range "$(backend_value "$log" ba_iter)" 0.5 1000 ||

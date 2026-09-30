@@ -64,6 +64,30 @@ struct BaConfig
   /// this monocular BA, whose only scale anchor is the fixed keyframes — and P14
   /// showed what a map does with its scale when the network stops anchoring it.
   double depth_sigma_rel {0.15};
+  /// **One sigma of each keyframe's depth-map scale, as a log.** 0 is the model
+  /// above: every reading an independent prior of `depth_sigma_rel`. Positive gives
+  /// each keyframe a scale `s_k` that every one of its readings shares, so a reading
+  /// says the point is `s_k * d` down the axis, and `log s_k` carries a prior of this
+  /// width about 0.
+  ///
+  /// **Why that is the right model and the per-reading prior is not**: what P14
+  /// measured is a depth map breathing *as a whole* — `align_dev` is a median ratio
+  /// over a keyframe's associations. Error shared by three hundred readings does not
+  /// average down over them, so an independent 15% on each is at once too loose for
+  /// the shape within one depth map and blind to the correlation across it. With the
+  /// shared factor explained, what is left per reading is the within-frame warp,
+  /// `depth_point_sigma_rel`.
+  ///
+  /// The prior is about 0 every solve and the solved scale is **not** written back
+  /// into the readings: re-centring each solve on the last one's answer is
+  /// inheritance, and P14 measured what inheritance of a scale does (a fitted Sim(3)
+  /// scale of 0.699). The network's reading stays the anchor.
+  double depth_scale_sigma {0.0};
+  /// One sigma of a reading **once its keyframe's scale is modelled**, relative to
+  /// the depth. Used only when `depth_scale_sigma` is positive. P12 measured a
+  /// within-frame spread of 5.3% over a patch of wall — the warp that survives
+  /// dividing out one scale.
+  double depth_point_sigma_rel {0.05};
   /// Pixel noise of a corner, one sigma. The information matrix is its inverse
   /// square; P9's calibration reprojects at 0.4955 px, and ORB's corners at scale are
   /// coarser than a chessboard's.
@@ -90,6 +114,17 @@ struct BaResult
   std::size_t fixed_keyframes {0};
   std::size_t edges {0};
   std::size_t depth_edges {0};
+  /// Keyframes that got a scale vertex: those with at least one depth reading, and
+  /// only when `depth_scale_sigma` is positive. 0 otherwise.
+  std::size_t scale_vertices {0};
+  /// Parallel to the problem's keyframes: each depth map's solved scale, and **0.0
+  /// where it had no scale vertex** — not 1.0, which is what a perfectly scaled depth
+  /// map solves to; an unmeasured value and a good one must not share a spelling.
+  /// **Reported, never applied** — see BaConfig::depth_scale_sigma. What it
+  /// is for is `ba_scale_dev` on the backend's stats line: if the solved scales sit
+  /// at 1.0 the vertices are doing nothing, and if they spread by P14's 15% they are
+  /// absorbing exactly what P14 said was there.
+  std::vector<double> depth_scale;
   /// Parallel to the problem's vectors: the solved poses and positions.
   std::vector<cv::Affine3d> map_from_camera;
   std::vector<cv::Vec3d> positions;

@@ -52,12 +52,12 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 555 tests across thirty-seven suites, identical on both distros**
+**Status: 559 tests across thirty-seven suites, identical on both distros**
 (`bash tools/gates/test.sh`, 2026-09-30).
 
 ## The suites
 
-555 across thirty-seven suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+559 across thirty-seven suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
 
 **`test_map`, `test_triangulation`, `test_local_map_match`, `test_local_ba` and
 `test_local_mapper`** (added 2026-09-29/30, #11's P14 and P15) cover milestone G,
@@ -89,7 +89,16 @@ machines while probing the library. The refusals are tested by handing the solve
 exactly those windows; if one is ever removed, the test binary dies, which is the
 louder of the two. Its sharpest case is `TheDepthPriorIsWhatAnchorsScale`: a window
 30% too large reprojects exactly as well as the right one, so monocular BA leaves it
-30% too large, and only the depth readings pull it back. `test_local_mapper` pins
+30% too large, and only the depth readings pull it back. **`LocalBaScale`**
+(2026-09-30) pins the shared depth-scale model: a keyframe whose *whole* depth map
+reads 20% far comes back as a scale of 1/1.2 with its pose within a centimetre,
+where the per-reading model takes the same error as more than 2 cm of pose — both
+halves asserted, so the pair cannot pass by the scale model getting worse. A keyframe
+with no scale solved reports **0.0, not 1.0**, because 1.0 is what a perfect depth
+map solves to and the backend averages `|s - 1|`. The first version of the suite
+expected 1.2 and failed at 0.835: the solver had the convention right (the point is
+at `s * d`, so `s` corrects the reading) and the test did not. A residual that ignores
+the scale vertex fails two of the four cases. `test_local_mapper` pins
 that the backend's queue *refuses* when full rather than dropping — the one queue in
 this project that is not newest-wins, because a dropped keyframe is a hole in the
 map — and that with bundle adjustment on, every keyframe after the first is solved

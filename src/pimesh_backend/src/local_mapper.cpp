@@ -136,6 +136,11 @@ void LocalMapper::process(const KeyframeInput & input)
       stats_.window_edges += solved.edges;
       stats_.chi2_before += solved.chi2_before;
       stats_.chi2_after += solved.chi2_after;
+      for (std::size_t i = 0; i < problem.keyframes.size(); ++i) {
+        if (problem.keyframes[i].fixed || !(solved.depth_scale[i] > 0.0)) {continue;}
+        ++stats_.scale_solved;
+        stats_.scale_dev_sum += std::abs(solved.depth_scale[i] - 1.0);
+      }
       stats_.ba_ms.push_back(ba_ms);
     } else {
       ++stats_.ba_refused;

@@ -270,3 +270,113 @@ TEST(LocalBa, AnObservationWithoutDepthIsAMonocularEdge)
   EXPECT_EQ(r.depth_edges, s.problem.observations.size() - without);
 }
 
+
+// --- A depth map that is wrong as a whole -------------------------------------------
+//
+// P14 measured the depth network's error as a *breathing*: one keyframe's depth map
+// 15-21% off the next's, shared by all its readings (align_dev). These pin the model
+// built for it: a scale per keyframe that its readings share.
+
+namespace
+{
+
+/// The scene with one free keyframe's every depth reading 20% too far — the
+/// network's whole-map breathing, with the pixels still exact.
+Scene breathing_scene(std::size_t keyframe, double factor)
+{
+  Scene s;
+  for (BaObservation & o : s.problem.observations) {
+    if (o.keyframe == keyframe) {o.depth *= factor;}
+  }
+  return s;
+}
+
+double translation_error_m(const Scene & s, const BaResult & r, std::size_t k)
+{
+  return cv::norm(cv::Vec3d(r.map_from_camera[k].translation()) -
+    cv::Vec3d(s.poses[k].translation()));
+}
+
+}  // namespace
+
+TEST(LocalBaScale, AWholeDepthMapOffByAFactorIsSolvedAsThatFactor)
+{
+  // The claim the scale vertex makes: the shared error comes back out *as a scale*,
+  // not as a pose. A residual that ignored the vertex (`1 - z/d`) would leave it at
+  // 1.0 and fail the first expectation, however well the rest converged. `s` is the
+  // factor that *corrects* a reading — the point is at `s * d` — so readings 1.2x
+  // too far solve to 1/1.2. (The first version of this test expected 1.2 and failed
+  // at 0.835; the solver had it right.)
+  const Scene s = breathing_scene(3, 1.2);
+  BaConfig config;
+  config.depth_scale_sigma = 0.15;
+  const BaResult r = solve_local_ba(s.problem, config);
+  ASSERT_TRUE(r.ran) << r.refusal;
+  EXPECT_NEAR(r.depth_scale[3], 1.0 / 1.2, 0.02);
+  for (std::size_t k : {1u, 2u, 4u}) {EXPECT_NEAR(r.depth_scale[k], 1.0, 0.02) << "keyframe " << k;}
+  EXPECT_LT(translation_error_m(s, r, 3), 0.01);
+}
+
+TEST(LocalBaScale, ThePerReadingModelTakesTheSameErrorAsAPose)
+{
+  // The control, and the reason for the model: an independent prior per reading has
+  // nowhere to put an error every reading shares except the geometry. Both halves are
+  // asserted so this cannot pass by the scale model getting worse.
+  const Scene s = breathing_scene(3, 1.2);
+  BaConfig per_reading;
+  const BaResult without = solve_local_ba(s.problem, per_reading);
+  BaConfig shared = per_reading;
+  shared.depth_scale_sigma = 0.15;
+  const BaResult with = solve_local_ba(s.problem, shared);
+  ASSERT_TRUE(without.ran && with.ran);
+  EXPECT_GT(translation_error_m(s, without, 3), 0.02);
+  EXPECT_LT(translation_error_m(s, with, 3), 0.5 * translation_error_m(s, without, 3));
+}
+
+TEST(LocalBaScale, UnmeasuredScalesAreZeroNotOne)
+{
+  // 1.0 is what a perfectly scaled depth map solves to, so it cannot also mean "no
+  // scale here" — backend stats average |s - 1| and would read a switched-off model
+  // as a perfect one. With the model off every entry is 0.0 and no vertex exists; on,
+  // the fixed keyframe gets a scale too, because its depth map is as wrong as anyone's.
+  Scene s;
+  const BaResult off = solve_local_ba(s.problem, BaConfig{});
+  ASSERT_TRUE(off.ran);
+  EXPECT_EQ(off.scale_vertices, 0u);
+  for (double v : off.depth_scale) {EXPECT_EQ(v, 0.0);}
+
+  BaConfig config;
+  config.depth_scale_sigma = 0.15;
+  const BaResult on = solve_local_ba(s.problem, config);
+  ASSERT_TRUE(on.ran);
+  EXPECT_EQ(on.scale_vertices, s.problem.keyframes.size());
+  EXPECT_GT(on.depth_scale[0], 0.0);
+
+  // And a keyframe with no reading at all gets no vertex, and says so.
+  for (BaObservation & o : s.problem.observations) {
+    if (o.keyframe == 2) {o.depth = 0.0;}
+  }
+  const BaResult partial = solve_local_ba(s.problem, config);
+  ASSERT_TRUE(partial.ran);
+  EXPECT_EQ(partial.scale_vertices, s.problem.keyframes.size() - 1);
+  EXPECT_EQ(partial.depth_scale[2], 0.0);
+}
+
+TEST(LocalBaScale, AReadingThatDisagreesAfterItsScaleIsAnOutlier)
+{
+  // One reading 60% off inside a depth map that is otherwise right: no shared scale
+  // explains it, so the observation is dropped rather than bending the map.
+  Scene s;
+  std::size_t victim = s.problem.observations.size();
+  for (std::size_t i = 0; i < s.problem.observations.size(); ++i) {
+    if (s.problem.observations[i].keyframe == 2) {victim = i; break;}
+  }
+  ASSERT_LT(victim, s.problem.observations.size());
+  s.problem.observations[victim].depth *= 1.6;
+  BaConfig config;
+  config.depth_scale_sigma = 0.15;
+  const BaResult r = solve_local_ba(s.problem, config);
+  ASSERT_TRUE(r.ran);
+  EXPECT_EQ(r.outlier[victim], 1);
+  EXPECT_NEAR(r.depth_scale[2], 1.0, 0.02);
+}

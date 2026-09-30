@@ -243,7 +243,9 @@ def _component(
 
     `local_map` is odometry_node's, for tools/gates/map.sh: the control run is the
     same binary tracking against the newest keyframe alone. `local_ba` is too, for
-    tools/gates/ba.sh: the control skips only the solve.
+    tools/gates/ba.sh: the control skips only the solve. So is
+    `ba_depth_scale_sigma`, the same gate's switch between the per-reading depth
+    prior and a scale shared by each keyframe's readings.
 
     `log_payloads` is decode_node's, for tools/gates/ipc.sh. `use_cuda` is
     depth_node's, and it is **the control run** tools/gates/depth.sh needs rather
@@ -282,6 +284,8 @@ def _component(
                     LaunchConfiguration('local_map'), value_type=bool),
                 'local_ba': ParameterValue(
                     LaunchConfiguration('local_ba'), value_type=bool),
+                'ba_depth_scale_sigma': ParameterValue(
+                    LaunchConfiguration('ba_depth_scale_sigma'), value_type=float),
                 'dataset_dir': ParameterValue(
                     LaunchConfiguration('dataset_dir'), value_type=str),
                 'trajectory_path': ParameterValue(
@@ -443,6 +447,14 @@ def generate_launch_description() -> LaunchDescription:
                         'window around each new keyframe when true. false is the '
                         'control run in tools/gates/ba.sh. Only changes tracking '
                         'with local_map:=true — P7\'s tracker never reads the map.',
+        ),
+        DeclareLaunchArgument(
+            'ba_depth_scale_sigma',
+            default_value='0.0',
+            description="odometry_node's bundle adjustment gives each keyframe's "
+                        'depth map a scale its readings share, with a log prior '
+                        'of this width, when positive; 0 treats every reading as '
+                        'an independent prior. Only matters with local_ba:=true.',
         ),
         DeclareLaunchArgument(
             'source',

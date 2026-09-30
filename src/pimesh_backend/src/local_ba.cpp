@@ -1,12 +1,17 @@
 #include "pimesh_backend/local_ba.hpp"
 
 #include <cmath>
+#include <istream>
 #include <memory>
+#include <ostream>
 #include <utility>
 #include <vector>
 
 #include "Eigen/Core"
 #include "Eigen/Geometry"
+#include "g2o/core/base_fixed_sized_edge.h"
+#include "g2o/core/base_unary_edge.h"
+#include "g2o/core/base_vertex.h"
 #include "g2o/core/block_solver.h"
 #include "g2o/core/optimization_algorithm_levenberg.h"
 #include "g2o/core/robust_kernel_impl.h"
@@ -28,6 +33,57 @@ namespace
 /// bounded force instead of a quadratic one.
 constexpr double kChi2Mono = 5.991;
 constexpr double kChi2Depth = 7.815;
+/// And for 1 degree of freedom: a depth reading on its own, when it is an edge of its
+/// own beside the pixel's rather than the third row of a stereo residual.
+constexpr double kChi2Scalar = 3.841;
+
+/// A depth map's scale, as its log so that it stays positive and a prior on it is
+/// symmetric in ratio — 15% too near and 15% too far cost the same.
+class VertexLogScale : public g2o::BaseVertex<1, double>
+{
+public:
+  void setToOriginImpl() override {_estimate = 0.0;}
+  void oplusImpl(const double * update) override {_estimate += update[0];}
+  bool read(std::istream &) override {return false;}
+  bool write(std::ostream &) const override {return false;}
+};
+
+/// One depth reading: the network put this point `d` down the keyframe's optical
+/// axis, and the keyframe's depth map is off by a factor `s` that all its readings
+/// share. The residual is relative, `s - z / d`, so its sigma is a fraction of the
+/// depth — the unit the network's error comes in. Jacobians are g2o's numeric
+/// default: three vertices and a one-row residual, and a hand-written Jacobian is
+/// one more thing that can be wrong with a plausible answer.
+class EdgeDepthReading
+  : public g2o::BaseFixedSizedEdge<1, double, g2o::VertexPointXYZ, g2o::VertexSE3Expmap,
+    VertexLogScale>
+{
+public:
+  void computeError() override
+  {
+    const auto * point = vertexXn<0>();
+    const auto * pose = vertexXn<1>();
+    const auto * scale = vertexXn<2>();
+    const double z = pose->estimate().map(point->estimate()).z();
+    _error[0] = std::exp(scale->estimate()) - z / _measurement;
+  }
+  bool depth_positive() const
+  {
+    return vertexXn<1>()->estimate().map(vertexXn<0>()->estimate()).z() > 0.0;
+  }
+  bool read(std::istream &) override {return false;}
+  bool write(std::ostream &) const override {return false;}
+};
+
+/// The prior on a depth map's scale: `log s` about 0, which is the network's own
+/// reading. Every solve starts from here again rather than from the last answer.
+class EdgeLogScalePrior : public g2o::BaseUnaryEdge<1, double, VertexLogScale>
+{
+public:
+  void computeError() override {_error[0] = vertexXn<0>()->estimate() - _measurement;}
+  bool read(std::istream &) override {return false;}
+  bool write(std::ostream &) const override {return false;}
+};
 
 g2o::SE3Quat camera_from_map(const cv::Affine3d & map_from_camera)
 {
@@ -63,6 +119,7 @@ BaResult solve_local_ba(const BaProblem & problem, const BaConfig & config)
   }
   for (const BaPoint & p : problem.points) {result.positions.push_back(p.position);}
   result.outlier.assign(problem.observations.size(), 0);
+  result.depth_scale.assign(problem.keyframes.size(), 0.0);
 
   // --- Refusals, before g2o sees anything ------------------------------------
   //
@@ -96,14 +153,27 @@ BaResult solve_local_ba(const BaProblem & problem, const BaConfig & config)
   }
 
   // --- The graph ----------------------------------------------------------------
-  using Block = g2o::BlockSolver_6_3;
-  auto linear = std::make_unique<g2o::LinearSolverEigen<Block::PoseMatrixType>>();
-  auto * algorithm = new g2o::OptimizationAlgorithmLevenberg(
-    std::make_unique<Block>(std::move(linear)));
+  //
+  // With scale vertices the problem is no longer poses of six and points of three:
+  // a scale is a one-dimensional non-marginalised block beside the poses, so the
+  // fixed-size 6_3 block solver cannot hold it and the dynamic one is used. Without
+  // them nothing changes, down to the solver, so `depth_scale_sigma = 0` is exactly
+  // the BA gates/ba.sh measured on 2026-09-30.
+  const bool model_scale = config.depth_scale_sigma > 0.0 && config.depth_sigma_rel > 0.0;
+  std::unique_ptr<g2o::Solver> block;
+  if (model_scale) {
+    block = std::make_unique<g2o::BlockSolverX>(
+      std::make_unique<g2o::LinearSolverEigen<g2o::BlockSolverX::PoseMatrixType>>());
+  } else {
+    block = std::make_unique<g2o::BlockSolver_6_3>(
+      std::make_unique<g2o::LinearSolverEigen<g2o::BlockSolver_6_3::PoseMatrixType>>());
+  }
+  auto * algorithm = new g2o::OptimizationAlgorithmLevenberg(std::move(block));
   g2o::SparseOptimizer optimizer;
   optimizer.setAlgorithm(algorithm);  // owned by the optimizer from here
 
   const int point_base = static_cast<int>(problem.keyframes.size());
+  const int scale_base = point_base + static_cast<int>(problem.points.size());
   for (std::size_t i = 0; i < problem.keyframes.size(); ++i) {
     auto * v = new g2o::VertexSE3Expmap();
     v->setId(static_cast<int>(i));
@@ -122,9 +192,34 @@ BaResult solve_local_ba(const BaProblem & problem, const BaConfig & config)
     v->setMarginalized(true);
     optimizer.addVertex(v);
   }
+  // One scale per keyframe that has a reading to scale — **fixed keyframes
+  // included**. A fixed keyframe's pose is held for the gauge; its depth map is as
+  // wrong as anybody's, and holding its scale at 1 would press its error onto every
+  // point it shares with the window.
+  std::vector<VertexLogScale *> scale_of(problem.keyframes.size(), nullptr);
+  if (model_scale) {
+    const double prior_info = 1.0 / (config.depth_scale_sigma * config.depth_scale_sigma);
+    for (const BaObservation & o : problem.observations) {
+      if (o.depth <= 0.0 || scale_of[o.keyframe] != nullptr) {continue;}
+      auto * v = new VertexLogScale();
+      v->setId(scale_base + static_cast<int>(o.keyframe));
+      v->setEstimate(0.0);
+      optimizer.addVertex(v);
+      scale_of[o.keyframe] = v;
+      auto * prior = new EdgeLogScalePrior();
+      prior->setVertex(0, v);
+      prior->setMeasurement(0.0);
+      prior->setInformation(Eigen::Matrix<double, 1, 1>::Constant(prior_info));
+      optimizer.addEdge(prior);
+      ++result.scale_vertices;
+    }
+  }
 
   const double pixel_info = 1.0 / (config.pixel_sigma * config.pixel_sigma);
+  // Per observation: the edge carrying its pixel (a stereo edge also carries its
+  // depth), and — with scale vertices — a second edge carrying its depth.
   std::vector<g2o::OptimizableGraph::Edge *> edges(problem.observations.size(), nullptr);
+  std::vector<EdgeDepthReading *> readings(problem.observations.size(), nullptr);
   std::vector<std::uint8_t> is_depth(problem.observations.size(), 0);
   for (std::size_t i = 0; i < problem.observations.size(); ++i) {
     const BaObservation & o = problem.observations[i];
@@ -132,7 +227,7 @@ BaResult solve_local_ba(const BaProblem & problem, const BaConfig & config)
     auto * point = optimizer.vertex(point_base + static_cast<int>(o.point));
     auto * pose = optimizer.vertex(static_cast<int>(o.keyframe));
 
-    if (config.depth_sigma_rel > 0.0 && o.depth > 0.0) {
+    if (config.depth_sigma_rel > 0.0 && o.depth > 0.0 && !model_scale) {
       // **The depth reading as a third residual**, ORB-SLAM's RGB-D formulation: the
       // depth becomes a virtual right-image coordinate `u - bf / d`, so a depth error
       // is a pixel error on an imaginary second camera `bf / fx` to the right. The
@@ -163,21 +258,38 @@ BaResult solve_local_ba(const BaProblem & problem, const BaConfig & config)
       edges[i] = e;
       is_depth[i] = 1;
       ++result.depth_edges;
-    } else {
-      auto * e = new g2o::EdgeSE3ProjectXYZ();
-      e->setVertex(0, point);
-      e->setVertex(1, pose);
-      e->fx = k(0, 0);
-      e->fy = k(1, 1);
-      e->cx = k(0, 2);
-      e->cy = k(1, 2);
-      e->setMeasurement(Eigen::Vector2d(o.pixel.x, o.pixel.y));
-      e->setInformation(Eigen::Matrix2d::Identity() * pixel_info);
-      auto * kernel = new g2o::RobustKernelHuber();
-      kernel->setDelta(std::sqrt(kChi2Mono));
-      e->setRobustKernel(kernel);
-      optimizer.addEdge(e);
-      edges[i] = e;
+      continue;
+    }
+
+    auto * e = new g2o::EdgeSE3ProjectXYZ();
+    e->setVertex(0, point);
+    e->setVertex(1, pose);
+    e->fx = k(0, 0);
+    e->fy = k(1, 1);
+    e->cx = k(0, 2);
+    e->cy = k(1, 2);
+    e->setMeasurement(Eigen::Vector2d(o.pixel.x, o.pixel.y));
+    e->setInformation(Eigen::Matrix2d::Identity() * pixel_info);
+    auto * kernel = new g2o::RobustKernelHuber();
+    kernel->setDelta(std::sqrt(kChi2Mono));
+    e->setRobustKernel(kernel);
+    optimizer.addEdge(e);
+    edges[i] = e;
+
+    if (model_scale && o.depth > 0.0) {
+      auto * r = new EdgeDepthReading();
+      r->setVertex(0, point);
+      r->setVertex(1, pose);
+      r->setVertex(2, scale_of[o.keyframe]);
+      r->setMeasurement(o.depth);
+      const double sigma = config.depth_point_sigma_rel;
+      r->setInformation(Eigen::Matrix<double, 1, 1>::Constant(1.0 / (sigma * sigma)));
+      auto * rk = new g2o::RobustKernelHuber();
+      rk->setDelta(std::sqrt(kChi2Scalar));
+      r->setRobustKernel(rk);
+      optimizer.addEdge(r);
+      readings[i] = r;
+      ++result.depth_edges;
     }
   }
   result.edges = problem.observations.size();
@@ -188,6 +300,10 @@ BaResult solve_local_ba(const BaProblem & problem, const BaConfig & config)
   result.chi2_before = optimizer.activeRobustChi2();
   result.iterations += optimizer.optimize(config.first_iterations);
 
+  // An observation is an outlier when its pixel disagrees, when its depth reading
+  // disagrees even after its depth map's scale is allowed for, or when the point has
+  // gone behind the camera. Either half is enough: a feature matched to the wrong
+  // point can agree in one and not the other.
   auto is_outlier = [&](std::size_t i) {
       auto * e = edges[i];
       const double limit = is_depth[i] ? kChi2Depth : kChi2Mono;
@@ -195,17 +311,26 @@ BaResult solve_local_ba(const BaProblem & problem, const BaConfig & config)
       const bool behind = is_depth[i] ?
         !static_cast<g2o::EdgeStereoSE3ProjectXYZ *>(e)->isDepthPositive() :
         !static_cast<g2o::EdgeSE3ProjectXYZ *>(e)->isDepthPositive();
-      return behind || e->chi2() > limit;
+      bool reading_bad = false;
+      if (readings[i] != nullptr) {
+        readings[i]->computeError();
+        reading_bad = readings[i]->chi2() > kChi2Scalar || !readings[i]->depth_positive();
+      }
+      return behind || reading_bad || e->chi2() > limit;
     };
   for (std::size_t i = 0; i < edges.size(); ++i) {
-    if (is_outlier(i)) {
+    const bool outlier = is_outlier(i);
+    for (g2o::OptimizableGraph::Edge * e : {edges[i],
+        static_cast<g2o::OptimizableGraph::Edge *>(readings[i])})
+    {
+      if (e == nullptr) {continue;}
       // Level 1 is outside the optimisation, which runs at level 0. The edge stays in
       // the graph so its error can still be read after the second round.
-      edges[i]->setLevel(1);
+      if (outlier) {e->setLevel(1);}
+      // The second round without the kernel: the outliers are gone, and what is left
+      // is where a quadratic cost is the right model.
+      e->setRobustKernel(nullptr);
     }
-    // The second round without the kernel: the outliers are gone, and what is left
-    // is where a quadratic cost is the right model.
-    edges[i]->setRobustKernel(nullptr);
   }
   // **And the same abort once more, after outlier rejection**: if every edge of every
   // free keyframe was switched off, re-initialising at level 0 leaves no pose in the
@@ -237,6 +362,9 @@ BaResult solve_local_ba(const BaProblem & problem, const BaConfig & config)
       optimizer.vertex(point_base + static_cast<int>(i)));
     const Eigen::Vector3d p = v->estimate();
     result.positions[i] = cv::Vec3d(p.x(), p.y(), p.z());
+  }
+  for (std::size_t i = 0; i < problem.keyframes.size(); ++i) {
+    if (scale_of[i] != nullptr) {result.depth_scale[i] = std::exp(scale_of[i]->estimate());}
   }
   result.ran = true;
   return result;

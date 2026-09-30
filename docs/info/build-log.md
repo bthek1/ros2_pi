@@ -457,6 +457,20 @@ above no-BA's best (0.318), so the non-overlap assertion fails. Every upstream s
 held its rate. The temptation here is the one `MIN_AGREE` recorded on 2026-09-29:
 re-run until the distributions separate. It was not taken.
 
+**Modelling the breathing did not move the ATE, and that is the finding** (2026-09-30,
+later). If P14's diagnosis is right the per-reading depth prior is the wrong model —
+an error shared by a whole depth map does not average down over its readings — so
+bundle adjustment was given a log scale per keyframe that all its readings share
+(`ba_depth_scale_sigma`, default 0). The vertices do what they were built for: they
+solve to a mean `|s - 1|` of **0.11–0.19**, P14's `align_dev` recovered from the inside.
+And `gates/ba.sh` with them on the BA arm read **0.177 / 0.294 / 0.410 m** against the
+per-reading model's 0.151 / 0.259 / 0.418 the day before — indistinguishable — at five
+times the solve cost (26–30 ms against 5–6). The same run put **P7, unchanged code, at
+0.44–0.47 m** against 0.28–0.46 a day earlier. So the spread between runs of one
+binary is larger than any difference milestone G is trying to measure, and N=3 cannot
+resolve it: the mailbox that drops two depth frames in three drops *different* ones
+each run, and the trajectory is a different trajectory. Not re-run to separate.
+
 **And a test that tested nothing, found the day after.** Mutating `LocalMapper`'s
 destructor so it never woke its worker left `AnIdleThreadStopsToo` green: the test
 destroyed the mapper before the worker had reached its wait, so the worker saw the

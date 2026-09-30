@@ -411,6 +411,20 @@ OdometryNode::OdometryNode(const rclcpp::NodeOptions & options)
       "measurement of how far consecutive keyframes' depth maps disagree (align_dev). "
       "0 drops the prior and makes this monocular BA, whose only scale anchor is "
       "the fixed keyframes.", 0.0, 10.0));
+  mapper_config.ba.depth_scale_sigma = declare_parameter(
+    "ba_depth_scale_sigma", 0.0,
+    describe_double(
+      "One sigma of each keyframe's depth-map scale, as a log. Positive gives every "
+      "keyframe a scale all its readings share — P14 measured the depth network's "
+      "error as a whole-map breathing (align_dev, 15-21%), which an independent prior "
+      "per reading cannot represent. 0 is the per-reading model gates/ba.sh measured "
+      "on 2026-09-30.", 0.0, 2.0));
+  mapper_config.ba.depth_point_sigma_rel = declare_parameter(
+    "ba_depth_point_sigma_rel", 0.05,
+    describe_double(
+      "One sigma of a depth reading, relative to the depth, once its keyframe's scale "
+      "is modelled — the within-frame warp. Used only with ba_depth_scale_sigma > 0. "
+      "P12 measured 5.3% of within-frame spread over a patch of wall.", 0.001, 10.0));
   mapper_config.queue = static_cast<std::size_t>(
     declare_parameter(
       "backend_queue", 2,
@@ -1617,7 +1631,7 @@ void OdometryNode::log_stats()
       "ba_fixed=%.1f ba_points=%.0f ba_edges=%.0f ba_ms=%.2f ba_ms_p95=%.2f "
       "ba_chi2_before=%.1f ba_chi2_after=%.1f ba_outliers=%lu kf_processed=%lu "
       "kf_deferred=%lu kf_refused_full=%lu kf_dropped=%lu keyframe_ms=%.2f "
-      "keyframe_ms_p95=%.2f niced=%s",
+      "keyframe_ms_p95=%.2f niced=%s ba_scale_dev=%.4f ba_scale_n=%lu",
       local_ba_ ? "true" : "false",
       static_cast<unsigned long>(backend.ba_runs), static_cast<unsigned long>(backend.ba_refused),
       mean(static_cast<double>(backend.iterations), backend.ba_runs),
@@ -1633,7 +1647,9 @@ void OdometryNode::log_stats()
       static_cast<unsigned long>(backend.refused_full),
       static_cast<unsigned long>(keyframes_dropped_.load()),
       median(backend.keyframe_ms), p95(backend.keyframe_ms),
-      backend.niced ? "true" : "false");
+      backend.niced ? "true" : "false",
+      mean(backend.scale_dev_sum, backend.scale_solved),
+      static_cast<unsigned long>(backend.scale_solved));
   }
 
   // --- The same numbers, on a topic, for P8's dashboard ------------------------

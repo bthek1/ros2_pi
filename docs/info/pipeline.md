@@ -504,6 +504,16 @@ has no scale anchor of its own. Bundle adjustment, with every depth reading as a
 prior, is the first thing in milestone G to beat P7's median; at three runs it does
 not yet separate from its own control.
 
+**A scale per keyframe, shared by its readings** (`ba_depth_scale_sigma`, default 0 —
+off) is the model P14's diagnosis asks for, and it is built and measured: the solved
+scales spread by a mean `|s - 1|` of 0.11–0.19, which is `align_dev` recovered inside
+the solve, and the ATE did not move (0.177 / 0.294 / 0.410 m against the per-reading
+model's 0.151 / 0.259 / 0.418), while a solve cost 26–30 ms instead of 5–6. It uses
+g2o's dynamic block solver, since a one-dimensional scale does not fit the 6_3 layout,
+and numeric Jacobians. The solved scale is reported and **never written back** into
+the readings: the prior is about 0 each solve, because re-centring on the last answer
+is the inheritance P14 measured as a random walk.
+
 ## Stage 4 — Depth (`depth_node`, dev box, GPU)
 
 **Job:** one RGB frame in, one metric depth map out.
