@@ -7,10 +7,12 @@
 #include <deque>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "opencv2/core.hpp"
 #include "opencv2/core/affine.hpp"
+#include "pimesh_backend/pose_graph.hpp"
 #include "pimesh_frontend/keyframe_store.hpp"
 
 namespace pimesh_frontend
@@ -153,6 +155,12 @@ public:
     /// keyframe store's, so the two describe the same history.
     std::size_t max_keyframes {500};
     int nice {10};
+    /// #12's P17: add each accepted closure to a pose graph over every keyframe and
+    /// optimise it, so `map_from_odom()` stops being identity. false is P17's control
+    /// — the same search, the same graph with no loop edge, which is the odometry
+    /// chain exactly.
+    bool close_loops {false};
+    pimesh_backend::PoseGraphConfig graph;
   };
 
   struct Stats
@@ -166,6 +174,14 @@ public:
     std::size_t database {0};
     std::vector<double> query_ms;
     bool niced {false};
+    /// The pose graph: loop edges added, solves run, closures the solved graph could
+    /// not reconcile, and the last solve's correction at the newest keyframe.
+    std::uint64_t loops {0};
+    std::uint64_t solves {0};
+    std::uint64_t inconsistent {0};
+    std::vector<double> solve_ms;
+    double correction_m {0.0};
+    double correction_deg {0.0};
   };
 
   explicit PlaceRecognizer(const Config & config);
@@ -181,12 +197,22 @@ public:
   /// Every query's result since the last call, in order. The caller logs them.
   std::vector<PlaceResult> take_results();
   Stats stats() const;
+  /// `map <- odom` as of the last solve; identity until a closure is optimised, and
+  /// always identity with `close_loops` off.
+  cv::Affine3d map_from_odom() const;
+  /// Every keyframe's stamp and pose in `map`, for the gate's ATE. Call after
+  /// flush() for the whole session.
+  std::vector<std::pair<std::int64_t, cv::Affine3d>> trajectory() const;
 
 private:
   void run();
 
   Config config_;
   std::deque<Keyframe> database_;
+  /// Worker-thread only, except through the two accessors, which copy under mutex_.
+  pimesh_backend::PoseGraph graph_;
+  cv::Affine3d map_from_odom_ {cv::Affine3d::Identity()};
+  std::vector<std::pair<std::int64_t, cv::Affine3d>> trajectory_;
   mutable std::mutex mutex_;
   std::condition_variable wake_;
   std::condition_variable drained_;

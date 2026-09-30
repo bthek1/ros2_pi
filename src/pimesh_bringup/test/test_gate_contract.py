@@ -163,3 +163,17 @@ def test_the_gap_the_gate_judges_by_is_the_one_the_node_logs():
     # place.sh passes the node's own min_gap_s to the judge rather than typing it.
     assert 'min_gap_s' in _format_keys(_ODOMETRY, 'place recognition up: ')
     assert re.search(r"place recognition up: .*min_gap_s=", _PLACE_SH)
+
+
+# --- #12's P17: the pose graph's figures, read by a second gate --------------------
+
+_LOOP_SH = _read('tools', 'gates', 'loop.sh')
+
+
+def test_every_key_loop_sh_reads_off_stats_place_is_written():
+    # A renamed `solves` parses as empty, `${solves:-0}` reads it as zero, and the
+    # gate reports "the graph never ran" about a graph that ran eleven times.
+    written = _format_keys(_ODOMETRY, 'stats place ')
+    read = _shell_keys(_LOOP_SH, 'place_value')
+    assert {'loops', 'solves', 'correction_m', 'loop_closure'} <= read, read
+    assert not (read - written), f'loop.sh reads {sorted(read - written)} off `stats place`'

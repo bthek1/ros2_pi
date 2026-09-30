@@ -350,14 +350,15 @@ def test_the_launch_description_actually_builds(launch_module):
     # which is what test_the_dashboard_is_opt_in checks.
     assert kinds.get(Node) == (
         len(launch_module.STATIC_TRANSFORMS) + len(launch_module.STANDALONE_NODES))
+    # loop_closure and keyframe_trajectory_path joined for #12's P17.
     assert kinds.get(ComposableNodeContainer) == 1, 'there is one container, always'
     # intra_process, log_payloads, probe, probe_duration_s, align,
     # remesh_period_s, dashboard, dashboard_port, odom_regime, local_map, local_ba,
-    # ba_depth_scale_sigma, source,
+    # ba_depth_scale_sigma, loop_closure, keyframe_trajectory_path, source,
     # dataset_dir, trajectory_path, use_cuda, pipeline — each exists because
     # something outside this file has to be able to set it: all but the last for
     # gates and viewers, the last for tools/view/replay.sh.
-    assert kinds.get(DeclareLaunchArgument) == 17
+    assert kinds.get(DeclareLaunchArgument) == 19
     # One per probe **and one per source**, loaded into the running container
     # rather than listed in it, because `composable_node_descriptions` is built
     # when this file is evaluated and cannot be made conditional on an argument.
@@ -486,9 +487,24 @@ def test_the_dashboard_is_opt_in_and_runs_outside_the_container(launch_module):
         if isinstance(a, Node) and not isinstance(a, ComposableNodeContainer)
     ]
     unconditional = [a for a in plain if a.condition is None]
-    standalone = [a for a in plain if a.condition is not None]
-    assert len(unconditional) == len(launch_module.STATIC_TRANSFORMS), (
+    # Since #12's P17 one static edge is conditional too — `map -> odom`, which
+    # odometry_node owns whenever the pipeline runs — and it is the one conditional
+    # plain node that is not a standalone viewer. Told apart by what its condition
+    # reads: `pipeline`, where a viewer's reads `dashboard`.
+    def reads(action, name):
+        from launch import LaunchContext
+        context = LaunchContext()
+        context.launch_configurations.update({'pipeline': 'true', 'dashboard': 'false'})
+        first = action.condition.evaluate(context)
+        context.launch_configurations[name] = 'false' if name == 'pipeline' else 'true'
+        return action.condition.evaluate(context) != first
+    conditional = [a for a in plain if a.condition is not None]
+    replay_only = [a for a in conditional if reads(a, 'pipeline')]
+    standalone = [a for a in conditional if not reads(a, 'pipeline')]
+    assert len(unconditional) == (
+        len(launch_module.STATIC_TRANSFORMS) - len(launch_module.NODE_OWNED_WHEN_PIPELINE)), (
         'the frame tree is not optional')
+    assert len(replay_only) == len(launch_module.NODE_OWNED_WHEN_PIPELINE)
     assert len(standalone) == len(names), (
         f'expected {len(names)} conditional standalone node action(s), got {len(standalone)}')
 
@@ -674,7 +690,8 @@ def test_the_overrides_are_the_ones_the_gates_actually_pass(launch_module):
     expected = {
         'log_payloads': bool, 'use_cuda': bool, 'duration_s': float, 'align': bool,
         'remesh_period_s': float, 'odometry': str, 'local_map': bool, 'local_ba': bool,
-        'ba_depth_scale_sigma': float, 'dataset_dir': str, 'trajectory_path': str}
+        'ba_depth_scale_sigma': float, 'loop_closure': bool,
+        'keyframe_trajectory_path': str, 'dataset_dir': str, 'trajectory_path': str}
     overrides = _override_values(launch_module)
 
     assert set(overrides) == set(expected), (
@@ -1361,3 +1378,29 @@ def test_the_detector_and_the_estimator_agree_on_the_landmark_clip(config):
     assert odometry['history_frames'] >= 4 * keypoints['match_window'], (
         'history_frames={} is not comfortably longer than match_window={}'.format(
             odometry['history_frames'], keypoints['match_window']))
+
+
+def test_map_to_odom_has_exactly_one_publisher_either_way(launch_module):
+    """#12's P17: odometry_node publishes `map -> odom` whenever the pipeline runs,
+    so the static one must exist **only** with `pipeline:=false`.
+
+    Both halves fail quietly. A static `map -> odom` beside the node's would be two
+    authorities for one edge — tf2 takes whichever arrived last, and the correction
+    flickers in and out. None at all with `pipeline:=false` leaves a replay viewer
+    with no fixed frame. So this evaluates the condition both ways rather than
+    checking one is attached.
+    """
+    from launch import LaunchContext
+    from launch_ros.actions import ComposableNodeContainer, Node
+
+    assert launch_module.NODE_OWNED_WHEN_PIPELINE == {'map_to_odom'}
+    assert launch_module.NODE_OWNED_WHEN_PIPELINE <= set(launch_module.STATIC_TRANSFORMS)
+    description = launch_module.generate_launch_description()
+    plain = [a for a in description.entities
+             if isinstance(a, Node) and not isinstance(a, ComposableNodeContainer)]
+    for pipeline, static_expected in (('true', 0), ('false', 1)):
+        context = LaunchContext()
+        context.launch_configurations.update({'pipeline': pipeline, 'dashboard': 'false'})
+        running = [a for a in plain if a.condition is None or a.condition.evaluate(context)]
+        statics = len(launch_module.STATIC_TRANSFORMS) - 1 + static_expected
+        assert len(running) == statics, f'pipeline:={pipeline}: {len(running)} plain nodes'

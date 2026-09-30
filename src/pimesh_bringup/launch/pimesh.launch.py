@@ -62,7 +62,7 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import ComposableNodeContainer, LoadComposableNodes, Node
 from launch_ros.descriptions import ComposableNode, ParameterValue
@@ -72,6 +72,14 @@ from launch_ros.descriptions import ComposableNode, ParameterValue
 # a node that publishes its own base_link -> camera_link is the failure that
 # makes a mesh smear and shows up in no single log.
 STATIC_TRANSFORMS = ['map_to_odom', 'base_to_camera', 'camera_to_optical']
+
+# **Static only when the pipeline is not running.** Since #12's P17, odometry_node
+# publishes `map -> odom` itself — identity until a closure has been optimised,
+# the pose graph's correction after — stamped with each frame's own stamp, beside
+# `odom -> base_link`. Two publishers of one edge is the failure the comment above
+# names, so the static one is kept only for `pipeline:=false`, where there is no
+# node to own the edge and a replay viewer still needs a fixed frame.
+NODE_OWNED_WHEN_PIPELINE = {'map_to_odom'}
 
 # The components composed into the container, as (node name, package, plugin).
 # The node name is also the key in config/pimesh.yaml, and the package and plugin
@@ -243,7 +251,8 @@ def _component(
 
     `local_map` is odometry_node's, for tools/gates/map.sh: the control run is the
     same binary tracking against the newest keyframe alone. `local_ba` is too, for
-    tools/gates/ba.sh: the control skips only the solve. So is
+    tools/gates/ba.sh: the control skips only the solve. So are `loop_closure` and
+    `keyframe_trajectory_path`, for tools/gates/loop.sh. So is
     `ba_depth_scale_sigma`, the same gate's switch between the per-reading depth
     prior and a scale shared by each keyframe's readings.
 
@@ -286,6 +295,10 @@ def _component(
                     LaunchConfiguration('local_ba'), value_type=bool),
                 'ba_depth_scale_sigma': ParameterValue(
                     LaunchConfiguration('ba_depth_scale_sigma'), value_type=float),
+                'loop_closure': ParameterValue(
+                    LaunchConfiguration('loop_closure'), value_type=bool),
+                'keyframe_trajectory_path': ParameterValue(
+                    LaunchConfiguration('keyframe_trajectory_path'), value_type=str),
                 'dataset_dir': ParameterValue(
                     LaunchConfiguration('dataset_dir'), value_type=str),
                 'trajectory_path': ParameterValue(
@@ -314,6 +327,8 @@ def generate_launch_description() -> LaunchDescription:
                 name=name,
                 arguments=_static_transform_args(entry),
                 output='screen',
+                condition=(UnlessCondition(LaunchConfiguration('pipeline'))
+                           if name in NODE_OWNED_WHEN_PIPELINE else None),
             )
         )
 
@@ -455,6 +470,20 @@ def generate_launch_description() -> LaunchDescription:
                         'depth map a scale its readings share, with a log prior '
                         'of this width, when positive; 0 treats every reading as '
                         'an independent prior. Only matters with local_ba:=true.',
+        ),
+        DeclareLaunchArgument(
+            'loop_closure',
+            default_value='false',
+            description="odometry_node adds each place-recognition closure to a "
+                        'pose graph and publishes its correction as map -> odom '
+                        'when true. false is the control in tools/gates/loop.sh: '
+                        'the same search, map -> odom identity.',
+        ),
+        DeclareLaunchArgument(
+            'keyframe_trajectory_path',
+            default_value='',
+            description="Where odometry_node writes every keyframe's pose in map, "
+                        'TUM format, for tools/gates/loop.sh. Empty writes nothing.',
         ),
         DeclareLaunchArgument(
             'source',

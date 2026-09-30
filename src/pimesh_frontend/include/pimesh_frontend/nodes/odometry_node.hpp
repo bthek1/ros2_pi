@@ -364,6 +364,14 @@ private:
   std::unique_ptr<PlaceRecognizer> places_;
   bool place_recognition_ {true};
   PlaceRecognizer::Config place_config_;
+  /// #12's P17: publish the pose graph's `map -> odom` rather than identity. The
+  /// edge is published either way, beside `odom -> base_link` with the same stamp.
+  bool loop_closure_ {false};
+  std::string map_frame_ {"map"};
+  /// Every keyframe's corrected pose, TUM format, rewritten each stats window. Empty
+  /// writes nothing.
+  std::string keyframe_trajectory_path_;
+  void write_keyframe_trajectory();
   std::atomic<std::uint64_t> keyframes_deferred_ {0};
   std::atomic<std::uint64_t> keyframes_dropped_ {0};
   double map_points_period_s_ {1.0};

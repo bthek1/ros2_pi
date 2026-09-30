@@ -257,7 +257,7 @@ PlaceResult find_place(
 // --- The thread -------------------------------------------------------------------
 
 PlaceRecognizer::PlaceRecognizer(const Config & config)
-: config_(config) {}
+: config_(config), graph_(config.graph) {}
 
 PlaceRecognizer::~PlaceRecognizer()
 {
@@ -305,6 +305,18 @@ PlaceRecognizer::Stats PlaceRecognizer::stats() const
   return stats_;
 }
 
+cv::Affine3d PlaceRecognizer::map_from_odom() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return map_from_odom_;
+}
+
+std::vector<std::pair<std::int64_t, cv::Affine3d>> PlaceRecognizer::trajectory() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return trajectory_;
+}
+
 void PlaceRecognizer::run()
 {
   const bool niced = config_.nice == 0 || setpriority(PRIO_PROCESS, 0, config_.nice) == 0;
@@ -326,7 +338,14 @@ void PlaceRecognizer::run()
     // never find itself whatever the gap is set to.
     Keyframe query = std::move(batch.back());
     batch.pop_back();
-    for (Keyframe & kf : batch) {database_.push_back(std::move(kf));}
+    // **Every keyframe joins the graph, skipped queries included**: the graph's
+    // odometry edges join consecutive keyframes, and one missing is a hole in the
+    // chain that no later closure can bridge correctly.
+    for (Keyframe & kf : batch) {
+      graph_.add_keyframe(kf.stamp_ns, kf.odom_from_camera);
+      database_.push_back(std::move(kf));
+    }
+    graph_.add_keyframe(query.stamp_ns, query.odom_from_camera);
     while (database_.size() > config_.max_keyframes) {database_.pop_front();}
 
     const auto start = std::chrono::steady_clock::now();
@@ -336,8 +355,34 @@ void PlaceRecognizer::run()
     database_.push_back(std::move(query));
     while (database_.size() > config_.max_keyframes) {database_.pop_front();}
 
+    pimesh_backend::PoseGraphResult solved;
+    double solve_ms = -1.0;
+    if (config_.close_loops && result.accepted &&
+      graph_.add_loop(result.query_stamp_ns, result.best.candidate_stamp_ns,
+        result.best.query_from_candidate))
+    {
+      const auto solve_start = std::chrono::steady_clock::now();
+      solved = graph_.optimize();
+      solve_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - solve_start).count();
+    }
+    const cv::Affine3d correction = graph_.map_from_odom();
+    auto trajectory = graph_.trajectory();
+
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      map_from_odom_ = correction;
+      trajectory_ = std::move(trajectory);
+      if (solve_ms >= 0.0) {
+        ++stats_.loops;
+        if (solved.ran) {
+          ++stats_.solves;
+          stats_.inconsistent += solved.inconsistent_loops > 0 ? 1 : 0;
+          stats_.solve_ms.push_back(solve_ms);
+          stats_.correction_m = solved.correction_m;
+          stats_.correction_deg = solved.correction_deg;
+        }
+      }
       ++stats_.queries;
       stats_.verified += result.verified;
       if (result.accepted) {++stats_.accepted;}

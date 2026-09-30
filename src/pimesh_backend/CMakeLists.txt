@@ -29,6 +29,7 @@ add_library(backend SHARED
   src/local_ba.cpp
   src/local_mapper.cpp
   src/map.cpp
+  src/pose_graph.cpp
   src/triangulation.cpp
 )
 target_include_directories(backend PUBLIC
@@ -83,6 +84,13 @@ if(BUILD_TESTING)
 
   # The backend thread's queue: that it refuses when full rather than dropping,
   # and that a keyframe offered is a keyframe processed.
+  # P17's pose graph. Every way it is wrong converges: a measurement composed in the
+  # wrong direction, rotation and translation uncertainty swapped, a correction that
+  # does not reach later keyframes — each pinned against an answer worked by hand.
+  ament_add_gtest(test_pose_graph test/test_pose_graph.cpp)
+  if(TARGET test_pose_graph)
+    target_link_libraries(test_pose_graph backend)
+  endif()
   ament_add_gtest(test_local_mapper test/test_local_mapper.cpp)
   if(TARGET test_local_mapper)
     target_link_libraries(test_local_mapper backend)

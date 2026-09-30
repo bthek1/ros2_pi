@@ -421,3 +421,86 @@ TEST(PlaceRecognizer, StopsWithWorkStillQueued)
   running.reset();
   SUCCEED();
 }
+
+// --- Loop closure through the thread (#12's P17) ------------------------------------
+
+namespace
+{
+
+/// Two views of one room, the second after odometry drifted: its odom pose is 0.5 m
+/// off where the camera truly was. The closure the search finds carries the truth.
+struct DriftedRevisit
+{
+  Room room {400, 1};
+  cv::Affine3d here {yaw(0.0), cv::Vec3d(0, 0, 0)};
+  cv::Affine3d back {yaw(0.1), cv::Vec3d(0.2, 0.0, 0.1)};
+  cv::Affine3d drift {cv::Matx33d::eye(), cv::Vec3d(0.5, 0.0, 0.0)};
+
+  Keyframe first() const {return view(room, here, 0, 10);}
+  Keyframe second() const
+  {
+    Keyframe kf = view(room, back, 20 * kSecond, 12);
+    kf.odom_from_camera = drift * back;   // where odometry *thinks* it is
+    return kf;
+  }
+};
+
+PlaceRecognizer::Config loop_config(bool close_loops)
+{
+  PlaceRecognizer::Config c;
+  c.place = config();
+  c.nice = 0;
+  c.close_loops = close_loops;
+  return c;
+}
+
+}  // namespace
+
+TEST(PlaceRecognizerLoops, AnAcceptedClosureMovesMapFromOdomOnlyWhenClosingLoops)
+{
+  // The control P17's gate runs is the same search with close_loops off: the closure
+  // is found and map -> odom stays identity, exactly. On, it moves — toward undoing
+  // the 0.5 m of drift.
+  const DriftedRevisit scene;
+  for (bool close : {false, true}) {
+    PlaceRecognizer recognizer(loop_config(close));
+    recognizer.start();
+    recognizer.submit(scene.first());
+    recognizer.flush();
+    recognizer.submit(scene.second());
+    recognizer.flush();
+    ASSERT_EQ(recognizer.stats().accepted, 1u) << "close_loops=" << close;
+    const double moved = cv::norm(recognizer.map_from_odom().translation());
+    if (close) {
+      EXPECT_EQ(recognizer.stats().loops, 1u);
+      EXPECT_EQ(recognizer.stats().solves, 1u);
+      EXPECT_GT(moved, 0.1);
+      // The corrected second keyframe is nearer the truth than odometry was.
+      const auto traj = recognizer.trajectory();
+      ASSERT_EQ(traj.size(), 2u);
+      EXPECT_LT(cv::norm(traj[1].second.translation() - scene.back.translation()), 0.5);
+    } else {
+      EXPECT_EQ(recognizer.stats().loops, 0u);
+      EXPECT_EQ(moved, 0.0);
+    }
+  }
+}
+
+TEST(PlaceRecognizerLoops, EveryKeyframeReachesTheGraphIncludingSkippedQueries)
+{
+  // A backlog is queried only at its newest, but every keyframe in it is an odometry
+  // edge. Five submitted before the thread starts: five in the trajectory, in order.
+  const Room room(100, 1);
+  PlaceRecognizer recognizer(loop_config(true));
+  for (int i = 0; i < 5; ++i) {
+    recognizer.submit(view(room, cv::Affine3d::Identity(), i * 10 * kSecond, static_cast<unsigned>(i)));
+  }
+  recognizer.start();
+  recognizer.flush();
+  EXPECT_EQ(recognizer.stats().skipped, 4u);
+  const auto traj = recognizer.trajectory();
+  ASSERT_EQ(traj.size(), 5u);
+  for (std::size_t i = 0; i < traj.size(); ++i) {
+    EXPECT_EQ(traj[i].first, static_cast<std::int64_t>(i) * 10 * kSecond);
+  }
+}

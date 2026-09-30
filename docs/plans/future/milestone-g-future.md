@@ -1,6 +1,7 @@
 # Milestone G — deferred
 
-Work that came out of [#11](https://github.com/bthek1/ros2_pi/issues/11) and is
+Work that came out of [#11](https://github.com/bthek1/ros2_pi/issues/11) (closed
+2026-09-30, its unmet phases carried to [#16](https://github.com/bthek1/ros2_pi/issues/16)) and is
 **not executable yet**. Each entry names the trigger. See
 [../README.md](../README.md) for the rules.
 

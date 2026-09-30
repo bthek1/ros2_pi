@@ -20,6 +20,7 @@
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "pimesh_core/image_buffer.hpp"
 #include "pimesh_frontend/keyframe_store.hpp"
+#include "pimesh_frontend/tum_trajectory.hpp"
 #include "pimesh_frontend/keypoints_view.hpp"
 #include "rcl_interfaces/msg/floating_point_range.hpp"
 #include "rcl_interfaces/msg/integer_range.hpp"
@@ -464,6 +465,35 @@ OdometryNode::OdometryNode(const rclcpp::NodeOptions & options)
         "PnP inliers a candidate needs to be accepted as the same place — the one "
         "number standing between a descriptor match and a closure.", 6, 1000)));
   place_config_.max_keyframes = static_cast<std::size_t>(max_keyframes);
+  // --- Loop closure (#12's P17) ---------------------------------------------------
+  //
+  // **false by default until gates/loop.sh says otherwise**, for local_map's reason.
+  // Off, `map -> odom` is still published — identity — because the launch file no
+  // longer runs a static publisher for that edge while the pipeline is up: one
+  // authority per edge.
+  loop_closure_ = declare_parameter(
+    "loop_closure", false,
+    describe(
+      "Add each place-recognition closure to a pose graph over every keyframe, "
+      "optimise it, and publish the correction as map -> odom. Needs "
+      "place_recognition. false is tools/gates/loop.sh's control: map -> odom stays "
+      "identity."));
+  place_config_.close_loops = loop_closure_ && place_recognition_;
+  if (loop_closure_ && !place_recognition_) {
+    RCLCPP_WARN(
+      get_logger(),
+      "loop_closure:=true with place_recognition:=false — there will be no closures "
+      "to add, and map -> odom stays identity.");
+  }
+  map_frame_ = declare_parameter(
+    "map_frame", std::string("map"),
+    describe("Parent of odom_frame in the TF tree; the frame the pose graph corrects into."));
+  keyframe_trajectory_path_ = declare_parameter(
+    "keyframe_trajectory_path", std::string(""),
+    describe(
+      "Where to write every keyframe's pose in map_frame, TUM format, once a stats "
+      "window — the camera optical pose, the frame TUM's ground truth is in. Empty "
+      "writes nothing. For tools/gates/loop.sh."));
   mapper_ = std::make_unique<pimesh_backend::LocalMapper>(*map_, mapper_config);
   mapper_->start();
   map_points_period_s_ = declare_parameter(
@@ -1482,7 +1512,28 @@ void OdometryNode::publish_pose(const rclcpp::Time & stamp)
     tf.transform.rotation.y = q[1];
     tf.transform.rotation.z = q[2];
     tf.transform.rotation.w = q[3];
-    tf_broadcaster_->sendTransform(tf);
+
+    // `map -> odom`, **with the same stamp** — never now(), and never a stamp older
+    // than one already sent. On a bag, now() is minutes ahead of the frames, and the
+    // next frame-stamped transform would then be older than the newest tf2 holds:
+    // TF_OLD_DATA at the frame rate, from inside the buffer's lock, which is the
+    // stall CLAUDE.md records. A correction therefore takes effect at the next frame
+    // and is never back-dated.
+    const cv::Affine3d correction = places_ ? places_->map_from_odom() : cv::Affine3d::Identity();
+    const cv::Vec3d ct(correction.translation());
+    const cv::Vec4d cq = quaternion_from_rotation(correction.rotation());
+    geometry_msgs::msg::TransformStamped map_tf;
+    map_tf.header.stamp = stamp;
+    map_tf.header.frame_id = map_frame_;
+    map_tf.child_frame_id = odom_frame_;
+    map_tf.transform.translation.x = ct[0];
+    map_tf.transform.translation.y = ct[1];
+    map_tf.transform.translation.z = ct[2];
+    map_tf.transform.rotation.x = cq[0];
+    map_tf.transform.rotation.y = cq[1];
+    map_tf.transform.rotation.z = cq[2];
+    map_tf.transform.rotation.w = cq[3];
+    tf_broadcaster_->sendTransform(std::vector<geometry_msgs::msg::TransformStamped>{map_tf, tf});
   }
 
   auto odom = std::make_unique<nav_msgs::msg::Odometry>();
@@ -1558,8 +1609,33 @@ double OdometryNode::net_displacement()
   return cv::norm(cv::Vec3d(pose_.translation()));
 }
 
+void OdometryNode::write_keyframe_trajectory()
+{
+  if (keyframe_trajectory_path_.empty() || !places_) {return;}
+  std::vector<TumPose> poses;
+  for (const auto & [stamp_ns, map_from_camera] : places_->trajectory()) {
+    const cv::Vec3d t(map_from_camera.translation());
+    const cv::Vec4d q = quaternion_from_rotation(map_from_camera.rotation());
+    poses.push_back(TumPose{stamp_ns, t[0], t[1], t[2], q[0], q[1], q[2], q[3]});
+  }
+  // Written beside the target and renamed over it: a session killed mid-write leaves
+  // the last complete trajectory, not half of this one — a truncated file is a
+  // shorter trajectory to evo, and a shorter trajectory is a plausible one.
+  const std::string partial = keyframe_trajectory_path_ + ".partial";
+  const std::string why = write_tum_trajectory(partial, poses);
+  if (!why.empty()) {
+    RCLCPP_DEBUG(get_logger(), "keyframe trajectory not written: %s", why.c_str());
+    return;
+  }
+  if (std::rename(partial.c_str(), keyframe_trajectory_path_.c_str()) != 0) {
+    RCLCPP_WARN(get_logger(), "could not move the keyframe trajectory into %s",
+      keyframe_trajectory_path_.c_str());
+  }
+}
+
 void OdometryNode::log_stats()
 {
+  write_keyframe_trajectory();
   const rclcpp::Time stamp = now();
   const double span_s = (stamp - last_log_).seconds();
   if (span_s <= 0.0) {return;}
@@ -1743,12 +1819,18 @@ void OdometryNode::log_stats()
     RCLCPP_INFO(
       get_logger(),
       "stats place enabled=%s submitted=%lu queries=%lu skipped=%lu accepted=%lu "
-      "verified=%lu database=%zu query_ms=%.2f query_ms_p95=%.2f niced=%s",
+      "verified=%lu database=%zu query_ms=%.2f query_ms_p95=%.2f niced=%s "
+      "loop_closure=%s loops=%lu solves=%lu inconsistent=%lu solve_ms=%.2f solve_ms_p95=%.2f "
+      "correction_m=%.4f correction_deg=%.3f",
       place_recognition_ ? "true" : "false",
       static_cast<unsigned long>(places.submitted), static_cast<unsigned long>(places.queries),
       static_cast<unsigned long>(places.skipped), static_cast<unsigned long>(places.accepted),
       static_cast<unsigned long>(places.verified), places.database,
-      median(places.query_ms), p95(places.query_ms), places.niced ? "true" : "false");
+      median(places.query_ms), p95(places.query_ms), places.niced ? "true" : "false",
+      place_config_.close_loops ? "true" : "false",
+      static_cast<unsigned long>(places.loops), static_cast<unsigned long>(places.solves),
+      static_cast<unsigned long>(places.inconsistent), median(places.solve_ms), p95(places.solve_ms),
+      places.correction_m, places.correction_deg);
   }
 
   // --- The same numbers, on a topic, for P8's dashboard ------------------------
