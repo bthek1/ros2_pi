@@ -253,7 +253,8 @@ def _component(
     same binary tracking against the newest keyframe alone. `local_ba` is too, for
     tools/gates/ba.sh: the control skips only the solve. So are `loop_closure` and
     `keyframe_trajectory_path`, for tools/gates/loop.sh, and `rebuild` and
-    `rebuild_control` are fusion_node's, for tools/gates/rebuild.sh. So is
+    `rebuild_control` and `memory_dump_dir` are fusion_node's, for
+    tools/gates/rebuild.sh. So is
     `ba_depth_scale_sigma`, the same gate's switch between the per-reading depth
     prior and a scale shared by each keyframe's readings.
 
@@ -304,6 +305,8 @@ def _component(
                     LaunchConfiguration('rebuild'), value_type=bool),
                 'rebuild_control': ParameterValue(
                     LaunchConfiguration('rebuild_control'), value_type=bool),
+                'memory_dump_dir': ParameterValue(
+                    LaunchConfiguration('memory_dump_dir'), value_type=str),
                 'dataset_dir': ParameterValue(
                     LaunchConfiguration('dataset_dir'), value_type=str),
                 'trajectory_path': ParameterValue(
@@ -504,6 +507,13 @@ def generate_launch_description() -> LaunchDescription:
             description="fusion_node also rebuilds each time at the uncorrected "
                         'poses and logs both volumes\' surface gap — '
                         'tools/gates/rebuild.sh\'s control. Costs a second rebuild.',
+        ),
+        DeclareLaunchArgument(
+            'memory_dump_dir',
+            default_value='',
+            description="Where fusion_node writes each rebuild's memory and "
+                        'corrections, for rebuild_eval and tools/gates/rebuild.sh. '
+                        'Empty writes nothing.',
         ),
         DeclareLaunchArgument(
             'source',

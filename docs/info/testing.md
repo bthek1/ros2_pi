@@ -52,12 +52,32 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 609 tests across forty-one suites, identical on both distros**
+**Status: 622 tests across forty-two suites, identical on both distros**
 (`bash tools/gates/test.sh`, 2026-09-30, after #12's P16).
 
 ## The suites
 
-609 across forty-one suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+622 across forty-two suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+
+**`test_ground_truth`** (added 2026-10-02, #12's P18) is the instrument that closed
+P18, written because the first one could not see the claim. Its central case walks a
+camera twice past a wall, the second pass's odometry drifted, with ground truth in
+**another frame at twice the scale** so the alignment has real work to do, and
+asserts over the *same twelve frames* that the drifted arm scores further from the
+ground-truth surface **and** the true arm scores close to it — so it cannot pass by
+both being bad or by the score ignoring poses. Umeyama is pinned against a known
+similarity, the reflection guard and the degenerate refusals each by a case, and the
+memory dump round-trips at full precision with a missing image refused. Four
+mutations — no reflection guard, `apply` ignoring scale, the reference rebuilt at the
+arm's own poses (the very mistake this instrument replaces), and the alignment fitted
+backwards — are each caught. **And one case was too tight for a machine**: the first
+rotation check used an angle off `acos`, whose resolution near 1 is ~8e-7°, against
+a 1e-6° bound; the Pi's aarch64 rounding landed at 1.2e-6 and failed a correct fit.
+It compares the matrices now. `test_place_truth` gained the bounded rule (a closure
+losing by less than ε is tolerated and still listed; by more, it counts), and
+`test_gate_contract` the keys `rebuild.sh` reads off `rebuild_eval` and
+`stats rebuild`, and those `place.sh` reads off the judge — each checked by renaming
+one.
 
 **`test_rebuild`** (added 2026-09-30, #12's P18) covers the frame memory, the
 correction a frame takes, and the rebuild, and every wrong version of them produces a

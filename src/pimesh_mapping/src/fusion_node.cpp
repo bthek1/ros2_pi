@@ -245,6 +245,12 @@ FusionNode::FusionNode(const rclcpp::NodeOptions & options)
     describe_int(
       "Frames the memory holds before it thins the whole session to every other one.",
       2, 100000));
+  memory_dump_dir_ = declare_parameter(
+    "memory_dump_dir", std::string(""),
+    describe(
+      "After each rebuild, write the memory it used and the corrections to this "
+      "directory — 16-bit PNG depth, PNG colour, poses and the volume options — for "
+      "tools/gates/rebuild.sh's comparison against motion capture. Empty writes nothing."));
   odom_frame_ = declare_parameter(
     "odom_frame", std::string("odom"),
     describe("The frame a correction is applied in: frames are remembered at odom <- optical."));
@@ -778,6 +784,15 @@ void FusionNode::rebuild_work()
     const std::size_t integrated = built.integrated + later.size();
     std::unique_ptr<TsdfVolume> old = volume_->replace(std::move(built.volume), integrated);
     old.reset();   // outside the volume's lock, on purpose
+    if (!memory_dump_dir_.empty()) {
+      std::vector<RememberedFrame> all(frames);
+      all.insert(all.end(), later.begin(), later.end());
+      const std::string why = write_memory(memory_dump_dir_, all, corrections, volume_options_,
+        memory_downsample_);
+      if (!why.empty()) {
+        RCLCPP_WARN(get_logger(), "memory not dumped to %s: %s", memory_dump_dir_.c_str(), why.c_str());
+      }
+    }
     const double ms = ms_since(started);
 
     {

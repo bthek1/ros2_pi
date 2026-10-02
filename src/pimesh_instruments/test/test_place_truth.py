@@ -180,3 +180,25 @@ def test_beats_odom_compares_both_against_the_truth():
     bad = [query(1.0, 0, np.eye(4), 0), with_odom(query(10.0, 1.0, off20), off1)]
     r = pt.judge(bad, stamps, poses, 3.0)
     assert (r['compared'], r['beats_odom'], len(r['worse_than_odom'])) == (1, 0, 1)
+
+
+def test_epsilon_bounds_how_far_a_closure_may_lose_to_odometry():
+    # #12's P16 rule as decided on 2026-10-02: losing to odometry by less than epsilon
+    # is tolerated and still listed; by more, it counts against beyond_epsilon. A
+    # closure 4 degrees off where odometry is 1 off loses by 3: inside a 3.5 epsilon,
+    # outside a 2.7 one. The fraction is what stops a detector whose closures all lose
+    # a little from passing.
+    w_c, w_q = asymmetric_scene()
+    stamps, poses = gt_from({1.0: w_c, 10.0: w_q})
+    truth = np.linalg.inv(w_q) @ w_c
+    off4 = truth @ pt.pose(yaw(math.radians(4)), [0, 0, 0])
+    off1 = truth @ pt.pose(yaw(math.radians(1)), [0, 0, 0])
+    qs = [query(1.0, 0, np.eye(4), 0), with_odom(query(10.0, 1.0, off4), off1)]
+    loose = pt.judge(qs, stamps, poses, 3.0, epsilon_deg=3.5)
+    tight = pt.judge(qs, stamps, poses, 3.0, epsilon_deg=2.7)
+    assert (loose['beats_odom'], loose['beyond_epsilon']) == (0, 0)
+    assert tight['beyond_epsilon'] == 1
+    assert len(loose['worse_than_odom']) == 1, 'tolerated is still listed'
+    assert loose['margins'][0] == pytest.approx(3.0, abs=1e-6)
+    # The default is the strict rule: any loss is beyond an epsilon of zero.
+    assert pt.judge(qs, stamps, poses, 3.0)['beyond_epsilon'] == 1

@@ -504,3 +504,35 @@ TEST(PlaceRecognizerLoops, EveryKeyframeReachesTheGraphIncludingSkippedQueries)
     EXPECT_EQ(traj[i].first, static_cast<std::int64_t>(i) * 10 * kSecond);
   }
 }
+
+TEST(PlaceRecognizerLoops, TheCorrectionsHandedOutReproduceTheCorrectedTrajectory)
+{
+  // What /pose_graph/corrections carries, at the thread rather than inside the graph:
+  // each keyframe's correction applied to its odometry pose must be its corrected
+  // pose, and before any closure every correction must be identity exactly — P18's
+  // rebuild applies these to every remembered frame, so a correction off by a
+  // keyframe is a surface rebuilt in the wrong place.
+  const DriftedRevisit scene;
+  PlaceRecognizer recognizer(loop_config(true));
+  recognizer.start();
+  recognizer.submit(scene.first());
+  recognizer.flush();
+  for (const auto & [stamp, c] : recognizer.corrections()) {
+    (void)stamp;
+    EXPECT_EQ(cv::norm(c.translation()), 0.0) << "identity before any closure";
+  }
+  recognizer.submit(scene.second());
+  recognizer.flush();
+  ASSERT_EQ(recognizer.stats().solves, 1u);
+  const auto corrections = recognizer.corrections();
+  const auto trajectory = recognizer.trajectory();
+  ASSERT_EQ(corrections.size(), 2u);
+  ASSERT_EQ(trajectory.size(), 2u);
+  const cv::Affine3d odom[2] = {scene.first().odom_from_camera, scene.second().odom_from_camera};
+  for (std::size_t k = 0; k < 2; ++k) {
+    EXPECT_EQ(corrections[k].first, trajectory[k].first);
+    const cv::Affine3d applied = corrections[k].second * odom[k];
+    EXPECT_LT(cv::norm(applied.translation() - trajectory[k].second.translation()), 1e-9) << k;
+  }
+  EXPECT_GT(cv::norm(corrections[1].second.translation()), 0.1) << "the drifted keyframe moved";
+}

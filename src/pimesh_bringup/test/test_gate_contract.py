@@ -177,3 +177,48 @@ def test_every_key_loop_sh_reads_off_stats_place_is_written():
     read = _shell_keys(_LOOP_SH, 'place_value')
     assert {'loops', 'solves', 'correction_m', 'loop_closure'} <= read, read
     assert not (read - written), f'loop.sh reads {sorted(read - written)} off `stats place`'
+
+
+def test_every_key_place_sh_reads_off_the_judge_is_one_the_judge_prints():
+    # The judge is Python printing `key=value` lines and the gate reads them in awk.
+    # A renamed `beyond_epsilon` reads as empty, `[[ "" == 0 ]]` is false, and the
+    # gate fails a detector that was fine — or, worse, a renamed fraction makes
+    # in_range compare an empty string. Both sides as text, with floors.
+    read = set(re.findall(r'judge_value "\$j" ([a-z_0-9]+)', _PLACE_SH))
+    printed = set(re.findall(r"print\(f\"([a-z_0-9]+)=", _PLACE_TRUTH))
+    assert len(read) >= 10, f'only {len(read)} judge keys found in place.sh'
+    assert len(printed) >= 15, f'only {len(printed)} keys found printed by place_truth.py'
+    assert {'beyond_epsilon', 'beats_odom_fraction', 'worst_margin_deg'} <= read
+    assert not (read - printed), f'place.sh reads {sorted(read - printed)} the judge never prints'
+
+
+# --- #12's P18: the rebuild gate's two readers -------------------------------------
+
+_REBUILD_SH = _read('tools', 'gates', 'rebuild.sh')
+_REBUILD_EVAL = _read('src', 'pimesh_mapping', 'apps', 'rebuild_eval.cpp')
+_FUSION = _read('src', 'pimesh_mapping', 'src', 'fusion_node.cpp')
+
+
+def test_every_key_rebuild_sh_reads_off_rebuild_eval_is_printed():
+    # rebuild_eval prints `<arm>_<key>=` through one helper called for both arms, and
+    # a few bare keys. A renamed `corrected_gap_m` parses as empty, in_range refuses
+    # it, and the gate says the surface was not measured — about a run that measured
+    # it. `${a}_judged` in the gate is expanded for both arms here.
+    arm_keys = set(re.findall(r'"%s_([a-z_]+)=', _REBUILD_EVAL))
+    bare = set(re.findall(r'std::printf\("([a-z_]+)=', _REBUILD_EVAL))
+    printed = bare | {f'{arm}_{k}' for arm in ('corrected', 'control') for k in arm_keys}
+    read = set()
+    for key in re.findall(r'eval_value "\$out" ([a-z_${}]+)', _REBUILD_SH):
+        if key.startswith('${a}_'):
+            read |= {f'{arm}_{key[5:]}' for arm in ('corrected', 'control')}
+        else:
+            read.add(key)
+    assert len(arm_keys) >= 6 and len(read) >= 8, (arm_keys, read)
+    assert not (read - printed), f'rebuild.sh reads {sorted(read - printed)} rebuild_eval never prints'
+
+
+def test_every_key_rebuild_sh_reads_off_stats_rebuild_is_written():
+    written = _format_keys(_FUSION, 'stats rebuild ')
+    read = _shell_keys(_REBUILD_SH, 'rebuild_value')
+    assert len(written) >= 15 and {'memory_mb', 'niced'} <= read, (written, read)
+    assert not (read - written), f'rebuild.sh reads {sorted(read - written)} off `stats rebuild`'

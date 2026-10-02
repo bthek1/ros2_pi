@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -129,6 +130,33 @@ struct RebuildResult
 RebuildResult rebuild_volume(
   const std::vector<RememberedFrame> & frames, const Corrections & corrections,
   TsdfVolume::Options options, int downsample);
+
+/// The same, at poses given outright — one per frame, `map <- optical`. What the
+/// ground-truth reference of tools/gates/rebuild.sh is built with: the remembered
+/// frames at motion-capture poses. Frames whose pose is not finite are skipped and
+/// not counted, so `integrated` says how many really went in.
+RebuildResult rebuild_volume_at(
+  const std::vector<RememberedFrame> & frames, const std::vector<cv::Affine3d> & poses,
+  TsdfVolume::Options options, int downsample);
+
+/// Write the memory and the corrections it was rebuilt with to `dir`, for the
+/// offline ground-truth comparison: `index.txt` (one line per frame: stamp, K, the
+/// odometry pose, the correction used live, and file names), 16-bit PNG depth, PNG
+/// colour, and `corrections.txt`. **Written to `dir.partial` and renamed over `dir`**,
+/// so a session killed mid-write leaves the previous complete dump rather than half
+/// of this one — a shorter memory is a plausible one. Empty string on success,
+/// otherwise the reason.
+/// `meta.txt` carries the volume options and the downsample the memory was taken
+/// with, so the offline rebuild uses the live volume's, not a second copy typed on a
+/// command line — two copies of one value agree only until somebody edits one.
+std::string write_memory(
+  const std::string & dir, const std::vector<RememberedFrame> & frames,
+  const Corrections & corrections, const TsdfVolume::Options & options, int downsample);
+/// Read one back. Refuses rather than guessing: a missing image, a short line, or an
+/// index that names no frames is an error, not an empty memory.
+std::string read_memory(
+  const std::string & dir, std::vector<RememberedFrame> & frames, Corrections & corrections,
+  TsdfVolume::Options & options, int & downsample);
 
 }  // namespace pimesh_mapping
 

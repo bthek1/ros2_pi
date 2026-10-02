@@ -145,6 +145,9 @@ private:
   double rebuild_min_shift_deg_ {2.0};
   int rebuild_nice_ {10};
   int memory_downsample_ {4};
+  /// Where each rebuild's memory and corrections are written for the offline
+  /// ground-truth comparison (tools/gates/rebuild.sh). Empty writes nothing.
+  std::string memory_dump_dir_;
   std::string odom_frame_ {"odom"};
   TsdfVolume::Options volume_options_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr corrections_sub_;

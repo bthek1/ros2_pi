@@ -26,13 +26,14 @@ find_package(pimesh_msgs REQUIRED)
 find_package(pimesh_core REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
 
 add_library(mapping_components SHARED
   src/fusion_node.cpp
   src/marching_cubes.cpp
   src/mesh_cleanup.cpp
   src/mesh_node.cpp
+  src/ground_truth.cpp
   src/mesh_io.cpp
   src/rebuild.cpp
   src/scale_aligner.cpp
@@ -66,6 +67,7 @@ target_link_libraries(mapping_components PUBLIC
   tf2_ros::tf2_ros
   opencv_core
   opencv_imgproc
+  opencv_imgcodecs
 )
 
 # Plural, so no main is generated: the thin ones are written by hand in src/.
@@ -88,6 +90,11 @@ install(TARGETS mapping_components
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
+# #12's P18 instrument: no ROS, reads a memory dump and a TUM groundtruth.txt.
+add_executable(rebuild_eval apps/rebuild_eval.cpp)
+target_link_libraries(rebuild_eval PRIVATE mapping_components)
+install(TARGETS rebuild_eval DESTINATION lib/${PROJECT_NAME})
+
 install(TARGETS fusion_node mesh_node
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -106,6 +113,13 @@ if(BUILD_TESTING)
   # P18's rebuild: the memory thins rather than forgets, a frame takes its reference
   # keyframe's correction and not an interpolation, and a rebuild at corrected poses
   # removes the ghost its control keeps.
+  # P18's instrument: Umeyama against a known similarity, the reflection guard, the
+  # degenerate refusals, and an arm with the drift scoring worse against ground truth
+  # than the arm without it — over the same frames.
+  ament_add_gtest(test_ground_truth test/test_ground_truth.cpp)
+  if(TARGET test_ground_truth)
+    target_link_libraries(test_ground_truth mapping_components)
+  endif()
   ament_add_gtest(test_rebuild test/test_rebuild.cpp)
   if(TARGET test_rebuild)
     target_link_libraries(test_rebuild mapping_components)

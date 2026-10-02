@@ -15,6 +15,8 @@
 #include <string>
 #include <vector>
 
+#include <unistd.h>
+
 #include "gtest/gtest.h"
 #include "pimesh_mapping/mesh.hpp"
 #include "pimesh_mapping/shared_volume.hpp"
@@ -340,4 +342,58 @@ TEST(SharedVolume, WithVolumeHandsBackWhateverTheCallbackReturns)
   // if the lock were not released on return.
   const float size = volume->with_volume([](const TsdfVolume & v) {return v.voxel_size();});
   EXPECT_FLOAT_EQ(size, 0.015F);
+}
+
+// --- replace: how a rebuild reaches mesh_node (#12's P18) --------------------------
+
+TEST(SharedVolumeReplace, TheNextSnapshotSeesTheNewVolumeAndTheOldOneComesBackWhole)
+{
+  // A wall at 1.5 m live, a rebuilt wall at 2.2 m swapped in. mesh_node's next
+  // snapshot must be the rebuilt one — a swap that left the old volume in place would
+  // keep meshing the drifted surface with every counter saying a rebuild ran. And the
+  // old volume is handed back intact, not freed: freeing a gigabyte of blocks under
+  // the lock is the stall replace() exists to avoid.
+  auto shared = filled(6, 1.5F);
+  const auto before = shared->snapshot();
+
+  TsdfVolume::Options options;
+  options.voxel_size_m = 0.015F;
+  options.truncation_voxels = 4;
+  options.min_weight = 3.0F;
+  auto rebuilt = std::make_unique<TsdfVolume>(options);
+  for (int i = 0; i < 4; ++i) {
+    rebuilt->integrate(plane_at(2.2F), colour_of(200, 30, 30), test_k(), cv::Affine3d::Identity());
+  }
+  const auto rebuilt_blocks = rebuilt->blocks();
+
+  std::unique_ptr<TsdfVolume> old = shared->replace(std::move(rebuilt), 4);
+  ASSERT_TRUE(old);
+  EXPECT_TRUE(same_blocks(old->blocks(), before.blocks)) << "the old volume comes back whole";
+  const auto after = shared->snapshot();
+  EXPECT_TRUE(same_blocks(after.blocks, rebuilt_blocks));
+  EXPECT_FALSE(same_blocks(after.blocks, before.blocks));
+  // The count is the rebuild's, not the live count carried over: the volume is
+  // exactly those frames now.
+  EXPECT_EQ(shared->frames_integrated(), 4u);
+  EXPECT_EQ(after.frames_integrated, 4u);
+  EXPECT_TRUE(shared->configured());
+}
+
+TEST(SharedVolumeReplace, BothNodesStillMeetAtTheSameObjectAfterASwap)
+{
+  // fusion_node swaps the volume *inside* the shared object; mesh_node holds the same
+  // shared object by key. Swapping the shared object itself would leave mesh_node on
+  // a volume nobody fills — the volume_key failure, arrived at by another door.
+  const std::string key = "replace_test_" + std::to_string(::getpid());
+  auto writer = VolumeRegistry::get(key);
+  TsdfVolume::Options options;
+  writer->configure(options);
+  auto reader = VolumeRegistry::get(key);
+  auto rebuilt = std::make_unique<TsdfVolume>(options);
+  rebuilt->integrate(plane_at(1.5F), cv::Mat(), test_k(), cv::Affine3d::Identity());
+  const std::size_t blocks = rebuilt->block_count();
+  ASSERT_GT(blocks, 0u);
+  writer->replace(std::move(rebuilt), 1);
+  EXPECT_EQ(reader.get(), writer.get());
+  EXPECT_EQ(reader->with_volume([](const TsdfVolume & v) {return v.block_count();}), blocks);
 }

@@ -140,12 +140,12 @@ def left_between(seen, i_c, w_q):
     return any(w is not None and not near(w, w_q) for _, w in seen[i_c + 1:])
 
 
-def judge(queries, stamps, poses, gap_s):
+def judge(queries, stamps, poses, gap_s, epsilon_deg=0.0):
     """Everything the gate prints, as a dict."""
     res = {'queries': len(queries), 'accepted': 0, 'true': 0, 'false': 0, 'unjudged': 0,
            'revisit_queries': 0, 'recalled': 0, 'loops': 0,
            'wrong_place': 0, 'compared': 0, 'beats_odom': 0, 'odom_rot_err': [],
-           'worse_than_odom': [], 'rot_err': [], 'trans_err': [],
+           'worse_than_odom': [], 'beyond_epsilon': 0, 'margins': [], 'rot_err': [], 'trans_err': [],
            'false_list': []}
     seen = []  # (stamp_s, world_from_camera or None) of every earlier keyframe
     for q in queries:
@@ -188,10 +188,17 @@ def judge(queries, stamps, poses, gap_s):
                     odom_rot_err = angle_deg(truth[:3, :3].T @ odom[:3, :3])
                     res['odom_rot_err'].append(odom_rot_err)
                     res['compared'] += 1
+                    # The margin a closure loses by, negative when it wins. **Bounded,
+                    # not forbidden** (#12's P16, decided 2026-10-02): a closure may lose
+                    # to odometry by up to `epsilon_deg`, the spread of closure error
+                    # itself, on the short pairs where odometry happens to be good.
+                    res['margins'].append(rot_err - odom_rot_err)
                     if rot_err < odom_rot_err:
                         res['beats_odom'] += 1
                     else:
                         res['worse_than_odom'].append((q['query_ns'], rot_err, odom_rot_err))
+                        if rot_err - odom_rot_err > epsilon_deg:
+                            res['beyond_epsilon'] += 1
                 if rot_err <= MAX_ROT_ERR_DEG and trans_err <= MAX_TRANS_ERR_M:
                     res['true'] += 1
                     # A loop, as opposed to a correct match onto a neighbour: the
@@ -219,6 +226,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('log')
     ap.add_argument('groundtruth')
+    ap.add_argument('--epsilon-deg', type=float, default=0.0,
+                    help='how far a closure may lose to odometry before it counts '
+                         'against beyond_epsilon; 0 is the strict rule')
     ap.add_argument('--gap', type=float, default=3.0,
                     help="odometry_node's place_min_gap_s, so availability uses the same rule")
     args = ap.parse_args(argv)
@@ -228,7 +238,7 @@ def main(argv=None):
     if not stamps:
         print('error=no ground truth read', file=sys.stderr)
         return 2
-    r = judge(queries, stamps, poses, args.gap)
+    r = judge(queries, stamps, poses, args.gap, args.epsilon_deg)
     judged = r['true'] + r['false']
     print(f"queries={r['queries']}")
     print(f"accepted={r['accepted']}")
@@ -239,6 +249,10 @@ def main(argv=None):
     print(f"wrong_place={r['wrong_place']}")
     print(f"compared_with_odom={r['compared']}")
     print(f"beats_odom={r['beats_odom']}")
+    print(f"beats_odom_fraction={fmt(r['beats_odom'] / r['compared'] if r['compared'] else None)}")
+    print(f"epsilon_deg={args.epsilon_deg:.4f}")
+    print(f"beyond_epsilon={r['beyond_epsilon']}")
+    print(f"worst_margin_deg={fmt(max(r['margins']) if r['margins'] else None)}")
     print(f"odom_rot_err_median_deg={fmt(float(np.median(r['odom_rot_err'])) if r['odom_rot_err'] else None)}")
     # -1, never 1.000, when nothing was judged.
     print(f"precision={fmt(r['true'] / judged if judged else None)}")
@@ -251,7 +265,8 @@ def main(argv=None):
         print(f'false_closure query_ns={qn} match_ns={cn} inliers={inl} '
               f'rot_err_deg={re_:.2f} trans_err_m={te:.3f} true_distance_m={d:.3f}')
     for qn, re_, oe in r['worse_than_odom']:
-        print(f'worse_than_odom query_ns={qn} rot_err_deg={re_:.2f} odom_rot_err_deg={oe:.2f}')
+        print(f'worse_than_odom query_ns={qn} rot_err_deg={re_:.2f} odom_rot_err_deg={oe:.2f} '
+              f'margin_deg={re_ - oe:.2f}')
     return 0
 
 
