@@ -252,7 +252,8 @@ def _component(
     `local_map` is odometry_node's, for tools/gates/map.sh: the control run is the
     same binary tracking against the newest keyframe alone. `local_ba` is too, for
     tools/gates/ba.sh: the control skips only the solve. So are `loop_closure` and
-    `keyframe_trajectory_path`, for tools/gates/loop.sh. So is
+    `keyframe_trajectory_path`, for tools/gates/loop.sh, and `rebuild` and
+    `rebuild_control` are fusion_node's, for tools/gates/rebuild.sh. So is
     `ba_depth_scale_sigma`, the same gate's switch between the per-reading depth
     prior and a scale shared by each keyframe's readings.
 
@@ -299,6 +300,10 @@ def _component(
                     LaunchConfiguration('loop_closure'), value_type=bool),
                 'keyframe_trajectory_path': ParameterValue(
                     LaunchConfiguration('keyframe_trajectory_path'), value_type=str),
+                'rebuild': ParameterValue(
+                    LaunchConfiguration('rebuild'), value_type=bool),
+                'rebuild_control': ParameterValue(
+                    LaunchConfiguration('rebuild_control'), value_type=bool),
                 'dataset_dir': ParameterValue(
                     LaunchConfiguration('dataset_dir'), value_type=str),
                 'trajectory_path': ParameterValue(
@@ -484,6 +489,21 @@ def generate_launch_description() -> LaunchDescription:
             default_value='',
             description="Where odometry_node writes every keyframe's pose in map, "
                         'TUM format, for tools/gates/loop.sh. Empty writes nothing.',
+        ),
+        DeclareLaunchArgument(
+            'rebuild',
+            default_value='false',
+            description="fusion_node remembers integrated frames and rebuilds the "
+                        'volume at the pose graph\'s corrected poses when true. '
+                        'Needs loop_closure:=true to have corrections. For '
+                        'tools/gates/rebuild.sh.',
+        ),
+        DeclareLaunchArgument(
+            'rebuild_control',
+            default_value='false',
+            description="fusion_node also rebuilds each time at the uncorrected "
+                        'poses and logs both volumes\' surface gap — '
+                        'tools/gates/rebuild.sh\'s control. Costs a second rebuild.',
         ),
         DeclareLaunchArgument(
             'source',

@@ -354,11 +354,12 @@ def test_the_launch_description_actually_builds(launch_module):
     assert kinds.get(ComposableNodeContainer) == 1, 'there is one container, always'
     # intra_process, log_payloads, probe, probe_duration_s, align,
     # remesh_period_s, dashboard, dashboard_port, odom_regime, local_map, local_ba,
-    # ba_depth_scale_sigma, loop_closure, keyframe_trajectory_path, source,
+    # ba_depth_scale_sigma, loop_closure, keyframe_trajectory_path, rebuild,
+    # rebuild_control, source,
     # dataset_dir, trajectory_path, use_cuda, pipeline — each exists because
     # something outside this file has to be able to set it: all but the last for
     # gates and viewers, the last for tools/view/replay.sh.
-    assert kinds.get(DeclareLaunchArgument) == 19
+    assert kinds.get(DeclareLaunchArgument) == 21
     # One per probe **and one per source**, loaded into the running container
     # rather than listed in it, because `composable_node_descriptions` is built
     # when this file is evaluated and cannot be made conditional on an argument.
@@ -691,7 +692,8 @@ def test_the_overrides_are_the_ones_the_gates_actually_pass(launch_module):
         'log_payloads': bool, 'use_cuda': bool, 'duration_s': float, 'align': bool,
         'remesh_period_s': float, 'odometry': str, 'local_map': bool, 'local_ba': bool,
         'ba_depth_scale_sigma': float, 'loop_closure': bool,
-        'keyframe_trajectory_path': str, 'dataset_dir': str, 'trajectory_path': str}
+        'keyframe_trajectory_path': str, 'rebuild': bool, 'rebuild_control': bool,
+        'dataset_dir': str, 'trajectory_path': str}
     overrides = _override_values(launch_module)
 
     assert set(overrides) == set(expected), (

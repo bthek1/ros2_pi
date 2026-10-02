@@ -52,12 +52,28 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 600 tests across forty suites, identical on both distros**
+**Status: 609 tests across forty-one suites, identical on both distros**
 (`bash tools/gates/test.sh`, 2026-09-30, after #12's P16).
 
 ## The suites
 
-600 across forty suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+609 across forty-one suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+
+**`test_rebuild`** (added 2026-09-30, #12's P18) covers the frame memory, the
+correction a frame takes, and the rebuild, and every wrong version of them produces a
+surface. Its central case builds a wall seen twice, the second pass's odometry
+drifted 0.3 m toward it, and asserts **both** halves: rebuilt at the corrections, the
+first surface is at 2.0 m; rebuilt without them — the control, the same function one
+input apart — the ghost at 1.7 m is still there. The memory must *thin* the whole
+session when full rather than forget its start (a ring buffer fails that case), a
+frame takes its reference keyframe's correction and not an interpolation (an
+interpolation fails that case), and the rebuild integrates every remembered frame.
+**One of its cases passed over the bug it was written for**: the allocation-stride
+test put its pole on a column the stride-8 sampler hits anyway, so deleting the
+stride division left it green; moved between samples, and aimed at by a ray that
+actually crosses it, the same mutation fails it. `test_pose_graph` gained the
+per-keyframe corrections: exact identity until a solve (the rebuild's control has to
+be the uncorrected poses to the bit), consistent with the corrected trajectory after.
 
 **`test_pose_graph`** (added 2026-09-30, #12's P17) exists because every way a pose
 graph is wrong *converges*. It pins g2o's edge convention against answers worked by

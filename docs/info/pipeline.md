@@ -790,6 +790,35 @@ without a pose at their own stamp and **0** without their colour twin.
 it a pose-graph correction moves the poses and leaves the surface where it was.
 See [the milestone D future file](../plans/future/milestone-d-future.md).
 
+### Stage 5b — The volume rebuilt at corrected poses (`fusion_node`, #12 P18) — **built 2026-09-30, not closed**
+
+With `rebuild:=true` (default **false**) `fusion_node` remembers each integrated frame
+— the depth **after** scale alignment, so a rebuild integrates the same numbers the
+live volume did, plus colour, both at a quarter of the resolution, and the frame's
+`odom ← optical` pose — in a `FrameMemory` that, when full, **thins the whole
+session** to every other frame rather than dropping its start, which is the half a
+loop closure joins to. When `/pose_graph/corrections` arrives (latched, from
+`odometry_node`, after every solve) and moves some remembered frame more than 5 cm or
+2°, a niced thread integrates the whole memory into a **new** volume at the corrected
+poses — each frame taking its reference keyframe's correction, not an interpolation —
+catches up on frames remembered meanwhile, and swaps it in with
+`SharedVolume::replace`, which hands the old volume back so the gigabyte-scale free
+happens outside the lock.
+
+**Measured on TUM fr1/desk, once** (`loop_closure:=true rebuild:=true
+rebuild_control:=true`): 4 rebuilds, integrated = memory every time (169, 222, 296,
+349), 2.8–4.2 s each, 34 MB of memory, 0 TF warnings. With `rebuild_control` each
+rebuild is repeated at the uncorrected poses and both volumes' paired-surface gap
+logged: **0.247/0.270, 0.415/0.460, 0.525/0.510, 0.658/0.547 m** (corrected/control)
+— better twice, worse twice. **That instrument cannot see this claim.** It compares a
+volume with the frames it was built from, each ray-cast from the pose it was built
+at, so a drifted but self-consistent volume agrees with itself about as well as a
+correct one; and its magnitude is the depth network's between-frame scale breathing,
+which no pose correction touches. The trajectory the rebuild uses is demonstrably
+better (P17's ATE); whether the *surface* is needs an instrument with an outside
+opinion — the same memory rebuilt at motion-capture poses on TUM, holding the depth
+fixed and varying only the poses.
+
 ## Stage 6 — Surface (`mesh_node`, dev box) — **built 2026-09-16**
 
 **Job:** extract a triangle mesh from the volume and hand it to the viewers,

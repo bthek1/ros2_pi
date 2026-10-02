@@ -536,5 +536,19 @@ And the thing this gate does not score is written down beside it: the ATE is ove
 the graph's final keyframe poses, while the TSDF was integrated at the correction as
 it stood at each frame. That is the gap P18 exists to close.
 
+**P18's mechanism works and its test cannot see its claim.** The rebuild —
+remember every integrated frame, integrate them again at the pose graph's corrected
+poses, swap the result in — ran four times on fr1/desk with integrated equal to
+memory every time. With a control rebuild at the uncorrected poses beside each, the
+paired-surface gap P18's test names came out better twice and worse twice. The
+reason is the instrument, and it is this file's recurring finding in a new shape: a
+volume compared with the very frames it was built from agrees with itself whether or
+not it agrees with the room, so the measure is green over nothing and red over
+nothing. Two smaller things were found by the tests on the way: the stride test had
+put its pole on a column the sampler hits anyway and passed over a deleted division,
+and — not a test, a slip — one scripted edit reopened `pose_graph.cpp` for writing
+before reading it, emptying the file; it was restored from the commit and the edit
+re-applied.
+
 Do not write "the node publishes X at Y Hz" until a node has published X and you
 have watched it do Y.

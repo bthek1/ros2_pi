@@ -19,6 +19,7 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(pimesh_msgs REQUIRED)
@@ -57,6 +58,7 @@ target_link_libraries(mapping_components PUBLIC
   rclcpp_components::component
   ${sensor_msgs_TARGETS}
   ${geometry_msgs_TARGETS}
+  ${nav_msgs_TARGETS}
   ${std_srvs_TARGETS}
   ${visualization_msgs_TARGETS}
   ${pimesh_msgs_TARGETS}

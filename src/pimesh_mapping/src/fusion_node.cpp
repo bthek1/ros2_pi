@@ -4,6 +4,8 @@
 
 #include "pimesh_mapping/nodes/fusion_node.hpp"
 
+#include <sys/resource.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -560,7 +562,7 @@ void FusionNode::process(Frame & frame)
   const auto result = volume_->with_volume(
     [&](TsdfVolume & v) {return v.integrate(*to_integrate, colour, k, world_from_camera);});
   const double integrate_ms = ms_since(integrate_started);
-  if (rebuild_) {remember(depth->header.stamp, *to_integrate, colour, k, world_from_camera);}
+  if (rebuild_) {remember(frame.depth->header.stamp, *to_integrate, colour, k, world_from_camera);}
 
   if (result.blocks_refused > 0) {
     refused_.fetch_add(result.blocks_refused, std::memory_order_relaxed);
@@ -601,6 +603,205 @@ void FusionNode::process(Frame & frame)
   RCLCPP_DEBUG(
     get_logger(), "integrated blocks=%zu new=%zu voxels=%zu in %.2f ms",
     result.blocks_touched, result.blocks_new, result.voxels_updated, integrate_ms);
+}
+
+// --- #12's P18: the frame memory and the rebuild ----------------------------------
+
+void FusionNode::remember(
+  const builtin_interfaces::msg::Time & stamp, const cv::Mat & integrated_depth,
+  const cv::Mat & colour, const cv::Matx33d & k, const cv::Affine3d & world_from_camera)
+{
+  // The odometry pose at the same stamp, because a correction is applied to *that*.
+  // It is already in the buffer: the map lookup that succeeded went through it.
+  cv::Affine3d odom_from_camera;
+  try {
+    const auto tf = tf_buffer_->lookupTransform(
+      odom_frame_, optical_frame_, tf2::TimePoint(std::chrono::nanoseconds(
+        rclcpp::Time(stamp).nanoseconds())));
+    const auto & q = tf.transform.rotation;
+    const auto & t = tf.transform.translation;
+    const double x = q.x, y = q.y, z = q.z, w = q.w;
+    odom_from_camera = cv::Affine3d(
+      cv::Matx33d(
+        1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+        2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+        2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)),
+      cv::Vec3d(t.x, t.y, t.z));
+  } catch (const tf2::TransformException &) {
+    // Counted, not remembered: a frame with no odometry pose cannot be corrected, and
+    // a rebuild would have to integrate it at the map pose it already has.
+    remember_no_odom_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  const cv::Affine3d map_from_odom_used = world_from_camera * odom_from_camera.inv();
+  std::lock_guard<std::mutex> lock(memory_mutex_);
+  memory_->offer(
+    rclcpp::Time(stamp).nanoseconds(), integrated_depth, colour, k, odom_from_camera,
+    map_from_odom_used);
+}
+
+void FusionNode::on_corrections(nav_msgs::msg::Path::ConstSharedPtr msg)
+{
+  Corrections corrections;
+  corrections.reserve(msg->poses.size());
+  for (const auto & p : msg->poses) {
+    const auto & q = p.pose.orientation;
+    const double x = q.x, y = q.y, z = q.z, w = q.w;
+    corrections.emplace_back(
+      rclcpp::Time(p.header.stamp).nanoseconds(),
+      cv::Affine3d(
+        cv::Matx33d(
+          1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+          2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+          2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)),
+        cv::Vec3d(p.pose.position.x, p.pose.position.y, p.pose.position.z)));
+  }
+  {
+    std::lock_guard<std::mutex> lock(rebuild_mutex_);
+    // Newest wins: a rebuild at the latest corrections supersedes one at older ones,
+    // and every solve republishes the whole set.
+    pending_corrections_ = std::move(corrections);
+    corrections_pending_ = true;
+    ++rebuild_stats_.corrections_received;
+  }
+  rebuild_wake_.notify_one();
+}
+
+namespace
+{
+
+/// A remembered frame's depth in metres at `size`, and its K for that size — what
+/// surface_gap compares against a ray-cast.
+cv::Mat depth_at(const RememberedFrame & f, cv::Size size, cv::Matx33d & k_out)
+{
+  cv::Mat m;
+  f.depth_mm.convertTo(m, CV_32FC1, 0.001);
+  cv::Mat small;
+  cv::resize(m, small, size, 0, 0, cv::INTER_NEAREST);
+  const double sx = static_cast<double>(size.width) / f.depth_mm.cols;
+  const double sy = static_cast<double>(size.height) / f.depth_mm.rows;
+  k_out = cv::Matx33d(
+    f.k(0, 0) * sx, 0.0, f.k(0, 2) * sx, 0.0, f.k(1, 1) * sy, f.k(1, 2) * sy, 0.0, 0.0, 1.0);
+  return small;
+}
+
+/// The median paired-surface gap and agreement of `volume` against a sample of the
+/// frames it was built from, each ray-cast from the pose it was integrated at. -1 when
+/// nothing overlapped. Self-consistency, not truth — every frame is in the volume it
+/// is compared with — which is why it is only ever read as a comparison between two
+/// volumes built from the same frames.
+void self_consistency(
+  const TsdfVolume & volume, const std::vector<RememberedFrame> & frames,
+  const Corrections & corrections, double min_overlap, double tolerance,
+  double & gap_out, double & agree_out)
+{
+  std::vector<double> gaps, agrees;
+  const std::size_t step = std::max<std::size_t>(1, frames.size() / 40);
+  for (std::size_t i = 0; i < frames.size(); i += step) {
+    const RememberedFrame & f = frames[i];
+    cv::Matx33d k_small;
+    const cv::Size size(std::max(1, f.depth_mm.cols / 4), std::max(1, f.depth_mm.rows / 4));
+    const cv::Mat incoming = depth_at(f, size, k_small);
+    cv::Mat expected;
+    volume.raycast(k_small, correction_at(corrections, f.stamp_ns) * f.odom_from_camera, size, expected);
+    double gap = 0.0, overlap = 0.0, agree = 0.0;
+    if (surface_gap(expected, incoming, min_overlap, gap, overlap)) {gaps.push_back(gap);}
+    if (surface_agreement(expected, incoming, tolerance, agree)) {agrees.push_back(agree);}
+  }
+  gap_out = gaps.empty() ? -1.0 : pimesh_core::percentile(gaps, 0.5);
+  agree_out = agrees.empty() ? -1.0 : pimesh_core::percentile(agrees, 0.5);
+}
+
+}  // namespace
+
+void FusionNode::rebuild_work()
+{
+  // Per thread, as mesh_node does it: only this thread is pushed down.
+  const bool niced = rebuild_nice_ == 0 || setpriority(PRIO_PROCESS, 0, rebuild_nice_) == 0;
+  {
+    std::lock_guard<std::mutex> lock(rebuild_mutex_);
+    rebuild_stats_.niced = niced;
+  }
+  for (;;) {
+    Corrections corrections;
+    {
+      std::unique_lock<std::mutex> lock(rebuild_mutex_);
+      rebuild_wake_.wait(lock, [this] {return rebuild_stop_ || corrections_pending_;});
+      if (rebuild_stop_) {return;}
+      corrections = std::move(pending_corrections_);
+      corrections_pending_ = false;
+    }
+    std::vector<RememberedFrame> frames;
+    {
+      std::lock_guard<std::mutex> lock(memory_mutex_);
+      frames = memory_->frames();   // headers only: the pixels are shared, not copied
+    }
+    if (frames.empty()) {continue;}
+    const Shift shift = pose_shift(frames, corrections);
+    if (shift.max_m < rebuild_min_shift_m_ && shift.max_deg < rebuild_min_shift_deg_) {
+      std::lock_guard<std::mutex> lock(rebuild_mutex_);
+      ++rebuild_stats_.skipped_small;
+      rebuild_stats_.last_shift_m = shift.max_m;
+      rebuild_stats_.last_shift_deg = shift.max_deg;
+      continue;
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    RebuildResult built = rebuild_volume(frames, corrections, volume_options_, memory_downsample_);
+    double gap_corrected = -1.0, agree_corrected = -1.0, gap_control = -1.0, agree_control = -1.0;
+    const double min_overlap = aligner_.options().min_overlap;
+    if (rebuild_control_) {
+      // The same frames at the uncorrected poses, each volume judged from the poses it
+      // was built at: what differs between the two is the correction and nothing else.
+      self_consistency(*built.volume, frames, corrections, min_overlap, agree_tolerance_,
+        gap_corrected, agree_corrected);
+      const RebuildResult control = rebuild_volume(frames, Corrections{}, volume_options_,
+        memory_downsample_);
+      self_consistency(*control.volume, frames, Corrections{}, min_overlap, agree_tolerance_,
+        gap_control, agree_control);
+    }
+
+    // Frames remembered while this ran were integrated live at the new correction
+    // already; add them so the swap does not drop them.
+    std::vector<RememberedFrame> later;
+    {
+      std::lock_guard<std::mutex> lock(memory_mutex_);
+      for (const RememberedFrame & f : memory_->frames()) {
+        if (f.stamp_ns > frames.back().stamp_ns) {later.push_back(f);}
+      }
+    }
+    cv::Mat depth_m;
+    for (const RememberedFrame & f : later) {
+      f.depth_mm.convertTo(depth_m, CV_32FC1, 0.001);
+      built.volume->integrate(depth_m, f.bgr, f.k, correction_at(corrections, f.stamp_ns) * f.odom_from_camera);
+    }
+    const std::size_t integrated = built.integrated + later.size();
+    std::unique_ptr<TsdfVolume> old = volume_->replace(std::move(built.volume), integrated);
+    old.reset();   // outside the volume's lock, on purpose
+    const double ms = ms_since(started);
+
+    {
+      std::lock_guard<std::mutex> lock(rebuild_mutex_);
+      ++rebuild_stats_.rebuilds;
+      rebuild_stats_.last_shift_m = shift.max_m;
+      rebuild_stats_.last_shift_deg = shift.max_deg;
+      rebuild_stats_.last_ms = ms;
+      rebuild_stats_.last_integrated = built.integrated;
+      rebuild_stats_.last_memory = frames.size();
+      rebuild_stats_.last_caught_up = later.size();
+      rebuild_stats_.gap_corrected = gap_corrected;
+      rebuild_stats_.gap_control = gap_control;
+      rebuild_stats_.agree_corrected = agree_corrected;
+      rebuild_stats_.agree_control = agree_control;
+    }
+    RCLCPP_INFO(
+      get_logger(),
+      "rebuild done integrated=%zu memory=%zu caught_up=%zu shift_m=%.4f shift_deg=%.3f "
+      "ms=%.1f refused=%zu gap_corrected=%.4f gap_control=%.4f agree_corrected=%.4f "
+      "agree_control=%.4f",
+      built.integrated, frames.size(), later.size(), shift.max_m, shift.max_deg, ms,
+      built.blocks_refused, gap_corrected, gap_control, agree_corrected, agree_control);
+  }
 }
 
 void FusionNode::log_stats()
@@ -702,6 +903,38 @@ void FusionNode::log_stats()
     static_cast<unsigned long>(unpaired_.load(std::memory_order_relaxed)));
   msg->detail = detail;
   stats_pub_->publish(std::move(msg));
+
+  // --- The rebuild (#12's P18), on a line of its own ---------------------------------
+  //
+  // Prefixed `stats rebuild`, so nothing reading `stats rate=` can take a number off it.
+  // Cumulative; -1 for a figure nothing has measured yet.
+  {
+    std::size_t memory = 0, memory_bytes = 0, halvings = 0, stride = 0;
+    if (memory_) {
+      std::lock_guard<std::mutex> lock(memory_mutex_);
+      memory = memory_->size();
+      memory_bytes = memory_->bytes();
+      halvings = memory_->halvings();
+      stride = memory_->stride();
+    }
+    RebuildStats r;
+    {
+      std::lock_guard<std::mutex> lock(rebuild_mutex_);
+      r = rebuild_stats_;
+    }
+    RCLCPP_INFO(
+      get_logger(),
+      "stats rebuild enabled=%s memory=%zu memory_mb=%.1f halvings=%zu stride=%zu "
+      "corrections=%lu rebuilds=%lu skipped_small=%lu last_shift_m=%.4f last_shift_deg=%.3f "
+      "last_ms=%.1f last_integrated=%zu last_memory=%zu caught_up=%zu gap_corrected=%.4f "
+      "gap_control=%.4f agree_corrected=%.4f agree_control=%.4f no_odom=%lu niced=%s",
+      rebuild_ ? "true" : "false", memory, static_cast<double>(memory_bytes) / 1e6, halvings,
+      stride, static_cast<unsigned long>(r.corrections_received),
+      static_cast<unsigned long>(r.rebuilds), static_cast<unsigned long>(r.skipped_small),
+      r.last_shift_m, r.last_shift_deg, r.last_ms, r.last_integrated, r.last_memory,
+      r.last_caught_up, r.gap_corrected, r.gap_control, r.agree_corrected, r.agree_control,
+      static_cast<unsigned long>(remember_no_odom_.load()), r.niced ? "true" : "false");
+  }
 
   last_log_ = now_ros;
   last_integrated_ = integrated;
