@@ -52,12 +52,24 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 622 tests across forty-two suites, identical on both distros**
+**Status: 625 tests across forty-two suites, identical on both distros**
 (`bash tools/gates/test.sh`, 2026-09-30, after #12's P16).
 
 ## The suites
 
-622 across forty-two suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+625 across forty-two suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+
+**Two gaps closed after milestone H, 2026-10-02.** `SharedVolume::replace` — the
+swap that makes a rebuild visible to `mesh_node` — had no test: `test_shared_volume`
+now asserts the next snapshot is the rebuilt volume, the old one comes back whole
+rather than freed under the lock, the frame count becomes the rebuild's, and both
+nodes still meet at one object after the swap (swapping the shared object instead of
+its contents would be the `volume_key` failure by another door). And
+`PlaceRecognizer::corrections()`, what `/pose_graph/corrections` carries, is pinned
+at the thread: identity before a closure, and each correction applied to its
+keyframe's odometry pose reproducing the corrected trajectory. Mutations — a
+`replace` that does not swap, one that keeps the old count, and corrections never
+refreshed — are each caught by the case that claims them.
 
 **`test_ground_truth`** (added 2026-10-02, #12's P18) is the instrument that closed
 P18, written because the first one could not see the claim. Its central case walks a
