@@ -1,0 +1,105 @@
+# The viewers, one entry each. view.launch.py reads this file and nothing about a
+# view is written anywhere else: `just view-mesh` is `view.launch.py view:=mesh`,
+# and what makes it the mesh viewer is the entry below.
+#
+# **Not a ROS parameter file.** No node reads it, so it is not keyed by node name
+# and `test_no_parameter_in_the_yaml_is_read_by_nobody` does not apply to it;
+# `test_views` reads it against the launch file and the share directory instead.
+#
+# Every field, and why it is per-view rather than a constant:
+#
+#   rviz          the config under share/pimesh_bringup/rviz/. null means the
+#                 view has no window, so closing one cannot end it.
+#   rviz_delay_s  seconds after launch before RViz starts. Not a correctness
+#                 requirement: RViz started early simply draws nothing until data
+#                 arrives. It is here so a person does not stare at an empty
+#                 window while depth_node loads a 99 MB model and warms CUDA.
+#   needs_model   refuse to start without models/depth_anything_v2_small.onnx,
+#                 with the command that fetches it, rather than letting
+#                 depth_node fail a minute later inside the container's log.
+#   needs_bag     refuse to start without bag:=. The Pi's camera is the default
+#                 source for every view that does not set this.
+#   loop          play the bag with --loop. Only safe with pipeline false: a
+#                 looping bag sends every stamp back ~60 s at each wrap, and a
+#                 pose published from those stamps freezes and floods every TF
+#                 listener (CLAUDE.md, "A looping bag and a node publishing TF").
+#   launch        pimesh.launch.py arguments this view always sets. A launch
+#                 argument the view leaves alone is forwarded from the command
+#                 line untouched, so these are only the ones that make the view
+#                 what it is.
+#
+# What a person should look at in each view is docs/info/viewers.md, under a
+# heading with the recipe's name.
+
+mesh:
+  rviz: mesh.rviz
+  rviz_delay_s: 8.0
+  needs_model: true
+  needs_bag: false
+  loop: false
+  launch: {}
+
+# The Pi's camera with the frame tree. The pipeline runs too, as it always has
+# for this recipe; it needs no model check because nothing here looks at depth.
+camera:
+  rviz: camera.rviz
+  rviz_delay_s: 3.0
+  needs_model: false
+  needs_bag: false
+  loop: false
+  launch: {}
+
+# The one view that loops, and it can because it brings up no pipeline: the
+# static frame tree and a bag. It still gets the static map -> odom edge, which
+# pimesh.launch.py keeps for exactly this case.
+replay:
+  rviz: camera.rviz
+  rviz_delay_s: 2.0
+  needs_model: false
+  needs_bag: true
+  loop: true
+  launch: {pipeline: 'false'}
+
+keypoints:
+  rviz: keypoints.rviz
+  rviz_delay_s: 3.0
+  needs_model: false
+  needs_bag: false
+  loop: false
+  launch: {}
+
+depth:
+  rviz: depth.rviz
+  rviz_delay_s: 6.0
+  needs_model: true
+  needs_bag: false
+  loop: false
+  launch: {}
+
+# odom_regime is not set here: it is the recipe's parameter, forwarded.
+odom:
+  rviz: odom.rviz
+  rviz_delay_s: 8.0
+  needs_model: true
+  needs_bag: false
+  loop: false
+  launch: {}
+
+# local_map is what makes this the map view; local_ba is the recipe's parameter.
+map:
+  rviz: map.rviz
+  rviz_delay_s: 8.0
+  needs_model: true
+  needs_bag: false
+  loop: false
+  launch: {local_map: 'true'}
+
+# No window, so nothing ends it but a signal or `seconds`. dashboard_node runs
+# in its own process, outside the container, because it must be able to die.
+dashboard:
+  rviz: null
+  rviz_delay_s: 0.0
+  needs_model: true
+  needs_bag: false
+  loop: false
+  launch: {dashboard: 'true'}

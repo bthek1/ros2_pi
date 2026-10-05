@@ -601,5 +601,24 @@ the `'OK'` the dashboard's page compares against. Each now has a test that its w
 version fails, shown by mutation; one test's first run failed on its own regex. The
 `relocalise.sh` gate was re-run after the refactor.
 
+**#15, 2026-10-05: the viewers became launch files, and the move found four
+traps in code that had been green for weeks.** Eight viewer scripts — one script
+copied eight times — became `view.launch.py` with a `view:=` argument and
+`config/views.yaml`, under a `tools/session.sh` that keeps the one job `launch`
+cannot do: tearing down the Pi. `teardown.sh` drives all 25 cases through `just`
+now, which it never had. The traps, each a pattern the new shape exercised and the
+old never did: RViz started by `launch_ros` carries its install path in argv[0], so
+the viewer kill pattern matched none; the launch kill pattern was unanchored and
+killed `session.sh`, whose argv carries the launch command; the "is this my
+process group" check read an exited subshell as a stranger; and a background
+`ros2 launch` inherits SIGINT ignored, which rclcpp overrides and the Python CLIs
+do not — `ros2 bag record` under it never stopped. Two of the four were found by
+the first real run and none by reading. **And P0's own gate had a hole**: it drove
+`view-mesh` on a bag, so the camera branch of the new launch file never ran, and
+it was broken; P1's first run found it. The `launch_testing` pilot of
+`trajectory.sh` passed every control and did not show parity (0.169–0.451 m
+against 0.386–0.415 m), so the bash gate stays — and its own control 0 was a false
+green on its first run, a node killed by the test harness read as one that refused.
+
 Do not write "the node publishes X at Y Hz" until a node has published X and you
 have watched it do Y.

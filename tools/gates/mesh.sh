@@ -99,7 +99,7 @@ done
     echo "FAIL: no bag at '${BAG_NAME}' (looked for metadata.yaml there and under bags/)"
     echo
     echo "The reference clip is recorded once, with:"
-    echo "  bash tools/record-clip.sh desk1 60"
+    echo "  just record desk1 60"
     echo
     echo "bags/ is git-ignored, so a fresh clone has none — this gate cannot be"
     echo "run without one and does not pretend otherwise."
@@ -139,7 +139,7 @@ done
 
 # Once, not --loop: a looping bag replays header stamps a minute into the past at
 # every wrap, and fusion_node's pose lookup at the frame's own stamp then fails
-# for the rest of the run — so there would be nothing to mesh. See tools/view/replay.sh
+# for the rest of the run — so there would be nothing to mesh. See docs/info/troubleshooting.md
 # for the mechanism. The redirect is for the same reason it is everywhere else: a
 # backgrounded player that can read its terminal is stopped by SIGTTIN, silently.
 timeout -s INT $(( CLIP_SECONDS + 20 )) ros2 bag play "$BAG" \

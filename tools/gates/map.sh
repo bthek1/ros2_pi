@@ -75,7 +75,7 @@ GROUND_TRUTH="$SEQ/groundtruth.txt"
 [[ -d $WALK_BAG ]] || {
     echo "FAIL: no bag at ${WALK_BAG}"
     echo "bags/ is git-ignored; it was recorded for #10's P13 with"
-    echo "  bash tools/record-clip.sh walk1 60"
+    echo "  just record walk1 60"
     exit 1
 }
 

@@ -87,7 +87,24 @@ fi
 # something. The camera path is covered by view-camera in the row above.
 
 # recipe -> the argv to run it with, and what "it is up" means for it.
-RECIPES=(view-camera replay view-keypoints view-depth view-mesh view-odom view-map dashboard)
+ALL_RECIPES=(view-camera replay view-keypoints view-depth view-mesh view-odom view-map dashboard)
+
+# **A recipe argument narrows the table** — `bash tools/gates/teardown.sh view-mesh`
+# runs that recipe's endings and nothing else, which is how #15 closed P0 before
+# the other seven had moved. No argument is every recipe, and that is the run that
+# closes a claim about the workspace. An unknown name is refused rather than
+# skipped: a gate that runs zero cases and prints PASS is the shape this file
+# opens with.
+if (( $# > 0 )); then
+    for r in "$@"; do
+        [[ " ${ALL_RECIPES[*]} " == *" $r "* ]] || {
+            echo "FAIL: no recipe '$r' in this gate's table (${ALL_RECIPES[*]})"; exit 2; }
+    done
+    RECIPES=("$@")
+else
+    RECIPES=("${ALL_RECIPES[@]}")
+fi
+command -v just >/dev/null || { echo "FAIL: just is not on PATH, and every case goes through it"; exit 1; }
 
 # `replay` is the only recipe here that takes an argument, and the bag it takes
 # has to be *this gate's own*. bags/ is git-ignored, so on a fresh clone there
@@ -114,7 +131,7 @@ RECIPES=(view-camera replay view-keypoints view-depth view-mesh view-odom view-m
 #
 # `view-keypoints` plays a bag **once** rather than on a loop (a looping bag
 # replays header stamps minutes into the past, and odometry_node's pose is then
-# rejected by every TF listener in the domain — tools/view/replay.sh's header has the
+# rejected by every TF listener in the domain — docs/info/troubleshooting.md has the
 # measurement). `session_up` for that recipe requires the player, the container
 # *and* the viewer to be running at the same moment, and rviz2 takes several
 # seconds to exist — so a three-second clip was finished before there was
@@ -168,7 +185,7 @@ make_fixture_bag() {
     local rec=$!
     sleep "$GATE_BAG_SECONDS"
     # SIGINT, not SIGTERM: the recorder finalizes its storage on an interrupt
-    # and a bag without metadata.yaml is one tools/view/replay.sh refuses by design.
+    # and a bag without metadata.yaml is one view.launch.py refuses by design.
     # Bounded, because a `wait` that does not return is how this was found.
     kill -INT "$rec" 2>/dev/null || true
     _reap "$rec" 10 || { echo "FAIL: the fixture recorder ignored SIGINT"; return 1; }
@@ -184,18 +201,24 @@ GATE_BAG_DIR=
 cleanup_fixture() { [[ -n $GATE_BAG_DIR ]] && rm -rf "$GATE_BAG_DIR"; }
 trap cleanup_fixture EXIT
 
+# **Through `just`, since #15's P0, and that closes a gap this gate had carried
+# since it was written.** Every case used to exec the tools/view/<recipe>.sh scripts directly
+# — so the one gate that starts the recipes never went through the justfile, and
+# the justfile is the user-facing surface. That is how `just view-odom` shipped
+# reading its regime as the bag on 2026-09-23 with this gate green. Measured
+# 2026-10-05 before switching: just 1.46 waits for a recipe that traps SIGINT to
+# finish its cleanup, and exits 130 when the recipe re-raises — so the INT and
+# INT-TWICE assertions below mean what they meant against the bare script.
+JUST=(just --justfile "$PIMESH_WS/justfile")
 argv_for() {                # $1 = recipe, $2 = seconds; prints one argv word per line
     case $1 in
-        replay)      printf '%s\n' "$PIMESH_WS/tools/view/replay.sh" "$GATE_BAG" "$2" ;;
-        view-camera) printf '%s\n' "$PIMESH_WS/tools/view/view-camera.sh" "$2" ;;
-        view-keypoints) printf '%s\n' "$PIMESH_WS/tools/view/view-keypoints.sh" "$2" "$GATE_BAG" ;;
-        view-depth)  printf '%s\n' "$PIMESH_WS/tools/view/view-depth.sh" "$2" "$GATE_BAG" ;;
-        view-mesh)   printf '%s\n' "$PIMESH_WS/tools/view/view-mesh.sh" "$2" "$GATE_BAG" ;;
-        view-odom)   printf '%s\n' "$PIMESH_WS/tools/view/view-odom.sh" "$2" "$GATE_BAG" ;;
-        view-map)    printf '%s\n' "$PIMESH_WS/tools/view/view-map.sh" "$2" "$GATE_BAG" ;;
+        replay)      printf '%s\n' "${JUST[@]}" replay "$GATE_BAG" "$2" ;;
+        view-camera) printf '%s\n' "${JUST[@]}" view-camera "$2" ;;
+        view-keypoints|view-depth|view-mesh|view-odom|view-map)
+                     printf '%s\n' "${JUST[@]}" "$1" "$2" "$GATE_BAG" ;;
         # A port, not a window. The third argument keeps it off 8080 so a gate run
         # cannot collide with a dashboard somebody has open.
-        dashboard)   printf '%s\n' "$PIMESH_WS/tools/view/dashboard.sh" "$2" "$GATE_BAG" 18080 ;;
+        dashboard)   printf '%s\n' "${JUST[@]}" dashboard "$2" "$GATE_BAG" 18080 ;;
         # No fallback on purpose. A dispatch table that guesses an argv for a
         # recipe nobody taught it is how a row gets added to RECIPES above and
         # silently tested as something else.
@@ -346,9 +369,10 @@ run_and_end() {             # $1 = INT | HUP | CLOSE | CLOSE-EARLY, $2 = recipe
     # argv as an array rather than a single word: replay takes a bag path before
     # its seconds, and a path from mktemp -d is exactly the kind of thing that
     # must not be re-split by a shell on its way through two of them.
-    local -a argv; mapfile -t argv < <(argv_for "$2" 90)
+    local -a argv
+    if (( ${#CASE_ARGV[@]} )); then argv=("${CASE_ARGV[@]}"); else mapfile -t argv < <(argv_for "$2" 90); fi
     setsid env --default-signal=INT,TERM,HUP \
-        bash -c 'echo $$ >"$1"; shift; exec bash "$@"' _ "$pgidfile" "${argv[@]}" \
+        bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "$pgidfile" "${argv[@]}" \
         >"$log" 2>&1 &
     local sess=$! pgid up=0
     for _ in $(seq 50); do
@@ -383,6 +407,7 @@ run_and_end() {             # $1 = INT | HUP | CLOSE | CLOSE-EARLY, $2 = recipe
         fi
     fi
 
+    ENDED_AT=$SECONDS
     case $1 in
         CLOSE|CLOSE-EARLY)
             if ! close_viewer; then
@@ -463,11 +488,25 @@ run_and_end() {             # $1 = INT | HUP | CLOSE | CLOSE-EARLY, $2 = recipe
     # teardown and is shorter than a verified one. Waiting is also the stronger
     # assertion: the contract is that when the recipe has returned, nothing it
     # started is running — not that things tend to be gone three seconds later.
+    if [[ -n ${CASE_EXPECT_STUCK:-} ]]; then
+        # The control: the same ending against a session that is *not supposed*
+        # to end on it. Still running after the window is the expected result.
+        if _reap_session "$sess" "$pgid" "$CASE_EXPECT_STUCK"; then
+            echo "FAIL: the control returned after $1 without the handler that is meant to"
+            echo "      end it — so a passing $1 above would not show the handler works"
+            tail -20 "$log"; return 1
+        fi
+        kill -INT -"$pgid" 2>/dev/null || true
+        _reap_session "$sess" "$pgid" 90 || {
+            echo "FAIL: the control did not return after SIGINT either"; return 1; }
+        return 0
+    fi
     if ! _reap_session "$sess" "$pgid" 90; then
         echo "FAIL: the $2 session did not return after $1 — still running:"
         pgrep -a -g "$pgid" | sed 's/^/  /'
         tail -20 "$log"; return 1
     fi
+    CLEAN_SECONDS=$(( SECONDS - ENDED_AT ))
 
     # **Nine silent seconds is what makes a second Ctrl-C tempting**, so the line
     # that breaks the silence is part of the contract rather than a nicety, and it
@@ -585,6 +624,9 @@ echo "fixture bag      : ${GATE_BAG} ($(du -sh "$GATE_BAG" | cut -f1), for repla
 
 counts=""
 cases=0
+worst_close=0
+CASE_ARGV=()
+CASE_EXPECT_STUCK=
 for what in "${RECIPES[@]}"; do
     for how in $(hows_for "$what"); do
         cases=$(( cases + 1 ))
@@ -628,9 +670,34 @@ for what in "${RECIPES[@]}"; do
                 fi
                 ;;
         esac
-        counts+="${what}/${how}: $(grep -o '[0-9]*$' <<<"$out" | tr '\n' '/' | sed 's:/$::')  "
+        counts+="${what}/${how}: $(grep -o '[0-9]*$' <<<"$out" | tr '\n' '/' | sed 's:/$::') in ${CLEAN_SECONDS}s  "
+        if [[ $how == CLOSE ]] && (( CLEAN_SECONDS > worst_close )); then worst_close=$CLEAN_SECONDS; fi
     done
 done
+
+# **The control, and without it CLOSE above proves nothing about launch.** #15
+# moved "the window was closed" from bash's `wait` returning to an
+# `OnProcessExit(rviz) -> Shutdown()` handler in view.launch.py. A CLOSE that
+# passes is only evidence for that handler once the same CLOSE has been watched
+# to fail without it: `close_ends_session:=false` drops the handler and nothing
+# else, so the session must still be running well after its window has gone —
+# three times the slowest CLOSE above, and never less than 30 s. Run whenever a
+# launch-based viewer is in the table, through session.sh directly, because the
+# recipe has no parameter for it and should not grow one for a gate.
+control=""
+if [[ " ${RECIPES[*]} " == *" view-mesh "* ]]; then
+    stuck=$(( worst_close * 3 > 30 ? worst_close * 3 : 30 ))
+    CASE_ARGV=(bash "$PIMESH_WS/tools/session.sh" view-mesh --local -- ros2 launch pimesh_bringup
+               view.launch.py view:=mesh seconds:=150 bag:="$GATE_BAG" close_ends_session:=false)
+    CASE_EXPECT_STUCK=$stuck
+    run_and_end CLOSE view-mesh || exit 1
+    CASE_ARGV=(); CASE_EXPECT_STUCK=
+    out=$(bash "$stragglers" 2>&1) || {
+        echo "$out"; echo "FAIL: the control left processes behind after its SIGINT"; exit 1; }
+    control="still running ${stuck}s after its window closed, clean after SIGINT"
+    echo "--- control: view-mesh close_ends_session:=false ---"
+    echo "$control"
+fi
 
 echo
 echo "survivors dev/pi : ${counts}"
@@ -638,4 +705,5 @@ echo "                   (assert 0/0 after every ending, ${cases} cases over"
 echo "                    ${#RECIPES[@]} recipes: Ctrl-C, Ctrl-C twice with the second"
 echo "                    inside the teardown, a closed terminal, a closed window,"
 echo "                    and a window closed before the far end is up)"
+[[ -n $control ]] && echo "control          : CLOSE without the OnProcessExit handler ${control}  (assert)"
 echo "PASS gate-teardown"

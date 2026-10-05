@@ -73,7 +73,7 @@ BAG=
 for cand in "$BAG_NAME" "$PIMESH_WS/bags/$BAG_NAME"; do
     [[ -r $cand/metadata.yaml ]] && { BAG=$cand; break; }
 done
-[[ -n $BAG ]] || { echo "FAIL: no bag at '${BAG_NAME}' — bash tools/record-clip.sh desk1 60"; exit 1; }
+[[ -n $BAG ]] || { echo "FAIL: no bag at '${BAG_NAME}' — just record desk1 60"; exit 1; }
 SECS=$(/usr/bin/python3 - "$BAG/metadata.yaml" <<'META'
 import sys, yaml
 m = yaml.safe_load(open(sys.argv[1]))['rosbag2_bagfile_information']

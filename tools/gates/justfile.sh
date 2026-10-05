@@ -22,7 +22,7 @@ echo "== gate-justfile =="
 
 MAX_LINES=80
 MAX_BODY=10
-WANT_GROUPS="build run"
+WANT_GROUPS="build run test"
 
 fail=0
 note() { echo "FAIL: $*"; fail=1; }
@@ -153,7 +153,7 @@ fi
 # argument along: its port would have been read as the bag.
 #
 # **Nothing covered it, and the reason is worth keeping.** `gates/teardown.sh`
-# exercises both recipes — and calls `tools/view/view-odom.sh` *directly*, with a bag
+# exercised both recipes — and called the view-odom script *directly*, with a bag
 # it names itself, because it needs the process group. So the one gate that
 # starts these recipes never goes through the justfile, and the justfile is the
 # user-facing surface. Ask what the gate does **not** touch.
@@ -163,6 +163,13 @@ fi
 # argument that survives prints as "" and counts as a word; one that vanished
 # does not.
 missing_args=0
+params_of() {           # $1 = recipe; prints its parameter names, one per line
+    /usr/bin/python3 -c '
+import json, sys
+r = json.load(open(sys.argv[1]))["recipes"][sys.argv[2]]
+print("\n".join(p["name"] for p in r.get("parameters", [])))
+' "$dump" "$1"
+}
 while read -r name want; do
     # **2>&1, and the first version of this check had 2>/dev/null.** `just -n`
     # echoes the command to *stderr*, so discarding stderr left $line empty, the
@@ -175,6 +182,23 @@ while read -r name want; do
     # The body is `bash <script> <args...>`, shell-quoted by just.
     words=()
     eval "words=( $line )" 2>/dev/null || continue
+    # **A session recipe is checked by name, not by count** (#15). Its body is
+    # `bash tools/session.sh <label> --pi|--local -- ros2 launch … name:="{{ name }}"`,
+    # and an empty value cannot vanish from `name:=` — the key holds its place.
+    # What can go wrong instead is a parameter that never reaches the launch at
+    # all, or one spelled differently from the launch argument it feeds, which
+    # the launch then ignores while running on its default. So every parameter
+    # has to appear as its own `name:=` word.
+    if [[ ${words[1]} == */tools/session.sh ]]; then
+        for p in $(params_of "$name"); do
+            printf '%s\n' "${words[@]}" | grep -q "^${p}:=" || {
+                note "recipe '${name}' never passes parameter '${p}' to its launch as ${p}:="
+                printf '  just -n %s -> %s\n' "$name" "$line"
+                missing_args=$(( missing_args + 1 ))
+            }
+        done
+        continue
+    fi
     got=$(( ${#words[@]} - 2 ))
     if (( got != want )); then
         note "recipe '${name}' passes ${got} argument(s) where it has ${want} parameter(s) — an empty default vanished; quote the {{ ... }} in its body"

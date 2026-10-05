@@ -251,20 +251,25 @@ several minutes at either end — `bash tools/gates/build.sh` prints both.
 
 ```text
 Available recipes:
-    default                                        # List the recipes
+    default                                       # List the recipes
 
     [build]
-    build *args                                    # Build the workspace
+    build *args                                   # Build the workspace
+    clean                                         # Delete build/ install/ log/ here
 
     [run]
-    dashboard seconds="600" bag="" port="8080"     # The whole pipeline in a browser tab: http://localhost:8080. Not evidence
-    replay bag seconds="600"                       # A recorded bag in RViz, looping. bag = a name under bags/, or a path to one
-    view-camera seconds="600"                      # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
-    view-depth seconds="600" bag=""                # The room as a depth cloud, in RViz. bag = optional, else the camera
-    view-keypoints seconds="600" bag=""            # ORB corners and the pose, in RViz. bag = optional, else the camera
-    view-map seconds="600" bag="" ba="true"        # Map points and the trail, in RViz. ba = true (default) or false, the control
-    view-mesh seconds="600" bag=""                 # The room as a triangle surface, in RViz. bag = optional, else the camera
-    view-odom seconds="600" bag="" regime="sixdof" # The camera's trajectory, in RViz. regime = sixdof (default) or rotation_only
+    dashboard seconds="600" bag="" dashboard_port="8080" # The whole pipeline in a browser tab: http://localhost:8080. Not evidence
+    record name seconds="60"                      # Record a clip from the Pi's camera into bags/<name>, counted from the first frame
+    replay bag seconds="600"                      # A recorded bag in RViz, looping. bag = a name under bags/, or a path to one
+    view-camera seconds="600"                     # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
+    view-depth seconds="600" bag=""               # The room as a depth cloud, in RViz. bag = optional, else the camera
+    view-keypoints seconds="600" bag=""           # ORB corners and the pose, in RViz. bag = optional, else the camera
+    view-map seconds="600" bag="" local_ba="true" # Map points and the trail, in RViz. local_ba = true (default) or false, the control
+    view-mesh seconds="600" bag=""                # The room as a triangle surface, in RViz. bag = optional, else the camera
+    view-odom seconds="600" bag="" odom_regime="sixdof" # The camera's trajectory, in RViz. odom_regime = sixdof (default) or rotation_only
+
+    [test]
+    test *args                                    # Build, run every unit test, and exit non-zero on any failure (colcon test alone does not)
 ```
 
 That is the whole list, and the shortness is the point: `build` is how you
@@ -457,7 +462,7 @@ bash tools/calib/camera-reset.sh    # V4L2 controls persist inside the camera,
 
 A manual exposure left by an earlier benchmark makes every later session black,
 and a clip recorded at 20 fps under a stale one cannot be un-recorded.
-`record-clip.sh` resets the controls itself, so this is belt and braces — but the
+`just record` resets the controls itself, so this is belt and braces — but the
 reset also prints the whole control table, which is worth a look before you spend
 half an hour recording.
 
@@ -501,7 +506,7 @@ half an hour recording.
    as much as the colour is that it is **uniform**: a left-to-right gradient is
    the signature of either an off-square camera or a surface the network cannot
    read, and both send you back to the wall after recording.
-4. `bash tools/record-clip.sh scale1 20`.
+4. `just record scale1 20`.
 5. `bash tools/gates/scale.sh <the metres you measured>`. It **refuses** — nothing
    is recorded in git yet — and prints the two lines to paste into
    `src/pimesh_bringup/config/pimesh.yaml`. If the clip failed its checks it
@@ -532,7 +537,7 @@ is pinned only to ±2.2% and the fix is a flat mount and a re-run of
 
 ### P13 — `bags/walk1`
 
-`bash tools/record-clip.sh walk1 60` — a **slow walk**, camera held level, moving
+`just record walk1 60` — a **slow walk**, camera held level, moving
 **metres** rather than centimetres, **returning to where you started**.
 
 The return is not decoration. Milestone H cannot detect a loop on a clip that

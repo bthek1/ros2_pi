@@ -223,7 +223,7 @@ if [[ -r $PIMESH_WS/bags/walk1/metadata.yaml ]]; then
     walk_line="${found} closure(s) from the last ${WALK_EDGE_S}s onto the first ${WALK_EDGE_S}s (clip queried to ${end}s)"
     (( found >= 1 )) || note "walk1: the return to the start was not found — ${walk_line}"
 else
-    note "no bags/walk1 — record it with bash tools/record-clip.sh walk1 60 (#10's P13)"
+    note "no bags/walk1 — record it with just record walk1 60 (#10's P13)"
 fi
 
 # --- desk1: printed ------------------------------------------------------------------

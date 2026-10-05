@@ -79,7 +79,7 @@ done
     echo "FAIL: no bag at '${BAG_NAME}' (looked for metadata.yaml there and under bags/)"
     echo
     echo "P3's reference clip is recorded once, with:"
-    echo "  bash tools/record-clip.sh desk1 60"
+    echo "  just record desk1 60"
     echo
     echo "bags/ is git-ignored, so a fresh clone has none — this gate cannot be"
     echo "run without one and does not pretend otherwise."
@@ -153,7 +153,7 @@ grep -q "Loaded node '/keypoint_node'" "$work/launch.log" 2>/dev/null || {
 # the seam where playback jumps from the last frame back to the first — a view change
 # no tracker can match across, which would count against the matched fraction as if
 # the room had moved. Both halves of the terminal problem are here for the reason
-# tools/view/replay.sh documents at length: a backgrounded `ros2 bag play` that can read
+# docs/info/troubleshooting.md documents at length: a backgrounded `ros2 bag play` that can read
 # its controlling TTY is sent SIGTTIN and stops, silently, publishing nothing.
 timeout -s INT $(( MEASURE_S + 30 )) ros2 bag play "$BAG" \
     --disable-keyboard-controls </dev/null >"$work/play.log" 2>&1 &

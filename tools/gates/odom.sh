@@ -73,7 +73,7 @@
 # person and the camera, which is why it is **P13 of gh issue #10** rather than
 # something a script can reach — promoted there on 2026-09-23 out of
 # docs/plans/future/milestone-e-future.md. Recording it is
-# `bash tools/record-clip.sh walk1 60`, and this gate takes the clip name as its
+# `just record walk1 60`, and this gate takes the clip name as its
 # first argument: `bash tools/gates/odom.sh walk1`.
 #
 # Both runs replay bags/desk1, like every phase from P3 on, so the numbers compare
@@ -221,7 +221,7 @@ done
     echo "FAIL: no bag at '${BAG_NAME}' (looked for metadata.yaml there and under bags/)"
     echo
     echo "The reference clip is recorded once, with:"
-    echo "  bash tools/record-clip.sh desk1 60"
+    echo "  just record desk1 60"
     echo
     echo "bags/ is git-ignored, so a fresh clone has none — this gate cannot be run"
     echo "without one and does not pretend otherwise."
@@ -286,7 +286,7 @@ run_regime() {           # $1 = log path, $2 = window seconds, $3 = regime
     # Once, not --loop. A looping bag replays header stamps ~60 s into the past at
     # every wrap; odometry_node stamps the pose with the frame's own stamp, and
     # tf2 refuses any transform older than the newest it holds. Both halves of the
-    # terminal handling are here for the reason tools/view/replay.sh documents: a
+    # terminal handling are here for the reason docs/info/troubleshooting.md documents: a
     # backgrounded `ros2 bag play` that can read its controlling TTY is sent
     # SIGTTIN and stops, silently, publishing nothing.
     timeout -s INT $(( window + 20 )) ros2 bag play "$BAG" \

@@ -360,7 +360,7 @@ def test_the_launch_description_actually_builds(launch_module):
     # map_load_path, dataset_skip_frames, dataset_max_frames (#13's P20), source,
     # dataset_dir, trajectory_path, use_cuda, pipeline — each exists because
     # something outside this file has to be able to set it: all but the last for
-    # gates and viewers, the last for tools/view/replay.sh.
+    # gates and viewers, the last for docs/info/troubleshooting.md.
     assert kinds.get(DeclareLaunchArgument) == 30
     # One per probe **and one per source**, loaded into the running container
     # rather than listed in it, because `composable_node_descriptions` is built
@@ -557,7 +557,7 @@ def test_the_container_can_be_left_out_but_is_there_by_default(launch_module):
     """`pipeline:=false` has to actually remove the container, and the default
     has to keep it.
 
-    This is the assertion tools/view/replay.sh stands on. A looping bag replays header
+    This is the assertion docs/info/troubleshooting.md stands on. A looping bag replays header
     stamps ~60 s into the past at every wrap, keypoint_node stamps
     `odom -> base_link` with the frame's own stamp, and tf2 rejects every
     transform older than the newest it holds — so a replay that composes the

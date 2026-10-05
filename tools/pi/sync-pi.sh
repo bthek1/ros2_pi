@@ -8,9 +8,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/just-lib.sh"
 # the one thing in the project that cannot be worked around. ROS 2 makes no ABI
 # promise across distros, so a Lyrical .so does not load under Jazzy. The Pi
 # compiles the same source; it never receives a binary.
+# docs/ since #15: test_views checks every view has a heading in
+# docs/info/viewers.md, and the unit tests run at both ends.
 rsync -a --delete -e "ssh ${PI_SSH[*]}" \
     --exclude '__pycache__' \
-    src tools justfile "$PI:$PI_WS/"
+    src tools docs justfile "$PI:$PI_WS/"
 
 # The sync may have just invalidated the Pi's build tree — `--delete` can remove
 # a package's sources while its artefacts stay behind, and a colcon overlay

@@ -156,6 +156,9 @@ echo "/opt/ros/$distro/bin/ros2 run pimesh_camera ${cam_exe:-camera_node}" >>"$s
 echo "timeout -s INT 600 ros2 run pimesh_camera ${cam_exe:-camera_node}" >>"$specimens"
 rviz_cfg=$(ls "$PIMESH_WS"/src/pimesh_bringup/rviz/*.rviz | head -1)
 echo "rviz2 -d $rviz_cfg" >>"$specimens"
+# And as launch_ros execs it, by installed path (view.launch.py's RViz).
+[[ -x /opt/ros/$distro/lib/rviz2/rviz2 ]] &&
+    echo "/opt/ros/$distro/lib/rviz2/rviz2 -d $rviz_cfg --ros-args" >>"$specimens"
 
 # Theirs: the four processes we start out of /opt/ros. The file existing is
 # half the check — a pattern aimed at a path that is not installed is as dead

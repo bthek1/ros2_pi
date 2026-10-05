@@ -52,12 +52,27 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 693 tests across forty-six suites, identical on both distros**
+**Status: 705 tests across forty-seven suites, identical on both distros**
 (`bash tools/gates/test.sh`, 2026-10-05, after milestone I's follow-up).
 
 ## The suites
 
-693 across forty-six suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+705 across forty-seven suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+
+**`test_views` (added 2026-10-05, #15)** — `config/views.yaml` against everything it
+names. `view.launch.py` refuses an unknown view, a missing model and a missing bag
+loudly; what it cannot refuse is a view that is *well-formed and wrong*. A `launch:` key
+`pimesh.launch.py` does not declare is set as a configuration nobody reads, so the view
+runs on the default it meant to change; a YAML `true` becomes the string `'True'`; a
+looping view without `pipeline: 'false'` freezes the pose at the first wrap and floods
+every TF listener; `view.launch.py` redeclaring an argument the include declares gives
+one value two defaults; a recipe names a view the table lacks, or a view has no heading
+in `docs/info/viewers.md`, where the launch's one log line points. Plus
+`record.launch.py`'s after-recording check: a directory without `metadata.yaml` is
+refused, and the summary rates the *image* topic, against the published sha256 of
+`abc` rather than one computed beside it. Eleven cases, each mutated once and caught by
+the case that claims it. It reads the justfile and `docs/`, which is why `sync-pi.sh`
+ships `docs/` now: the suite runs at both ends.
 
 **After milestone I, 2026-10-05: three helpers given a home, and four contracts
 pinned.** The audit question was this file's own — *could a test call it if it wanted

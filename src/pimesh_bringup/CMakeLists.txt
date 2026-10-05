@@ -33,6 +33,9 @@ if(BUILD_TESTING)
   # against the keys the node writes: typed twice across a language boundary, and
   # a mismatch reads as a failure of the map rather than of the parser.
   ament_add_pytest_test(test_gate_contract test/test_gate_contract.py)
+  # config/views.yaml against the launch file it feeds, the RViz configs it
+  # names, the recipes that name it and the page its log line points to (#15).
+  ament_add_pytest_test(test_views test/test_views.py)
 
 endif()
 

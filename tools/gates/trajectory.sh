@@ -13,9 +13,10 @@
 #
 # --- The unit problem, and why two ATEs are printed --------------------------
 #
-# Monocular depth is scale-ambiguous and `depth_scale` is 10.0 because somebody
-# typed it, so an **SE(3)**-aligned ATE on a metric dataset is very largely a
-# measurement of that constant. `evo_ape --align --correct_scale` fits a Sim(3)
+# Monocular depth is scale-ambiguous, and this was written while `depth_scale` was
+# a typed 10.0 (P12 pinned 4.6002 off a tape on 2026-09-28), so an
+# **SE(3)**-aligned ATE on a metric dataset is very largely a measurement of that
+# constant. `evo_ape --align --correct_scale` fits a Sim(3)
 # and reports the trajectory's *shape*, which is the thing this pipeline can
 # currently be right about. Both are printed; the Sim(3) one is asserted.
 #
@@ -503,19 +504,22 @@ echo "                 >= ${MIN_POSES} poses, >= ${MIN_ASSOCIATED_PCT}% associat
 echo "                 reprojection <= ${MAX_REPROJ_PX} px; /camera_info == the dataset's;"
 echo "                 dataset_node refuses the C922's calibration over these frames"
 echo
-echo "The SE(3) number is printed and NOT asserted, and the difference between the"
-echo "two is the whole of what is unpinned here: depth_scale is 10.0 because"
-echo "somebody typed it, so an SE(3) ATE on a metric dataset is very largely a"
-echo "measurement of that constant. The Sim(3) figure is the trajectory's *shape*."
+# Read, not typed: until #15's P3 this line multiplied by 10.0, the value from
+# before P12, so it printed a figure ~2.2x too large for six days after the
+# tape measure changed the YAML.
+DEPTH_SCALE=$("$PY" -c "import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))['/**/depth_node']['ros__parameters']['depth_scale'])" \
+    "$PIMESH_WS/src/pimesh_bringup/config/pimesh.yaml")
+echo "The SE(3) number is printed and NOT asserted: it is very largely a measurement"
+echo "of depth_scale, a constant fitted to one room with a tape, on a dataset of"
+echo "another. The Sim(3) figure is the trajectory's *shape*."
 echo
-echo "  depth_scale implied by this sequence: $(awk -v s="${six_scale:-1}" 'BEGIN { printf "%.2f", 10.0 * s }')"
+echo "  depth_scale implied by this sequence: $(awk -v d="$DEPTH_SCALE" -v s="${six_scale:-1}" 'BEGIN { printf "%.4f", d * s }')"
 echo
-echo "  — 10.0 times the fitted scale, and it is the answer P12's tape measure is"
-echo "    going to give, obtained without one. It does **not** transfer: different"
+echo "  — config/pimesh.yaml's ${DEPTH_SCALE} times the fitted scale. P11 used it to bound"
+echo "    the figure P12's tape measure then gave. It does **not** transfer: different"
 echo "    camera, different scene, and Depth Anything's scale is per-image. What it"
-echo "    does is bound the number, so P12 becomes a check on a figure that already"
-echo "    exists rather than the only source of it. The predecessor's room came out"
-echo "    at 2.69."
+echo "    does is check the tape figure against an outside reference. The"
+echo "    predecessor's room came out at 2.69."
 echo
 echo "RPE is printed rather than asserted: it is one run of a figure this project"
 echo "has no second opinion on, and it has already moved once for a reason that was"

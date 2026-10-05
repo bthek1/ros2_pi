@@ -132,7 +132,7 @@ done
     echo "FAIL: no bag at '${BAG_NAME}' (looked for metadata.yaml there and under bags/)"
     echo
     echo "The reference clip is recorded once, with:"
-    echo "  bash tools/record-clip.sh desk1 60"
+    echo "  just record desk1 60"
     exit 1
 }
 

@@ -33,7 +33,7 @@
 #      reading, and this gate refuses a clip whose patch is mostly that — after
 #      you have walked back from the wall. Ten seconds of looking here is the
 #      difference between one trip and two.
-#   4. `bash tools/record-clip.sh scale1 20`. It resets the camera's V4L2 controls
+#   4. `just record scale1 20`. It resets the camera's V4L2 controls
 #      first, which is not optional — a clip recorded under a stale manual
 #      exposure cannot be un-recorded.
 #   5. `bash tools/gates/scale.sh <the tape figure in metres>`. It will refuse,
@@ -126,7 +126,7 @@ BAG="$PIMESH_WS/bags/scale1"
     echo "from the camera to it with a tape — between 1.5 m and 2.5 m — point the"
     echo "camera square-on so it fills the middle of the frame, and record:"
     echo
-    echo "  bash tools/record-clip.sh scale1 20"
+    echo "  just record scale1 20"
     echo
     echo "Then run this gate with the tape figure, which will tell you what to put"
     echo "in config/pimesh.yaml:"
@@ -136,7 +136,7 @@ BAG="$PIMESH_WS/bags/scale1"
     echo "Record bags/walk1 on the same visit — that is P13, and it is the other"
     echo "thing in this milestone that needs you in the room:"
     echo
-    echo "  bash tools/record-clip.sh walk1 60"
+    echo "  just record walk1 60"
     echo
     echo "This gate refuses rather than passing, because a vacuous pass here would"
     echo "put a made-up unit under every later measurement in this project."
@@ -252,7 +252,7 @@ done
 }
 
 # Once, not --loop: a looping bag replays stamps into the past and freezes the TF
-# tree. Both halves of the terminal handling are here for tools/view/replay.sh's
+# tree. Both halves of the terminal handling are here for docs/info/troubleshooting.md's
 # reason — a backgrounded `ros2 bag play` that can read its controlling TTY is
 # sent SIGTTIN and stops, silently, publishing nothing.
 timeout -s INT $(( MEASURE_S + 20 )) ros2 bag play "$BAG" \
@@ -336,7 +336,7 @@ if [[ $RECORDED_M == "-" ]]; then
         echo "1.5-2.5 m away, filling the middle of the frame."
         echo
         echo "  bash tools/calib/camera-reset.sh"
-        echo "  bash tools/record-clip.sh scale1 20"
+        echo "  just record scale1 20"
         echo "========================================================================="
         echo "FAIL gate-scale"
         exit 1

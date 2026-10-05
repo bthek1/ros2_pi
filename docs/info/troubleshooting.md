@@ -414,7 +414,7 @@ grep -E '^Sig(Ign|Cgt):' /proc/<pid>/status
 The fix is to reset the disposition before exec'ing the thing under test:
 
 ```bash
-setsid env --default-signal=INT,TERM,HUP bash tools/view/view-camera.sh 45 &
+setsid env --default-signal=INT,TERM,HUP just view-camera 45 &
 ```
 
 That is also the *faithful* spelling, not a workaround: a terminal's Ctrl-C
@@ -526,8 +526,8 @@ a message. Being stopped is not a failure it gets to report, so there is no log
 line to find. Measured 2026-09-12: two players stopped this way sat for four
 minutes while `ros2 topic info` reported `Publisher count: 1`.
 
-**Fix.** `bash tools/view/replay.sh` (`just replay <bag>`) passes both
-`--disable-keyboard-controls` and `</dev/null`. By hand, either of those works;
+**Fix.** `view.launch.py` passes `--disable-keyboard-controls`, and `tools/session.sh`
+starts the launch in the background, so its stdin is `/dev/null`. By hand, either of those works;
 in the foreground, neither is needed. Confirm with `ps -o stat= -p <pid>` — a
 `T` is this, not a hang.
 
@@ -538,7 +538,7 @@ different reason. `just replay` starts the launch for exactly this.
 
 ## A looping replay flickers, and floods the terminal with `TF_OLD_DATA`
 
-**Symptom.** `bash tools/view/replay.sh desk1` comes up fine, and after about a minute
+**Symptom.** `just replay desk1` comes up fine, and after about a minute
 the RViz Image panel starts stuttering, the 3D view stutters **while displaying
 nothing at all**, and the terminal fills with
 
@@ -568,8 +568,8 @@ drawn by that one Qt loop, which is why an **empty** 3D view stutters too — th
 is the tell that the problem is not in the graphics.
 
 **Fix.** Do not publish a dynamic transform over a looping bag.
-`bash tools/view/replay.sh` starts `pimesh.launch.py pipeline:=false`, which brings up
-the static frame tree and no components at all; `bash tools/view/view-keypoints.sh
+`just replay` starts `pimesh.launch.py pipeline:=false`, which brings up
+the static frame tree and no components at all; `just view-keypoints
 <seconds> <bag>` needs the pose, so it plays the clip **once** and ends when the
 clip does. With a purely static chain `_getLatestCommonTime` returns
 `TimePointZero`, which `FrameInfo::setLastUpdate` special-cases into a refresh on

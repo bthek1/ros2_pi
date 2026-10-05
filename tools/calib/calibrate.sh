@@ -323,7 +323,7 @@ session)
     if [[ -n $BAG ]]; then
         [[ -d $BAG ]] || { echo "calibrate: no such bag $BAG" >&2; exit 2; }
         # --disable-keyboard-controls and </dev/null, both deliberately, and the
-        # reason is in tools/view/replay.sh: playback reads the controlling terminal for
+        # reason is in docs/info/troubleshooting.md: playback reads the controlling terminal for
         # its space-to-pause keys, a *backgrounded* process that reads its TTY is sent
         # SIGTTIN and stopped by the kernel, and a stopped player publishes nothing
         # while reporting no error at all. The flag stops it wanting the terminal; the

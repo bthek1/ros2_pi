@@ -58,7 +58,7 @@ SEQ=$(bash "$PIMESH_WS/tools/fetch-dataset.sh" --print-path)
 GROUND_TRUTH="$SEQ/groundtruth.txt"
 [[ -r $GROUND_TRUTH ]] || { echo "FAIL: no dataset at ${SEQ} — bash tools/fetch-dataset.sh"; exit 1; }
 BAG=$PIMESH_WS/bags/desk1
-[[ -r $BAG/metadata.yaml ]] || { echo "FAIL: no bag at ${BAG} — bash tools/record-clip.sh desk1 60"; exit 1; }
+[[ -r $BAG/metadata.yaml ]] || { echo "FAIL: no bag at ${BAG} — just record desk1 60"; exit 1; }
 
 work=$(mktemp -d)
 MAP="$work/fr1_desk_first.map"

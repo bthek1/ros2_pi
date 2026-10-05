@@ -109,7 +109,7 @@ done
     echo "FAIL: no bag at '${BAG_NAME}' (looked for metadata.yaml there and under bags/)"
     echo
     echo "The reference clip is recorded once, with:"
-    echo "  bash tools/record-clip.sh desk1 60"
+    echo "  just record desk1 60"
     echo
     echo "bags/ is git-ignored, so a fresh clone has none — this gate cannot be"
     echo "run without one and does not pretend otherwise."
@@ -179,7 +179,7 @@ run_pipeline() {        # $1 = log path, $2 = window seconds, $3 = true|false (C
     # Once, not --loop. A looping bag replays header stamps ~60 s into the past at
     # every wrap, which would make claim 3 a measurement of the wrap rather than of
     # the pairing. Both halves of the terminal handling are here for the reason
-    # tools/view/replay.sh documents: a backgrounded `ros2 bag play` that can read its
+    # docs/info/troubleshooting.md documents: a backgrounded `ros2 bag play` that can read its
     # controlling TTY is sent SIGTTIN and stops, silently, publishing nothing.
     timeout -s INT $(( window + 20 )) ros2 bag play "$BAG" \
         --disable-keyboard-controls </dev/null >"$log.play" 2>&1 &

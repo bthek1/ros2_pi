@@ -99,7 +99,14 @@ pi_ws_run() {           # $* = command line to run in the Pi's workspace
 # which prose does not contain.
 PIMESH_NODE_PAT='/lib/[p]imesh_[a-z]*/'
 PIMESH_CONTAINER_PAT='rclcpp_components/[c]omponent_container'
-PIMESH_LAUNCH_PAT='ros2 [l]aunch pimesh_[a-z]*'
+# **Path-anchored since #15, and it was the one pattern here that was not.** The
+# launcher's process is `/usr/bin/python3 /opt/ros/<distro>/bin/ros2 launch …`;
+# a shell that merely *passes* a launch command along — `tools/session.sh view-mesh
+# --pi -- ros2 launch pimesh_bringup …` — contains the same words with no slash in
+# front. Unanchored, kill_local matched session.sh and SIGKILLed the session's own
+# wrapper in the middle of its teardown (measured 2026-10-05). No script before
+# session.sh carried a launch command in its argv, which is why it never bit.
+PIMESH_LAUNCH_PAT='/bin/[r]os2 launch pimesh_[a-z]*'
 # The viewer counts as a straggler. It holds no device and leaks nothing
 # expensive, which is exactly why it would have been left out — and then a
 # `just view-camera` whose RViz outlived its Ctrl-C would have gone unnoticed
@@ -118,7 +125,15 @@ PIMESH_LAUNCH_PAT='ros2 [l]aunch pimesh_[a-z]*'
 # brackets exist for, arriving by a different door: the bracket only protects
 # the pattern's own text. The real process has `rviz2` at argv[0]; a launcher
 # has `bash`, `timeout` or `just` there instead.
-PIMESH_VIEWER_PAT='^[r]viz2 -d .*pimesh_'
+#
+# **The optional directory is #15's, and the pattern was blind without it.** An
+# RViz started by `launch_ros`'s `Node` — view.launch.py's — is exec'd by its
+# installed path, so its command line is `/opt/ros/<distro>/lib/rviz2/rviz2 -d …`
+# and a bare `^[r]viz2` matches none of them: kill_local would have swept past a
+# leaked window and gates/teardown.sh could not have closed one. Measured
+# 2026-10-05. The anchor still holds — the directory has to end in `/` with
+# `rviz2` straight after it, which `/usr/bin/bash -c "rviz2 …"` does not.
+PIMESH_VIEWER_PAT='^(/[^ ]*/)?[r]viz2 -d .*pimesh_'
 
 # The static transform publishers pimesh_bringup's launch starts. They are
 # ours, they are not ours to *name* — the binary lives in tf2_ros — and leaving
@@ -166,7 +181,10 @@ PIMESH_TF_PAT='tf2_ros/[s]tatic_transform_publisher'
 # Somebody replaying a bag by hand will lose it to a gate, which is cheap; a
 # gate that reports a clean machine while a bag drives the pipeline's input
 # topic is a green light over a wrong measurement, which is not.
-PIMESH_BAG_PAT='/bin/[r]os2 bag play'
+# `record` as well since #15's P2: `just record` runs the recorder under launch,
+# and a leaked recorder is the worst kind of straggler — silent, and filling the
+# disk with a clip of whatever the camera points at next.
+PIMESH_BAG_PAT='/bin/[r]os2 bag (play|record)'
 
 # image_transport's republisher, and it is here for the same reason as the bag
 # player: it is a process that takes part in this pipeline's topics and no pattern
@@ -282,6 +300,15 @@ pimesh_local_processes() {
         while read -r pid rest; do
             [[ -n ${pid:-} ]] || continue
             pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+            # **An empty pgid is a process that has already exited, not one in
+            # another group**, and until #15 the two had the same spelling here.
+            # `pgrep` leaves itself out of its answer but not the `$(…)` subshell
+            # forked to run it — which carries the *caller's* command line and is
+            # gone by the time `ps` asks about it. Harmless while no caller's
+            # command line matched a pattern; `tools/session.sh … -- ros2 launch
+            # pimesh_bringup …` is the first that does, and it refused to start
+            # beside its own dead subshell on every run (measured 2026-10-05).
+            [[ -n $pgid ]] || continue
             [[ $pgid == "$mypgid" ]] || echo "$pid $rest"
         done <<<"$hits"
     done

@@ -35,7 +35,7 @@ namespace pimesh_dataset
 /// It does not loop. A replay that restarts sends every `header.stamp`
 /// backwards, `odometry_node` stamps TF with the frame's own stamp as it must,
 /// and `tf2::BufferCore` then refuses everything for the rest of the run — the
-/// failure `tools/view/replay.sh` is shaped around. There is no parameter for it
+/// failure `docs/info/troubleshooting.md` is shaped around. There is no parameter for it
 /// because there is no correct value.
 ///
 /// It does not re-encode. TUM's frames are lossless PNG and they go on the wire

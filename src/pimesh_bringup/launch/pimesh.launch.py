@@ -52,7 +52,7 @@ jumps ~60 s into the past; `keypoint_node` stamps `odom -> base_link` with the
 frame's own stamp, as it must; and `tf2::BufferCore` refuses data older than the
 newest it holds. Measured 2026-09-13: after the first wrap the edge froze at the
 bag's final stamp and never moved again for the rest of the run, while every
-listener logged TF_OLD_DATA at the frame rate. `tools/view/replay.sh` is the viewer
+listener logged TF_OLD_DATA at the frame rate. `docs/info/troubleshooting.md` is the viewer
 that wants this — see its header for why the warning is not merely noisy.
 """
 
@@ -364,7 +364,7 @@ def generate_launch_description() -> LaunchDescription:
     # **Off by default, and that is the same reasoning as `probe`.** A dashboard
     # is a viewer, and a viewer attached to every run would be in every
     # measurement this workspace takes — it subscribes to two JPEG streams and a
-    # 4 MB mesh across a process boundary. `bash tools/view/dashboard.sh` turns it on,
+    # 4 MB mesh across a process boundary. `just dashboard` turns it on,
     # and so does tools/gates/dashboard.sh, which exists to prove that turning it
     # on costs the pipeline nothing.
     dashboards = [
@@ -466,6 +466,9 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             'odom_regime',
+            # Refused by launch before anything spawns (#15): the node's own
+            # refusal is a component that fails to load inside a session that runs on.
+            choices=['sixdof', 'rotation_only'],
             default_value='sixdof',
             description="odometry_node's estimator: sixdof fits a rigid "
                         'transform to depth-backed landmarks, rotation_only '
@@ -486,6 +489,9 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             'local_ba',
+            # Refused by launch before anything spawns (#15): the node's own
+            # refusal is a component that fails to load inside a session that runs on.
+            choices=['true', 'false'],
             default_value='false',
             description="odometry_node's backend thread bundle-adjusts the "
                         'window around each new keyframe when true. false is the '

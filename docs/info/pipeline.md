@@ -148,7 +148,7 @@ for six days and every internal number describing it was right.
 
 **Three things it deliberately does not do.** It does not **loop** — a replay that
 restarts sends every `header.stamp` backwards and `tf2::BufferCore` then refuses
-everything for the rest of the run, which is the failure `tools/view/replay.sh` is
+everything for the rest of the run, which is the failure `just replay` is
 shaped around; there is no parameter for it because there is no correct value. It
 does not **re-encode** — TUM's frames are lossless PNG and go on the wire as PNG,
 since `cv::imdecode` reads either codec and a quality setting here would be a
