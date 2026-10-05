@@ -265,3 +265,119 @@ def test_every_timeline_key_lost_sh_reads_is_one_the_instrument_prints():
             set(re.findall(r'^row "[^"]*" ([a-z_]+)$', _LOST_SH, re.M))) - nodes
     assert len(printed) >= 9 and len(read) >= 8
     assert not (read - printed), f'lost.sh reads {sorted(read - printed)} lost_timeline.py never prints'
+
+
+# #13's P20, and P19's log lines. tools/gates/relocalise.sh reads `stats reloc` and
+# `stats lost` by key, pulls four facts out of free-text log lines with `grep -o`,
+# and hands the `relocalised` lines to reloc_truth.py's regex. lost.sh greps the two
+# blackout lines decode_node prints. Every one of those is a printf on one side and a
+# pattern on the other, and a mismatch reads as a number — "loaded 0 keyframes",
+# "never relocalised", "no blackout injected" — about a session that was fine.
+_RELOC_SH = _read('tools', 'gates', 'relocalise.sh')
+_DECODE = _read('src', 'pimesh_frontend', 'src', 'decode_node.cpp')
+_DATASET = _read('src', 'pimesh_dataset', 'src', 'dataset_node.cpp')
+_RELOC_TRUTH = _read('tools', 'eval', 'reloc_truth.py')
+_SOURCES = {'odometry_node': _ODOMETRY, 'fusion_node': _FUSION}
+
+
+def _stat_reads(script):
+    """{(node, line, key)} for every `stat_of ... node line key` a script makes,
+    direct or through a `for key in ...` loop."""
+    reads = set()
+    for node, line, key in re.findall(
+            r'stat_of "[^"]*" (\w+) (\w+) ([a-z_0-9]+)\)', script):
+        reads.add((node, line, key))
+    for keys, node, line in re.findall(
+            r'for key in ([a-z_0-9 ]+); do\s+R\[[^\]]*\$key\]=\$\(stat_of "[^"]*" (\w+) (\w+) "\$key"\)',
+            script):
+        reads |= {(node, line, k) for k in keys.split()}
+    return reads
+
+
+def test_every_stats_key_relocalise_sh_reads_is_written():
+    reads = _stat_reads(_RELOC_SH)
+    assert len(reads) >= 10, f'only {len(reads)} stat reads found in relocalise.sh'
+    for node, line, key in sorted(reads):
+        written = _format_keys(_SOURCES[node], f'stats {line} ')
+        assert len(written) >= 7, f'the `stats {line}` format in {node} has only {len(written)} keys'
+        assert key in written, f'relocalise.sh reads {key} off {node}\'s `stats {line}`, which it does not write'
+
+
+def test_every_reloc_truth_key_relocalise_sh_reads_is_printed():
+    printed = set(re.findall(r"'([a-z_]+)':", _RELOC_TRUTH))
+    read = set(re.findall(r'R\[t\.([a-z_]+)\]', _RELOC_SH))
+    assert len(printed) >= 12 and len(read) >= 8
+    assert not (read - printed), f'relocalise.sh reads {sorted(read - printed)} reloc_truth.py never prints'
+
+
+def _literal_runs(source):
+    """Every run of adjacent C string literals, concatenated — each is a candidate
+    printf format. Crude, and enough: a log format is always one such run."""
+    runs = []
+    for match in re.finditer(r'"(?:[^"\\\n]|\\.)*"(?:\s*"(?:[^"\\\n]|\\.)*")*', source):
+        runs.append(''.join(re.findall(r'"((?:[^"\\\n]|\\.)*)"', match.group(0))))
+    return runs
+
+
+def _render(fmt, word='shutdown'):
+    """A printf format with plausible values in it: digits for numbers, `word` for %s."""
+    fmt = fmt.replace('%%', '\0')
+    fmt = re.sub(r'%[-+ #0-9.]*(?:hh|h|ll|l|z|j|t)?[diuxX]', '12', fmt)
+    fmt = re.sub(r'%[-+ #0-9.]*l?[fgeE]', '1.50', fmt)
+    fmt = re.sub(r'%[-+ #0-9.]*p', '0x1', fmt)
+    fmt = re.sub(r'%[-+ #0-9.]*s', word, fmt)
+    return fmt.replace('\0', '%')
+
+
+def _bre_to_re(pattern):
+    """A `grep` basic regex, as these scripts write them, in Python's syntax. Only the
+    constructs they use: `.*`, `[0-9]*`, `[0-9.]*`, `[a-z]*`; everything else literal."""
+    out, i = '', 0
+    tokens = ('.*', '[0-9]*', '[0-9.]*', '[a-z]*')
+    while i < len(pattern):
+        for t in tokens:
+            if pattern.startswith(t, i):
+                out += t
+                i += len(t)
+                break
+        else:
+            out += re.escape(pattern[i])
+            i += 1
+    return out
+
+
+def _gate_patterns(script):
+    """The literal patterns a script greps for, skipping ones built from variables and
+    the bare number extractors that follow a real pattern in a pipe."""
+    found = re.findall(r"grep -[oq] '([^']*)'", script) + re.findall(r'grep -[oq] "([^"$]*)"', script)
+    return [p for p in found if re.search(r'[a-z]{3}', p)]
+
+
+def test_every_log_line_the_milestone_i_gates_grep_is_one_a_node_can_print():
+    lines = [_render(f) for src in (_ODOMETRY, _FUSION, _DECODE, _DATASET) for f in _literal_runs(src)]
+    for name, script in (('relocalise.sh', _RELOC_SH), ('lost.sh', _LOST_SH)):
+        patterns = _gate_patterns(script)
+        assert len(patterns) >= 4, f'only {len(patterns)} literal greps found in {name}'
+        for p in patterns:
+            regex = re.compile(_bre_to_re(p))
+            assert any(regex.search(line) for line in lines), (
+                f"{name} greps '{p}', and no format string in the nodes it reads can print it")
+
+
+def test_reloc_truth_parses_the_relocalised_line_odometry_node_prints():
+    # The pose is the instrument's whole input: the regex has to take all seven
+    # numbers, in TUM order, off the line as the node formats it.
+    fmt = next(f for f in _literal_runs(_ODOMETRY) if f.startswith('relocalised query_ns='))
+    values = iter(['1305031464527574000', '1305031458791632000', '97', '64', '14', '4.9', '2',
+                   '0.100000', '-0.200000', '1.500000', '0.000000', '0.000000', '0.000000', '1.000000'])
+    line = re.sub(r'%[-+ #0-9.]*(?:ll|l|z)?[duf]', lambda m: next(values), fmt)
+    assert next(values, None) is None, 'the relocalised format changed its number of fields'
+    import sys
+    sys.path.insert(0, os.path.join(_WORKSPACE, 'tools', 'eval'))
+    import reloc_truth
+    parsed = reloc_truth.parse_relocalisations([line])
+    assert len(parsed) == 1, f'reloc_truth.py cannot parse the line the node prints: {line}'
+    stamp, position, rotation = parsed[0]
+    assert abs(stamp - 1305031464.527574) < 1e-6
+    assert list(position) == [0.1, -0.2, 1.5]
+    assert abs(rotation[0][0] - 1.0) < 1e-12

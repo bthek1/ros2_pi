@@ -1,8 +1,12 @@
 #ifndef PIMESH_FRONTEND__MAP_IO_HPP_
 #define PIMESH_FRONTEND__MAP_IO_HPP_
 
+#include <cstdint>
 #include <deque>
 #include <string>
+#include <unordered_map>
+
+#include "opencv2/core/affine.hpp"
 
 #include "pimesh_frontend/keyframe_store.hpp"
 
@@ -45,6 +49,17 @@ namespace pimesh_frontend
 /// read anywhere, an implausible count and **trailing bytes** each fail the load
 /// with a reason and leave the caller's store untouched — because half a map loads
 /// as a smaller map, and a smaller map is a plausible one.
+
+/// The keyframe store as it is saved: each keyframe's `odom_from_camera` replaced by
+/// its pose in the map frame — the pose graph's corrected pose where `corrected` has
+/// one for its stamp, else `map_from_odom * odom_from_camera`.
+///
+/// **The two sources disagree exactly when loop closure has moved a keyframe**, and
+/// that is the case the save exists for: a map saved at the odometry poses would be
+/// the drifted room, relocalised into with confidence.
+std::deque<Keyframe> keyframes_in_map(
+  const std::deque<Keyframe> & frames, const cv::Affine3d & map_from_odom,
+  const std::unordered_map<std::int64_t, cv::Affine3d> & corrected);
 
 /// Write `frames` to `path`, through `path + ".partial"` and a rename so a session
 /// killed mid-write leaves the previous map rather than half of this one. Returns ""

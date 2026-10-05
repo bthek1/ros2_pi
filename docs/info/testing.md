@@ -52,12 +52,43 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 681 tests across forty-six suites, identical on both distros**
-(`bash tools/gates/test.sh`, 2026-10-02, after #13's P20).
+**Status: 693 tests across forty-six suites, identical on both distros**
+(`bash tools/gates/test.sh`, 2026-10-05, after milestone I's follow-up).
 
 ## The suites
 
-681 across forty-six suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+693 across forty-six suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+
+**After milestone I, 2026-10-05: three helpers given a home, and four contracts
+pinned.** The audit question was this file's own — *could a test call it if it wanted
+to?* — and three pieces of P20 logic said no, each sitting inline in a node:
+`dataset_node`'s frame slice, the relocaliser's `map ← odom` product, and `save_map`'s
+choice of each keyframe's map pose. They are `slice_frames` (`dataset_reader.hpp`),
+`map_from_odom` (`relocaliser.hpp`) and `keyframes_in_map` (`map_io.hpp`) now, and each
+has the case that its plausible wrong version fails: **max counted from the skip**
+instead of from the sequence (which would silently close `relocalise.sh`'s 30-frame
+gap between the saving and loading sessions), **the inverted product** checked on a
+frame a metre and a turn *after* the query (the query alone passes either way whenever
+odom is near identity — the first frames of a session), and **the correction composed
+on the right**, or the graph's corrected pose ignored (a map saved at drifted poses,
+relocalised into with confidence). Every mutation is caught by its case. Nothing was
+wrong this time; the point is that next time a test can see it.
+
+`test_gate_contract` now covers `relocalise.sh` and `lost.sh` **generically**: every
+`stats` key either reads through `stat_of` must be in that node's printf format, and
+every literal pattern either `grep`s must match some line the nodes can actually print —
+each format string rendered with sample values, the grep translated to Python. Plus
+`reloc_truth.py`'s regex parsing a `relocalised` line rendered from the node's own
+format, all seven pose numbers in TUM order. Five mutations — a renamed key on each
+side, `map loaded:` reworded, `last_black_ns` renamed, the pose separator changed —
+each fail. `test_dashboard_contract` gained the tracking strings: the page decides LOST
+as `pose.tracking !== 'OK'`, so the node spelling OK any other way would flag LOST for
+ever over a tracker that was fine; it pins that `'OK'` is sent only for
+`TrackingState::OK` and that the fallback — what a state nobody set gets — is
+`UNKNOWN`. Its first run failed on the test's own regex, not the code. And the
+`UNKNOWN == 0` contract both nodes lean on is a **`static_assert` carrying its message**
+in `fusion_node.cpp` and `dashboard_node.cpp`, the place `Percentile`'s signature lesson
+says a contract belongs, rather than a comment in the `.msg`.
 
 **Milestone I's suites (added 2026-10-02, #13's P19 and P20).** Every one of them
 covers code whose wrong version still runs.

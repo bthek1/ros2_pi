@@ -282,3 +282,37 @@ def test_both_ends_compute_the_same_payload_length(triangles):
     # What app.js will read: header, then count*12, then count*3.
     decoded = 4 + vertices * 12 + vertices * 3
     assert packed == decoded
+
+
+# ---------------------------------------------------------------------------
+# The tracking state (#13's P19)
+# ---------------------------------------------------------------------------
+
+def cpp_tracking_strings():
+    """{constant: string} from pose_json's `tracking` ternary chain."""
+    block = re.search(r'tracking\\":"\s*<<\s*json::quote\((.*?)\)\s*\n', DASHBOARD_NODE_CPP, re.S)
+    assert block, "pose_json no longer quotes a tracking value"
+    pairs = dict(re.findall(r'TrackingState::(\w+)\s*\?\s*"(\w+)"', block.group(1)))
+    fallback = re.findall(r':\s*"(\w+)"\s*$', block.group(1).strip())
+    return pairs, fallback
+
+
+def test_the_page_compares_tracking_against_a_string_the_node_sends():
+    """`app.js` decides LOST as `pose.tracking !== 'OK'`. If the node spelled OK any
+    other way — "Ok", "TRACKING" — the page would flag LOST for ever over a tracker
+    that was fine, and nothing anywhere would disagree."""
+    pairs, fallback = cpp_tracking_strings()
+    sent = set(pairs.values()) | set(fallback)
+    compared = set(re.findall(r"pose\.tracking\s*[!=]==?\s*'(\w+)'", APP_JS))
+    assert compared, "app.js no longer compares pose.tracking against a string"
+    assert compared <= sent, f"app.js compares against {compared - sent}, which pose_json never sends"
+
+
+def test_ok_is_sent_only_for_the_ok_constant_and_unknown_is_the_fallback():
+    """The mapping itself: OK only for TrackingState::OK, and anything unlisted —
+    including the 0 a state nobody set carries — falls through to UNKNOWN, never OK."""
+    pairs, fallback = cpp_tracking_strings()
+    assert pairs.get('OK') == 'OK', pairs
+    assert pairs.get('LOST') == 'LOST', pairs
+    assert fallback == ['UNKNOWN'], fallback
+    assert 'tracking' in emitted_fields('pose_json')

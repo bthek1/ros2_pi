@@ -24,6 +24,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "pimesh_dataset/dataset_reader.hpp"
@@ -206,4 +207,62 @@ TEST(TumIndex, NamesTheFileItCouldNotFind)
   // message that sends somebody looking in the wrong directory.
   EXPECT_EQ(list.index_path, "/nonexistent/sequence/rgb.txt");
   EXPECT_NE(list.why.find("/nonexistent/sequence/rgb.txt"), std::string::npos);
+}
+
+// --- #13's P20: slicing a sequence ------------------------------------------------
+
+namespace
+{
+
+std::vector<pimesh_dataset::DatasetFrame> numbered(std::size_t n)
+{
+  std::vector<pimesh_dataset::DatasetFrame> frames;
+  for (std::size_t i = 0; i < n; ++i) {
+    frames.push_back({static_cast<std::int64_t>(i), "f" + std::to_string(i)});
+  }
+  return frames;
+}
+
+}  // namespace
+
+TEST(SliceFrames, MaxCountsFromTheSequenceNotFromTheSkip)
+{
+  // gates/relocalise.sh's two sessions: max 300, then skip 330. If max counted from
+  // the skip, the saving session would be [0, 300) and a skip of 300 would make the
+  // loading one start on the very next frame — the gap between them gone, silently.
+  auto frames = numbered(613);
+  ASSERT_EQ(pimesh_dataset::slice_frames(frames, 100, 300), "");
+  ASSERT_EQ(frames.size(), 200u);
+  EXPECT_EQ(frames.front().stamp_ns, 100);
+  EXPECT_EQ(frames.back().stamp_ns, 299);
+}
+
+TEST(SliceFrames, TheGatesTwoSessionsDoNotOverlap)
+{
+  auto saving = numbered(613);
+  auto loading = numbered(613);
+  ASSERT_EQ(pimesh_dataset::slice_frames(saving, 0, 300), "");
+  ASSERT_EQ(pimesh_dataset::slice_frames(loading, 330, 0), "");
+  EXPECT_EQ(saving.back().stamp_ns, 299);
+  EXPECT_EQ(loading.front().stamp_ns, 330);
+  EXPECT_EQ(loading.back().stamp_ns, 612);
+}
+
+TEST(SliceFrames, ZeroMeansTheWholeSequence)
+{
+  auto frames = numbered(10);
+  ASSERT_EQ(pimesh_dataset::slice_frames(frames, 0, 0), "");
+  EXPECT_EQ(frames.size(), 10u);
+  auto beyond = numbered(10);
+  ASSERT_EQ(pimesh_dataset::slice_frames(beyond, 0, 50), "");
+  EXPECT_EQ(beyond.size(), 10u);
+}
+
+TEST(SliceFrames, ASkipThatLeavesNothingIsRefusedAndChangesNothing)
+{
+  auto frames = numbered(10);
+  EXPECT_NE(pimesh_dataset::slice_frames(frames, 10, 0), "");
+  EXPECT_NE(pimesh_dataset::slice_frames(frames, 5, 5), "") << "skip == max is empty too";
+  EXPECT_EQ(frames.size(), 10u) << "a refusal must leave the caller's frames alone";
+  EXPECT_EQ(frames.front().stamp_ns, 0);
 }

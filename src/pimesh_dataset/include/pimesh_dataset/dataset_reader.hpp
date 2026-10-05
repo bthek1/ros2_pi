@@ -1,6 +1,7 @@
 #ifndef PIMESH_DATASET__DATASET_READER_HPP_
 #define PIMESH_DATASET__DATASET_READER_HPP_
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -79,6 +80,19 @@ bool parse_tum_timestamp(const std::string & text, std::int64_t & ns);
 ///    at the point where somebody can act on it
 ///  - the index lists nothing at all
 FrameList read_tum_index(const std::string & dataset_dir, const std::string & index_name);
+
+/// Cut `frames` down to `[skip, max)` of the original sequence (#13's P20): `max`
+/// first, counted from the **start of the sequence** and 0 meaning "all of it", then
+/// the first `skip` dropped. Returns "" on success, else why, leaving `frames` alone.
+///
+/// **Both orders are plausible and they disagree by `skip` frames**, which is why this
+/// has a home and a test. gates/relocalise.sh saves a map from `max_frames=300` and
+/// relocalises from `skip_frames=330`; read as "skip, then take 300" the first session
+/// would end where the second begins and the 30-frame gap the gate asserts nothing
+/// about would silently close. A skip that leaves nothing is a refusal, not an empty
+/// replay — a gate that asked for the second half and got silence would read it as a
+/// relocaliser that never answered.
+std::string slice_frames(std::vector<DatasetFrame> & frames, std::size_t skip, std::size_t max);
 
 }  // namespace pimesh_dataset
 

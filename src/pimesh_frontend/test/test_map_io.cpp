@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "pimesh_frontend/map_io.hpp"
@@ -191,4 +192,28 @@ TEST(MapIo, NoPartialFileIsLeftBehind)
   ASSERT_EQ(save_keyframes(path, {keyframe(1, 5, 1)}), "");
   std::ifstream partial(path + ".partial");
   EXPECT_FALSE(partial.good());
+}
+
+TEST(KeyframesInMap, ACorrectedPoseWinsAndTheRestGoThroughMapFromOdom)
+{
+  // Two keyframes: the pose graph has corrected the first, not the second. Saving
+  // the odometry pose for the first would save the drifted room; saving the graph's
+  // pose for the second is impossible, because it has none.
+  std::deque<Keyframe> store{keyframe(10, 3, 1), keyframe(20, 3, 2)};
+  const cv::Affine3d correction(
+    cv::Matx33d(0, -1, 0, 1, 0, 0, 0, 0, 1), cv::Vec3d(0.5, -0.25, 0.0));
+  const cv::Affine3d graph_pose(cv::Matx33d::eye(), cv::Vec3d(9.0, 9.0, 9.0));
+  const std::unordered_map<std::int64_t, cv::Affine3d> corrected{{10, graph_pose}};
+
+  const std::deque<Keyframe> out = pimesh_frontend::keyframes_in_map(store, correction, corrected);
+  ASSERT_EQ(out.size(), 2u);
+  EXPECT_EQ(cv::norm(out[0].odom_from_camera.matrix - graph_pose.matrix), 0.0);
+  const cv::Affine3d expected = correction * store[1].odom_from_camera;
+  EXPECT_LT(cv::norm(out[1].odom_from_camera.matrix - expected.matrix), 1e-12);
+  // Composed on the left: correction then pose. On the right it is a different pose.
+  const cv::Affine3d wrong = store[1].odom_from_camera * correction;
+  EXPECT_GT(cv::norm(out[1].odom_from_camera.matrix - wrong.matrix), 0.1);
+  // The store itself is untouched — the live tracker keeps its odom poses.
+  EXPECT_EQ(cv::norm(store[0].odom_from_camera.matrix - keyframe(10, 3, 1).odom_from_camera.matrix), 0.0);
+  EXPECT_EQ(out[1].track_ids, store[1].track_ids);
 }

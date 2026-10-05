@@ -677,3 +677,31 @@ TEST(Relocaliser, StopsWithAQueryWaiting)
   reloc.reset();   // never started: the destructor must not wait for a thread
   SUCCEED();
 }
+
+TEST(Relocalisation, MapFromOdomCarriesEveryLaterFrameIntoTheMap)
+{
+  // Not only the query: the point of map <- odom is that frames *after* it, posed in
+  // this session's odom, land in the saved map. The inverted product passes on the
+  // query alone whenever odom is near identity — the first frames of a session —
+  // so the check is on a frame a metre and a turn further along.
+  Relocalisation r;
+  r.accepted = true;
+  r.map_from_camera = cv::Affine3d(yaw(0.5), cv::Vec3d(2.0, 0.0, -1.0));
+  r.odom_from_camera = cv::Affine3d(yaw(-0.8), cv::Vec3d(0.3, 0.1, 0.7));
+  const cv::Affine3d correction = pimesh_frontend::map_from_odom(r);
+
+  const cv::Affine3d query = correction * r.odom_from_camera;
+  EXPECT_LT(cv::norm(cv::Vec3d(query.translation()) - cv::Vec3d(r.map_from_camera.translation())), 1e-12);
+
+  // A later frame: one metre forward and 0.3 rad round in the camera's own frame.
+  const cv::Affine3d step(yaw(0.3), cv::Vec3d(0.0, 0.0, 1.0));
+  const cv::Affine3d later_odom = r.odom_from_camera * step;
+  const cv::Affine3d later_map = correction * later_odom;
+  const cv::Affine3d expected = r.map_from_camera * step;
+  EXPECT_LT(cv::norm(cv::Vec3d(later_map.translation()) - cv::Vec3d(expected.translation())), 1e-12);
+  EXPECT_LT(rotation_error_deg(later_map, expected), 1e-6);
+
+  const cv::Affine3d inverted = r.odom_from_camera.inv() * r.map_from_camera;
+  EXPECT_GT(cv::norm(cv::Vec3d((inverted * later_odom).translation()) -
+    cv::Vec3d(expected.translation())), 0.5);
+}

@@ -592,5 +592,14 @@ instrument was right and the test was wrong, which is the case a mutation run ex
 tell apart. P20 itself passed first time, on a positive case moved to fr1/desk for its
 ground truth and a control moved to a room that is certainly not this one.
 
+**A follow-up on 2026-10-05 found nothing wrong, on purpose.** Asking this file's
+question of milestone I's code — could a test call it? — turned up three helpers inline
+in nodes (the dataset slice, `map ← odom` from a relocalisation, and the map pose each
+saved keyframe takes) and four contracts nothing checked: the `stats` keys and log lines
+`relocalise.sh` and `lost.sh` parse, the line `reloc_truth.py` reads its poses from, and
+the `'OK'` the dashboard's page compares against. Each now has a test that its wrong
+version fails, shown by mutation; one test's first run failed on its own regex. The
+`relocalise.sh` gate was re-run after the refactor.
+
 Do not write "the node publishes X at Y Hz" until a node has published X and you
 have watched it do Y.

@@ -55,6 +55,21 @@ bool get_vector(std::ifstream & in, std::vector<T> & values)
 
 }  // namespace
 
+std::deque<Keyframe> keyframes_in_map(
+  const std::deque<Keyframe> & frames, const cv::Affine3d & map_from_odom,
+  const std::unordered_map<std::int64_t, cv::Affine3d> & corrected)
+{
+  std::deque<Keyframe> out;
+  for (const Keyframe & kf : frames) {
+    Keyframe copy = kf;
+    const auto found = corrected.find(kf.stamp_ns);
+    copy.odom_from_camera =
+      found != corrected.end() ? found->second : map_from_odom * kf.odom_from_camera;
+    out.push_back(std::move(copy));
+  }
+  return out;
+}
+
 std::string save_keyframes(const std::string & path, const std::deque<Keyframe> & frames)
 {
   for (const Keyframe & kf : frames) {

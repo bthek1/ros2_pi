@@ -52,6 +52,16 @@ struct Relocalisation
   double ms {0.0};
 };
 
+/// `map <- odom` from an accepted relocalisation: the query's map pose composed with
+/// its odom pose's inverse, so that `map_from_odom * odom_from_camera` lands every
+/// later frame in the saved map. **Set from one measurement, never accumulated** —
+/// P7's keyframe lesson one level up. Inverted, it is right for the query frame
+/// alone whenever odom happens to be identity, which is the first frame of a session.
+inline cv::Affine3d map_from_odom(const Relocalisation & r)
+{
+  return r.map_from_camera * r.odom_from_camera.inv();
+}
+
 /// #13's P20: on LOST, search a map saved by an earlier session.
 ///
 /// **P16's search, pointed at someone else's keyframes.** The database is a loaded

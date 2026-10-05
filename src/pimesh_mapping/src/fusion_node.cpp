@@ -430,6 +430,14 @@ void FusionNode::on_tracking(pimesh_msgs::msg::TrackingState::ConstSharedPtr msg
   tracking_arrived_.notify_all();
 }
 
+// **A default-constructed state must not read as OK** — the contract the refusal below
+// leans on, and TrackingState.msg says so in a comment. A comment is not a check:
+// renumber the constants and every message nobody filled in would be integrated.
+static_assert(
+  pimesh_msgs::msg::TrackingState::UNKNOWN == 0 &&
+  pimesh_msgs::msg::TrackingState::OK != 0 && pimesh_msgs::msg::TrackingState::LOST != 0,
+  "TrackingState: 0 must be UNKNOWN, so a state nobody set is never OK (#13 P19)");
+
 pimesh_msgs::msg::TrackingState::ConstSharedPtr FusionNode::state_at(
   const builtin_interfaces::msg::Time & stamp)
 {

@@ -652,7 +652,15 @@ depth frames**, onto a keyframe 5.7 s older, and again after a natural mid-clip 
 (31 inliers against a floor of 30). Scored against motion capture through the saved
 keyframes' Sim(3): **0.18 m median, 0.25 m worst**, beside the saved map's own
 0.14 m. Queries cost 6 ms median. **The control: 819 queries from `bags/desk1` into
-fr1/desk's map, 0 accepted**, and fusion integrated nothing all session.
+fr1/desk's map, 0 accepted**, and fusion integrated nothing all session. Two more runs
+(2026-10-02, -05): 0.26 and 0.19 m, controls 833 and 895 queries with 0 accepted.
+
+**What the gate does not assert, seen in the third run**: after a *later* natural LOST,
+46 queries failed to relocalise before the clip ended, so ~50 frames went unfused. That
+is the design — a loaded-map session stays LOST until a match clears 30 inliers — and
+it is a cost: recovery from a mid-session loss depends on the camera returning to
+something the saved map holds. The future file's "relocalise against this session's
+own keyframes" entry is the mechanism that would cover it.
 
 ## Stage 4 — Depth (`depth_node`, dev box, GPU)
 

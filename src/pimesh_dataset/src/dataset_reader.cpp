@@ -61,6 +61,19 @@ bool parse_tum_timestamp(const std::string & text, std::int64_t & ns)
   return true;
 }
 
+std::string slice_frames(std::vector<DatasetFrame> & frames, std::size_t skip, std::size_t max)
+{
+  const std::size_t end = (max > 0 && max < frames.size()) ? max : frames.size();
+  if (skip >= end) {
+    return "skip_frames=" + std::to_string(skip) + " leaves nothing of " + std::to_string(end) +
+           " frames (max_frames=" + std::to_string(max) + " of a " +
+           std::to_string(frames.size()) + "-frame sequence)";
+  }
+  frames.erase(frames.begin() + static_cast<std::ptrdiff_t>(end), frames.end());
+  frames.erase(frames.begin(), frames.begin() + static_cast<std::ptrdiff_t>(skip));
+  return "";
+}
+
 FrameList read_tum_index(const std::string & dataset_dir, const std::string & index_name)
 {
   FrameList out;

@@ -258,6 +258,12 @@ void DashboardNode::on_depth(sensor_msgs::msg::CompressedImage::ConstSharedPtr m
   server_->broadcast(Channel::Depth, msg->data.data(), msg->data.size());
 }
 
+// tracking_ starts at UNKNOWN and the page reads anything but "OK" as not-OK: both
+// rest on 0 meaning UNKNOWN. See the same assertion in fusion_node.cpp.
+static_assert(
+  pimesh_msgs::msg::TrackingState::UNKNOWN == 0 && pimesh_msgs::msg::TrackingState::OK != 0,
+  "TrackingState: 0 must be UNKNOWN, so the page never says OK before it has heard (#13 P19)");
+
 void DashboardNode::on_tracking(pimesh_msgs::msg::TrackingState::ConstSharedPtr msg)
 {
   std::lock_guard<std::mutex> lock(mutex_);

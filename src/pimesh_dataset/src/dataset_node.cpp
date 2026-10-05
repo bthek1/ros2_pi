@@ -141,16 +141,9 @@ DatasetNode::DatasetNode(const rclcpp::NodeOptions & options)
     throw std::runtime_error("dataset_node cannot read the sequence: " + list.why);
   }
   frames_ = list.frames;
-  if (max_frames > 0 && frames_.size() > max_frames) {frames_.resize(max_frames);}
-  // A skip that leaves nothing is a refusal, not an empty replay: a gate that asked
-  // for the second half of a sequence and got silence would read it as a relocaliser
-  // that never answered.
-  if (skip_frames >= frames_.size()) {
-    throw std::runtime_error(
-      "dataset_node: skip_frames=" + std::to_string(skip_frames) + " leaves nothing of a " +
-      std::to_string(frames_.size()) + "-frame sequence");
-  }
-  frames_.erase(frames_.begin(), frames_.begin() + static_cast<std::ptrdiff_t>(skip_frames));
+  // Max first, from the sequence's start, then the skip — see slice_frames.
+  const std::string sliced = slice_frames(frames_, skip_frames, max_frames);
+  if (!sliced.empty()) {throw std::runtime_error("dataset_node: " + sliced);}
 
   // **Decode the first frame here, and only to learn its size.** The size is
   // what makes the calibration check an assertion rather than a comment: the

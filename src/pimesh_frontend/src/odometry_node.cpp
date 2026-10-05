@@ -758,14 +758,7 @@ void OdometryNode::save_map(const char * why)
       for (const auto & [stamp, pose] : places_->trajectory()) {corrected[stamp] = pose;}
     }
   }
-  std::deque<Keyframe> out;
-  for (const Keyframe & kf : keyframes_.frames()) {
-    Keyframe copy = kf;
-    const auto found = corrected.find(kf.stamp_ns);
-    copy.odom_from_camera =
-      found != corrected.end() ? found->second : map_from_odom * kf.odom_from_camera;
-    out.push_back(std::move(copy));
-  }
+  const std::deque<Keyframe> out = keyframes_in_map(keyframes_.frames(), map_from_odom, corrected);
   const std::string error = save_keyframes(map_save_path_, out);
   const double ms = std::chrono::duration<double, std::milli>(
     std::chrono::steady_clock::now() - started).count();
@@ -810,10 +803,9 @@ void OdometryNode::apply_relocalisations()
     // **Set, not accumulated** — P7's keyframe lesson one frame up: the map pose of
     // this frame is measured against the saved keyframe directly, so map <- odom is
     // that measurement composed with this frame's odom pose, once.
-    const cv::Affine3d map_from_odom = r.map_from_camera * r.odom_from_camera.inv();
     {
       std::lock_guard<std::mutex> lock(reloc_mutex_);
-      reloc_map_from_odom_ = map_from_odom;
+      reloc_map_from_odom_ = map_from_odom(r);
       ++reloc_stats_.applied;
     }
     const cv::Vec3d t(r.map_from_camera.translation());
