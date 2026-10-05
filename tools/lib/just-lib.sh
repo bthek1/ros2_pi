@@ -764,6 +764,25 @@ pi_run_for() {          # $1 = seconds, rest = command line to run in the Pi's w
     pi_ws_run "timeout -s INT $secs $*"
 }
 
+# --- Sessions under launch ----------------------------------------------------
+
+# A command line with every empty `name:=` word removed, one word per line.
+#
+# `ros2 launch` refuses `name:=` with nothing after it as malformed — the launch
+# file's own default of '' is fine, the command line's is not (found by
+# tools/gates/rebuild.sh's first run). A recipe passes `bag:="{{ bag }}"`, and an
+# empty bag means "use the camera", which is exactly what omitting it means. Here
+# rather than inline in tools/session.sh so test_session_shell can call it: what
+# it must not do — drop a word that has a value, or keep an empty one — fails as
+# a session on the wrong source, or one that will not start.
+pimesh_launch_argv() {  # "$@" = a command line
+    local word
+    for word in "$@"; do
+        [[ $word =~ ^[A-Za-z_][A-Za-z0-9_]*:=$ ]] && continue
+        printf '%s\n' "$word"
+    done
+}
+
 # --- Assertions -------------------------------------------------------------
 
 # awk rather than bash, because every rate this project asserts on is a float

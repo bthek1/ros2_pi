@@ -166,3 +166,44 @@ def test_the_summary_rates_the_image_topic(tmp_path):
     # sha256 of b'abc', the published reference vector — not one computed beside it.
     assert any('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' in line
                for line in lines), lines
+
+
+# --- view.launch.py's bag resolution ---------------------------------------------
+#
+# Which clip a viewer plays. A version that took a directory without
+# metadata.yaml would hand `ros2 bag play` a recording that was never finalised,
+# which fails in a way that reads as the pipeline's fault; one that preferred
+# bags/<name> over an explicit path would play a different clip than the one asked
+# for, with nothing on screen to say so.
+
+def _view_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'view_launch', os.path.join(_PKG, 'launch', 'view.launch.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _bag(path):
+    path.mkdir(parents=True)
+    (path / 'metadata.yaml').write_text('rosbag2_bagfile_information: {}\n')
+    return path
+
+
+def test_a_bag_name_resolves_under_bags(tmp_path):
+    want = _bag(tmp_path / 'bags' / 'desk1')
+    assert _view_module().resolve_bag('desk1', tmp_path) == want.resolve()
+
+
+def test_an_explicit_path_wins_over_a_name_under_bags(tmp_path, monkeypatch):
+    _bag(tmp_path / 'bags' / 'clip')
+    elsewhere = _bag(tmp_path / 'elsewhere' / 'clip')
+    monkeypatch.chdir(tmp_path / 'elsewhere')
+    assert _view_module().resolve_bag('clip', tmp_path) == elsewhere.resolve()
+
+
+def test_a_directory_without_metadata_is_refused(tmp_path):
+    (tmp_path / 'bags' / 'unfinished').mkdir(parents=True)
+    with pytest.raises(RuntimeError, match='metadata.yaml'):
+        _view_module().resolve_bag('unfinished', tmp_path)

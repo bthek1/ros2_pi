@@ -40,16 +40,9 @@ shift
 shift
 (( $# > 0 )) || usage
 
-# **An empty `name:=` is dropped, so the launch file's default applies.**
-# `ros2 launch` refuses `name:=` with nothing after it as malformed — the launch
-# file's own default of '' is fine, the command line's is not (found by
-# tools/gates/rebuild.sh's first run). A recipe passes `bag:="{{ bag }}"` and an
-# empty bag means "use the camera", which is exactly what omitting it means.
-cmd=()
-for word in "$@"; do
-    [[ $word =~ ^[A-Za-z_][A-Za-z0-9_]*:=$ ]] && continue
-    cmd+=("$word")
-done
+# An empty `name:=` is dropped so the launch file's default applies: `ros2
+# launch` refuses one as malformed. See pimesh_launch_argv in just-lib.sh.
+mapfile -t cmd < <(pimesh_launch_argv "$@")
 
 # view.launch.py finds bags/, models/ and tools/ through this.
 export PIMESH_WS

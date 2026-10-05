@@ -36,6 +36,9 @@ if(BUILD_TESTING)
   # config/views.yaml against the launch file it feeds, the RViz configs it
   # names, the recipes that name it and the page its log line points to (#15).
   ament_add_pytest_test(test_views test/test_views.py)
+  # The kill patterns and the just-lib.sh helpers a session stands on (#15): what
+  # each pattern must match, what none may match, and two shell functions.
+  ament_add_pytest_test(test_session_shell test/test_session_shell.py)
 
 endif()
 

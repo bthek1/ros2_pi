@@ -52,12 +52,12 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 705 tests across forty-seven suites, identical on both distros**
+**Status: 719 tests across forty-eight suites, identical on both distros**
 (`bash tools/gates/test.sh`, 2026-10-05, after milestone I's follow-up).
 
 ## The suites
 
-705 across forty-seven suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+719 across forty-eight suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
 
 **`test_views` (added 2026-10-05, #15)** — `config/views.yaml` against everything it
 names. `view.launch.py` refuses an unknown view, a missing model and a missing bag
@@ -70,9 +70,35 @@ one value two defaults; a recipe names a view the table lacks, or a view has no 
 in `docs/info/viewers.md`, where the launch's one log line points. Plus
 `record.launch.py`'s after-recording check: a directory without `metadata.yaml` is
 refused, and the summary rates the *image* topic, against the published sha256 of
-`abc` rather than one computed beside it. Eleven cases, each mutated once and caught by
-the case that claims it. It reads the justfile and `docs/`, which is why `sync-pi.sh`
+`abc` rather than one computed beside it. And `view.launch.py`'s `resolve_bag`: a
+name resolves under `bags/`, an explicit path wins over a same-named clip there (the
+other order plays a different clip than the one asked for), and a directory without
+`metadata.yaml` is refused. Fourteen cases, each mutated once and caught by the case
+that claims it. It reads the justfile and `docs/`, which is why `sync-pi.sh`
 ships `docs/` now: the suite runs at both ends.
+
+**`test_session_shell` (added 2026-10-05, #15)** — the kill patterns and the
+`just-lib.sh` helpers a session stands on, where every mistake is silent. A pattern
+that misses its process makes the sweep report a leak as clean; a pattern that hits
+the session wrapper makes `kill_local` kill the session from inside its own
+teardown; an exited process read as "another group" makes a session refuse to start
+beside itself. All three happened while #15 was being built, and were found by
+running the code. So: the viewer pattern matches both spellings of RViz — bare, and
+by installed path as `launch_ros` execs it — and none of the shapes that *start*
+RViz; the launch pattern matches the launcher; the bag pattern matches a player and
+a recorder; and **no pattern matches any session recipe's command line**, rendered
+from the justfile both as just's `bash -euo pipefail -c …` and as the exec'd
+`bash tools/session.sh …`, so a new recipe is covered without anyone remembering it.
+`pimesh_local_processes` runs with `pgrep` and `ps` stubbed: an empty pgid, the
+caller's own and a stranger's, of which only the stranger is reported. And
+`pimesh_launch_argv` — moved out of `session.sh` into `just-lib.sh` so a test could
+call it — drops an empty `name:=` and nothing else. `tools/gates/naming.sh` asserts
+each pattern matches *something*; it cannot see what a pattern must not match,
+which is this suite's half. Ten cases; each of the four fixes, reverted, fails the
+case that claims it, and so do three other wrong versions. Writing it hit the
+positional-parameter trap once more: `source just-lib.sh` with no argument of its
+own hands the caller's `$1` to just-lib's option parser, so the test sources it
+with an explicit `""`.
 
 **After milestone I, 2026-10-05: three helpers given a home, and four contracts
 pinned.** The audit question was this file's own — *could a test call it if it wanted
