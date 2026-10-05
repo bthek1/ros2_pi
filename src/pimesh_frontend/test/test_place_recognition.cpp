@@ -10,10 +10,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <random>
 #include <vector>
 
 #include "pimesh_frontend/place_recognition.hpp"
+#include "pimesh_frontend/relocaliser.hpp"
 
 using pimesh_frontend::find_place;
 using pimesh_frontend::Keyframe;
@@ -535,4 +537,143 @@ TEST(PlaceRecognizerLoops, TheCorrectionsHandedOutReproduceTheCorrectedTrajector
     EXPECT_LT(cv::norm(applied.translation() - trajectory[k].second.translation()), 1e-9) << k;
   }
   EXPECT_GT(cv::norm(corrections[1].second.translation()), 0.1) << "the drifted keyframe moved";
+}
+
+
+// --- #13's P20: relocalisation against another session's map ---------------------
+
+using pimesh_frontend::Relocalisation;
+using pimesh_frontend::Relocaliser;
+using pimesh_frontend::relocalised_pose;
+
+TEST(Relocalisation, ThePoseIsComposedTheRightWayRound)
+{
+  // Asymmetric on purpose: a rotation *and* an offset, so the inverse composition
+  // lands somewhere else. Two coincident views would pass either way, and a
+  // relocalisation onto a nearly identical view is exactly the case that would.
+  const cv::Affine3d candidate(yaw(0.4), cv::Vec3d(1.0, 0.2, -0.5));
+  const cv::Affine3d query(yaw(-0.3), cv::Vec3d(-0.7, 0.0, 1.1));
+  const cv::Affine3d query_from_candidate = query.inv() * candidate;
+  const cv::Affine3d got = relocalised_pose(candidate, query_from_candidate);
+  EXPECT_LT(cv::norm(cv::Vec3d(got.translation()) - cv::Vec3d(query.translation())), 1e-12);
+  EXPECT_LT(rotation_error_deg(got, query), 1e-9);
+  // And the composition a hurried reading of the name suggests is not the same pose.
+  const cv::Affine3d wrong = candidate * query_from_candidate;
+  EXPECT_GT(cv::norm(cv::Vec3d(wrong.translation()) - cv::Vec3d(query.translation())), 0.5);
+}
+
+TEST(FindPlace, AcrossSessionsNeitherStampsNorTrackIdsExclude)
+{
+  // A saved keyframe from a *later* recording, sharing every track id with the query
+  // because both sessions numbered their tracks from zero. Within one session both
+  // facts would exclude it; across sessions neither means anything.
+  const Room room(400, 1);
+  const cv::Affine3d here(yaw(0.0), cv::Vec3d(0, 0, 0));
+  std::deque<Keyframe> db{view(room, here, 900 * kSecond, 10, 0)};
+  const Keyframe query = view(room, cv::Affine3d(yaw(0.1), cv::Vec3d(0.1, 0, 0)), 5 * kSecond, 11, 0);
+
+  const PlaceResult within = find_place(db, query, config());
+  EXPECT_FALSE(within.accepted);
+  EXPECT_EQ(within.searched, 0u);
+
+  PlaceConfig across = config();
+  across.across_sessions = true;
+  const PlaceResult r = find_place(db, query, across);
+  EXPECT_EQ(r.searched, 1u);
+  EXPECT_TRUE(r.accepted) << r.best.inliers << " inliers";
+}
+
+namespace
+{
+
+Relocaliser::Config reloc_config()
+{
+  Relocaliser::Config c;
+  c.place = config();
+  c.nice = 0;
+  return c;
+}
+
+}  // namespace
+
+TEST(Relocaliser, RecoversTheQuerysPoseInTheSavedMap)
+{
+  // The saved session's keyframes, at their map poses; this session's query, at a
+  // known map pose but with an odom pose that has nothing to do with it — a new
+  // session's odom starts wherever the camera happened to be.
+  const Room room(500, 3);
+  std::deque<Keyframe> map;
+  map.push_back(view(room, cv::Affine3d(yaw(-0.2), cv::Vec3d(-0.4, 0, 0)), 1 * kSecond, 20));
+  map.push_back(view(room, cv::Affine3d(yaw(0.25), cv::Vec3d(0.5, 0.1, 0.2)), 2 * kSecond, 21));
+  const cv::Affine3d truth(yaw(0.15), cv::Vec3d(0.3, 0.05, 0.1));
+  Keyframe query = view(room, truth, 5 * kSecond, 22, 0);
+  const cv::Affine3d odom(yaw(1.2), cv::Vec3d(7.0, -3.0, 0.4));
+  query.odom_from_camera = odom;
+
+  Relocaliser reloc(reloc_config(), map);
+  reloc.start();
+  reloc.submit(query);
+  reloc.flush();
+  const std::vector<Relocalisation> out = reloc.take_results();
+  ASSERT_EQ(out.size(), 1u);
+  const Relocalisation & r = out[0];
+  ASSERT_TRUE(r.accepted) << r.inliers << " inliers";
+  EXPECT_EQ(r.candidate_stamp_ns, 2 * kSecond) << "the nearer view should win";
+  EXPECT_LT(cv::norm(cv::Vec3d(r.map_from_camera.translation()) - cv::Vec3d(truth.translation())), 0.02);
+  EXPECT_LT(rotation_error_deg(r.map_from_camera, truth), 0.5);
+  // The odom pose comes back as submitted, so map <- odom is one product away.
+  EXPECT_EQ(cv::norm(r.odom_from_camera.matrix - odom.matrix), 0.0);
+  const cv::Affine3d map_from_odom = r.map_from_camera * r.odom_from_camera.inv();
+  EXPECT_LT(cv::norm(cv::Vec3d((map_from_odom * odom).translation()) - cv::Vec3d(truth.translation())), 0.02);
+  EXPECT_EQ(reloc.stats().accepted, 1u);
+}
+
+TEST(Relocaliser, AnotherRoomIsRefused)
+{
+  // The control the gate runs on real data, here on synthetic: a confident search
+  // over a map of somewhere else must come back empty.
+  const Room saved(500, 4);
+  const Room elsewhere(500, 5);
+  std::deque<Keyframe> map;
+  for (int i = 0; i < 5; ++i) {
+    map.push_back(view(saved, cv::Affine3d(yaw(0.1 * i), cv::Vec3d(0.1 * i, 0, 0)), i * kSecond, 30 + i));
+  }
+  Relocaliser reloc(reloc_config(), map);
+  reloc.start();
+  for (int i = 0; i < 4; ++i) {
+    reloc.submit(view(elsewhere, cv::Affine3d(yaw(0.05 * i), cv::Vec3d(0, 0, 0)), 100 * kSecond + i, 40 + i, 0));
+    reloc.flush();
+  }
+  for (const Relocalisation & r : reloc.take_results()) {EXPECT_FALSE(r.accepted);}
+  EXPECT_EQ(reloc.stats().queries, 4u);
+  EXPECT_EQ(reloc.stats().accepted, 0u);
+}
+
+TEST(Relocaliser, TheNewestQueryWins)
+{
+  // Submitted before the thread starts, so none has been taken: the two older ones
+  // are replaced, counted as skipped, and never searched.
+  const Room room(300, 6);
+  std::deque<Keyframe> map{view(room, cv::Affine3d::Identity(), 0, 50)};
+  Relocaliser reloc(reloc_config(), map);
+  for (int i = 1; i <= 3; ++i) {
+    reloc.submit(view(room, cv::Affine3d::Identity(), i * kSecond, 50 + i, 0));
+  }
+  reloc.start();
+  reloc.flush();
+  const std::vector<Relocalisation> out = reloc.take_results();
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].query_stamp_ns, 3 * kSecond);
+  EXPECT_EQ(reloc.stats().skipped, 2u);
+  EXPECT_EQ(reloc.stats().submitted, 3u);
+}
+
+TEST(Relocaliser, StopsWithAQueryWaiting)
+{
+  const Room room(300, 7);
+  auto reloc = std::make_unique<Relocaliser>(
+    reloc_config(), std::deque<Keyframe>{view(room, cv::Affine3d::Identity(), 0, 60)});
+  reloc->submit(view(room, cv::Affine3d::Identity(), kSecond, 61, 0));
+  reloc.reset();   // never started: the destructor must not wait for a thread
+  SUCCEED();
 }

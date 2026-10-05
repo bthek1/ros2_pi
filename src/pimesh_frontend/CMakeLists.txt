@@ -46,10 +46,12 @@ add_library(frontend_components SHARED
   src/keyframe_store.cpp
   src/keypoint_node.cpp
   src/local_map_match.cpp
+  src/map_io.cpp
   probes/odom_probe.cpp
   src/odometry_node.cpp
   src/orb_tracker.cpp
   src/place_recognition.cpp
+  src/relocaliser.cpp
   src/rgbd_odometry.cpp
   src/rotation_fit.cpp
 )
@@ -196,6 +198,24 @@ if(BUILD_TESTING)
   # somebody else's parser: every way of getting this format wrong ends in a
   # number rather than an error. Header-only and no ROS, so it runs on the Pi
   # like everything else in this directory.
+  # #13's P20: the saved keyframe map. Read back both ways — through the reader and
+  # byte by byte against the documented layout — and cut at every byte, because a
+  # map read leniently from a short file is a smaller map, and a smaller map is a
+  # plausible one.
+  ament_add_gtest(test_map_io test/test_map_io.cpp)
+  if(TARGET test_map_io)
+    target_link_libraries(test_map_io frontend_components)
+  endif()
+
+  # #13's P19: OK / LOST from a run of per-frame outcomes. Header-only and no ROS.
+  # Both wrong versions run: one that goes LOST eagerly refuses a fifth of the room,
+  # and one that never goes LOST has a perfect "nothing fused while lost" record.
+  ament_add_gtest(test_tracking_state test/test_tracking_state.cpp)
+  if(TARGET test_tracking_state)
+    target_include_directories(test_tracking_state PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  endif()
+
   ament_add_gtest(test_tum_trajectory test/test_tum_trajectory.cpp)
   if(TARGET test_tum_trajectory)
     target_include_directories(test_tum_trajectory PRIVATE

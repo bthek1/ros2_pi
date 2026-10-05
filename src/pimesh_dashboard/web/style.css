@@ -96,6 +96,7 @@ img {
 /* STALE beats a last value that looks healthy. Hidden until it is true. */
 .stale { color: var(--warn); display: none; }
 .stale.on { display: inline; }
+#tracking.lost { color: var(--warn); }
 
 table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
 th, td {

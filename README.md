@@ -11,16 +11,17 @@ RGB frame → keypoints (ORB) → pose (PnP vs keyframe) → monocular depth (De
              └──────── tracking front end ────────┘    └──────────── mapping back end ────────────┘
 ```
 
-**What is built is the front end and the map; what is missing is the loop.** The
-tracking half estimates a 6-DoF pose per frame and the mapping half fuses depth
-into a surface, which is *visual odometry plus dense mapping* — a SLAM system's
-two halves without the part that makes the acronym honest. There is no loop
-closure, no pose graph and no relocalisation, so drift is never corrected and a
-room re-entered is a room seen for the first time. The keyframe store those need
-is built and has one reader; the second reader — matching a frame against *every*
-keyframe rather than the newest — is the next piece of work, and it is named as
-such in [docs/info/roadmap.md](docs/info/roadmap.md). Calling this SLAM today
-would be claiming the half that is not there.
+**Every piece of a monocular SLAM system is built; most of it is off by default.**
+The tracking half estimates a 6-DoF pose per frame and the mapping half fuses depth
+into a surface. On top of that, as of 2026-10-02: place recognition against every
+keyframe, a pose graph that closes loops and publishes `map -> odom`, a TSDF rebuilt
+at the corrected poses, a `LOST` state that stops fusing when the tracker does not
+trust its pose, and relocalisation into a map saved by an earlier session — each
+judged against TUM's motion capture, in metres off a tape measure. **The default
+configuration is still visual odometry plus dense mapping** with P19's refusal in
+front of the TSDF: `loop_closure`, `rebuild` and map loading are flags, because a
+default is what every other gate runs and none of them has been gated on the live
+camera yet. See [docs/info/roadmap.md](docs/info/roadmap.md).
 
 **Written in C++.** The Pi is a sensor head — it captures, stamps and ships
 JPEG, and nothing else. Every expensive stage runs on the dev box, on the GPU
@@ -78,11 +79,12 @@ It took three clips to record, and the reason is the finding above: this room's
 walls are blank, and the first two walks spent 26% and 49% of their frames
 facing them, where the tenth-percentile frame carried **9 ORB features**.
 
-**Next is the SLAM half:** map points shared across keyframes and local bundle
-adjustment ([#11](https://github.com/bthek1/ros2_pi/issues/11)), place
-recognition, a pose graph and a rebuilt TSDF
-([#12](https://github.com/bthek1/ros2_pi/issues/12)), then a `LOST` state and
-relocalisation ([#13](https://github.com/bthek1/ros2_pi/issues/13)).
+**The SLAM half landed** in [#12](https://github.com/bthek1/ros2_pi/issues/12)
+(place recognition, pose graph, rebuilt TSDF) and
+[#13](https://github.com/bthek1/ros2_pi/issues/13) (a `LOST` state, relocalisation
+from a saved map). Still open: map points and local bundle adjustment
+([#16](https://github.com/bthek1/ros2_pi/issues/16)), which run and do not yet beat
+P7's tracker.
 
 ### Running it
 
@@ -94,8 +96,8 @@ just --list         # everything you type on a normal day
 ```
 
 The tests are the `tools/gates/*.sh` scripts, run directly — each exits 0 or
-non-zero and prints the number it asserted on — plus **625 unit tests across
-forty-two suites**, identical on both machines (`bash tools/test.sh`, catalogue
+non-zero and prints the number it asserted on — plus **681 unit tests across
+forty-six suites**, identical on both machines (`bash tools/test.sh`, catalogue
 in [docs/info/testing.md](docs/info/testing.md)). Each closed milestone issue
 records what its gates printed: [#4](https://github.com/bthek1/ros2_pi/issues/4)
 capture, [#5](https://github.com/bthek1/ros2_pi/issues/5) decode and keypoints,

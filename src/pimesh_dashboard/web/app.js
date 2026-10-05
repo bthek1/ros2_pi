@@ -271,7 +271,12 @@ function onMesh(bytes) {
 }
 
 function onPose(pose) {
-  if (!pose.have || !gl) { return; }
+  if (!pose.have) { return; }
+  // #13's P19. LOST is the tracker saying the pose it is still publishing is not
+  // trusted; STALE (the stage table) is the pose not arriving at all.
+  $('tracking').textContent = pose.tracking;
+  $('tracking').classList.toggle('lost', pose.tracking !== 'OK');
+  if (!gl) { return; }
   const trail = pose.trail || [];
   trailCount = trail.length / 3;
   if (trailCount < 2) { return; }

@@ -254,7 +254,12 @@ def _component(
     tools/gates/ba.sh: the control skips only the solve. So are `loop_closure` and
     `keyframe_trajectory_path`, for tools/gates/loop.sh, and `rebuild` and
     `rebuild_control` and `memory_dump_dir` are fusion_node's, for
-    tools/gates/rebuild.sh. So is
+    tools/gates/rebuild.sh. `blackout_start_s` and `blackout_s` are decode_node's,
+    `fuse_while_lost` fusion_node's and `recover_after_fits` odometry_node's, all for
+    tools/gates/lost.sh (#13's P19): a lens cap on demand, and the two controls.
+    `map_save_path` and `map_load_path` are odometry_node's and `skip_frames` and
+    `max_frames` (as `dataset_skip_frames`, `dataset_max_frames`) dataset_node's, for
+    tools/gates/relocalise.sh (#13's P20). So is
     `ba_depth_scale_sigma`, the same gate's switch between the per-reading depth
     prior and a scale shared by each keyframe's readings.
 
@@ -307,6 +312,22 @@ def _component(
                     LaunchConfiguration('rebuild_control'), value_type=bool),
                 'memory_dump_dir': ParameterValue(
                     LaunchConfiguration('memory_dump_dir'), value_type=str),
+                'blackout_start_s': ParameterValue(
+                    LaunchConfiguration('blackout_start_s'), value_type=float),
+                'blackout_s': ParameterValue(
+                    LaunchConfiguration('blackout_s'), value_type=float),
+                'fuse_while_lost': ParameterValue(
+                    LaunchConfiguration('fuse_while_lost'), value_type=bool),
+                'recover_after_fits': ParameterValue(
+                    LaunchConfiguration('recover_after_fits'), value_type=int),
+                'map_save_path': ParameterValue(
+                    LaunchConfiguration('map_save_path'), value_type=str),
+                'map_load_path': ParameterValue(
+                    LaunchConfiguration('map_load_path'), value_type=str),
+                'skip_frames': ParameterValue(
+                    LaunchConfiguration('dataset_skip_frames'), value_type=int),
+                'max_frames': ParameterValue(
+                    LaunchConfiguration('dataset_max_frames'), value_type=int),
                 'dataset_dir': ParameterValue(
                     LaunchConfiguration('dataset_dir'), value_type=str),
                 'trajectory_path': ParameterValue(
@@ -514,6 +535,57 @@ def generate_launch_description() -> LaunchDescription:
             description="Where fusion_node writes each rebuild's memory and "
                         'corrections, for rebuild_eval and tools/gates/rebuild.sh. '
                         'Empty writes nothing.',
+        ),
+        DeclareLaunchArgument(
+            'blackout_start_s',
+            default_value='0.0',
+            description="decode_node's injected lens cap starts this many seconds "
+                        "after the first frame's stamp. tools/gates/lost.sh (#13's "
+                        'P19); inert while blackout_s is 0.',
+        ),
+        DeclareLaunchArgument(
+            'blackout_s',
+            default_value='0.0',
+            description='Seconds of stamp decode_node publishes black. 0 injects '
+                        'nothing, and is the only value outside a gate.',
+        ),
+        DeclareLaunchArgument(
+            'fuse_while_lost',
+            default_value='false',
+            description="fusion_node integrates LOST frames anyway: tools/gates/"
+                        "lost.sh's control, so that '0 voxels while LOST' has been "
+                        'watched to fail.',
+        ),
+        DeclareLaunchArgument(
+            'recover_after_fits',
+            default_value='2',
+            description="odometry_node's consecutive fits to leave LOST. Must match "
+                        'config/pimesh.yaml; lost.sh sets it past the clip for its '
+                        'never-recovers control.',
+        ),
+        DeclareLaunchArgument(
+            'map_save_path',
+            default_value='',
+            description="odometry_node writes its keyframes here as a map (#13's "
+                        'P20). Empty saves nothing.',
+        ),
+        DeclareLaunchArgument(
+            'map_load_path',
+            default_value='',
+            description='odometry_node loads a saved map and relocalises into it; the '
+                        'session starts LOST until it does. Empty loads nothing.',
+        ),
+        DeclareLaunchArgument(
+            'dataset_skip_frames',
+            default_value='0',
+            description="dataset_node's skip_frames: start this far into the sequence. "
+                        'tools/gates/relocalise.sh.',
+        ),
+        DeclareLaunchArgument(
+            'dataset_max_frames',
+            default_value='0',
+            description="dataset_node's max_frames, counted from the sequence's start. "
+                        '0 replays all of it.',
         ),
         DeclareLaunchArgument(
             'source',

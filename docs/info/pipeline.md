@@ -591,6 +591,69 @@ sigmas: `test_pose_graph` pins that a 5 m false closure on a 16 m loop is absorb
 with zero inconsistent loops, which is why P16's zero wrong-place closures is the
 assertion that matters.
 
+### Stage 3f — A tracking state, and refusing to fuse while LOST (`TrackingMonitor`, inside `odometry_node`) — **built and gated 2026-10-02**
+
+[#13](https://github.com/bthek1/ros2_pi/issues/13) P19. `odometry_node` already held its
+last pose when a fit failed; that is right for one frame and wrong for a second of
+them, because the held pose is *published* — TF has to stay continuous — and
+`fusion_node` integrated every frame under it. Now a `TrackingMonitor`
+(`tracking_state.hpp`, no ROS) turns each depth frame's outcome into **OK / LOST**:
+LOST after `lost_after_holds` (5) consecutive frames without a fit, OK again after
+`recover_after_fits` (2) consecutive fits. It counts its own run, because the node's
+hold counter is reset every 5 frames by the stall rule.
+
+The state goes out on **`/tracking/state`** at every depth stamp, *before* that
+stamp's transform, and `fusion_node` looks it up by exact stamp and integrates only on
+OK. **A value, not a withheld transform**: tf2 interpolates across a missing stamp, so
+a pose withheld would be found anyway. `UNKNOWN = 0`, and fusion refuses a frame with
+no state as well as a LOST one. The dashboard shows the state beside the pose.
+
+**Measured** (`gates/lost.sh`, `bags/desk1`, a 3 s lens cap injected by
+`decode_node` at 40 s, two runs): **LOST 5 depth frames** after the first black stamp
+(236 ms), **OK 3 frames** after the last, **0 voxels integrated while LOST** beside
+136–148 frames refused, OK over the un-blacked remainder **0.898–0.902** against
+P7's 0.799 floor, 0 frames refused for want of a state. The control —
+`fuse_while_lost:=true`, `recover_after_fits:=100000000` — integrated 514–622 M voxel
+updates while LOST and scored 0.20–0.33 OK, failing both.
+
+**And desk1 goes LOST on its own**, 17.5–21 s and 24.4–25.5 s into every run — ~10%
+of its depth frames, up to 101 held in a row, all of which were fused at a stale
+pose before this phase. Refusing them is the first thing in this project that
+changed desk1's surface comparison: `gates/odom.sh` put 6-DoF at 0.3627 m against
+rotation-only's 0.4395 m on 2026-10-02, where P13 recorded a dead heat (0.3830 /
+0.3847). One run, so printed and not claimed.
+
+**What the recovery is not**: odometric. The tracker resumes from the held pose with
+a fresh reference, so the map after a blackout is offset by whatever the blackout
+hid. Relocalising against a map is P20, below.
+
+### Stage 3g — A saved map, and relocalising into it (`map_io`, `Relocaliser`, inside `odometry_node`) — **built and gated 2026-10-02**
+
+[#13](https://github.com/bthek1/ros2_pi/issues/13) P20. `map_save_path` writes the
+keyframe store — each keyframe at its pose in `map` — every 5 s of stamps while
+keyframes arrive and once at shutdown (`map_io.hpp`: a magic, a count, every field,
+and refusals for anything short, long or implausible). `map_load_path` loads one at
+startup; the session then **starts LOST**, because its odom has no relation to the
+saved map, and fits alone never end that — only a relocalisation does.
+
+While LOST, every frame with a *fitted* pose is a query to a `Relocaliser`: P16's
+`find_place` on its own niced thread, newest query wins, over the loaded keyframes,
+with `across_sessions` set — stamps and track ids mean nothing between two
+recordings. An accepted match gives the query's pose in the map,
+`map_from_candidate · query_from_candidate⁻¹`, and `map → odom` is **set** from it
+once, P7's keyframe lesson one level up. With a map loaded the relocalisation owns
+`map → odom`; the node refuses `loop_closure` beside it, and save beside load.
+**Map points are not saved** — nothing that is on by default would read them.
+
+**Measured** (`gates/relocalise.sh`, TUM fr1/desk, 2026-10-02): a map of frames
+0–299 — **14 keyframes, 0.60 MB, 42.9 kB a keyframe** (the plan expected ~40), loaded
+in 0.5 ms — and a new container replaying from frame 330 relocalised after **2 LOST
+depth frames**, onto a keyframe 5.7 s older, and again after a natural mid-clip LOST
+(31 inliers against a floor of 30). Scored against motion capture through the saved
+keyframes' Sim(3): **0.18 m median, 0.25 m worst**, beside the saved map's own
+0.14 m. Queries cost 6 ms median. **The control: 819 queries from `bags/desk1` into
+fr1/desk's map, 0 accepted**, and fusion integrated nothing all session.
+
 ## Stage 4 — Depth (`depth_node`, dev box, GPU)
 
 **Job:** one RGB frame in, one metric depth map out.

@@ -56,7 +56,7 @@ A–E ever measured the pose against a truth. See
 | F | [#10](https://github.com/bthek1/ros2_pi/issues/10) | P11–P13 | An ATE against ground truth — ✓ **P11 done 2026-09-25**, 0.27–0.36 m Sim(3)-aligned on TUM fr1/desk. ☐ P12–P13 are a `depth_scale` somebody measured and `bags/walk1`; **their software is written and exercised as of 2026-09-25, and what is left is one visit to a room** |
 | G | [#11](https://github.com/bthek1/ros2_pi/issues/11) → [#16](https://github.com/bthek1/ros2_pi/issues/16) | P14–P15 | ☐ Map points observed by many keyframes, and a bundle adjustment that lowers the ATE |
 | H | [#12](https://github.com/bthek1/ros2_pi/issues/12) | P16–P18 | ☐ A loop detected, a pose graph that corrects it, and a volume rebuilt at the corrected poses |
-| I | [#13](https://github.com/bthek1/ros2_pi/issues/13) | P19–P20 | ☐ The pipeline can say "I do not know where I am", stop fusing, and find out |
+| I | [#13](https://github.com/bthek1/ros2_pi/issues/13) | P19–P20 | ☑ The pipeline can say "I do not know where I am", stop fusing, and find out |
 
 Each issue also carries a **`just view-*` RViz recipe** — a viewer for a person,
 never the evidence. The gates below are what pass or fail a phase. The view
@@ -836,8 +836,8 @@ lose tracking and say so. All five are judged by the thing P11 adds.
 | ☐ P16 | Place recognition against the whole keyframe store — `tools/gates/place.sh` | [#12](https://github.com/bthek1/ros2_pi/issues/12) |
 | ☐ P17 | Pose graph; `map -> odom` stops being static identity — `tools/gates/loop.sh` | [#12](https://github.com/bthek1/ros2_pi/issues/12) |
 | ☐ P18 | Frame memory, and rebuilding the volume at corrected poses — `tools/gates/rebuild.sh` | [#12](https://github.com/bthek1/ros2_pi/issues/12) |
-| ☐ P19 | A tracking state, and refusing to fuse while `LOST` — `tools/gates/lost.sh` | [#13](https://github.com/bthek1/ros2_pi/issues/13) |
-| ☐ P20 | Relocalise from a persisted map — `tools/gates/relocalise.sh` | [#13](https://github.com/bthek1/ros2_pi/issues/13) |
+| ☑ P19 | A tracking state, and refusing to fuse while `LOST` — `tools/gates/lost.sh`, **PASS 2026-10-02** | [#13](https://github.com/bthek1/ros2_pi/issues/13) |
+| ☑ P20 | Relocalise from a persisted map — `tools/gates/relocalise.sh`, **PASS 2026-10-02** | [#13](https://github.com/bthek1/ros2_pi/issues/13) |
 
 **One dependency was checked before these were filed, because it decides whether
 half of them are executable at all.** g2o ships **with ROS at both ends** —

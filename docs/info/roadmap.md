@@ -7,22 +7,18 @@ mapping back end that fuses a surface out of it. What they do **not** build is
 the part that closes the loop: nothing recognises a place it has seen before, so
 drift is bounded per step and unbounded over a session. That is M10–M19.
 
-Status as of **2026-09-30**: M0–M12 done — **milestone F is closed**, and with it
-the three things P0–P10 could not do. **M10** is the first number about the pose
-that this project did not produce (a Sim(3)-aligned ATE of 0.27–0.36 m against TUM
-fr1/desk's motion-capture truth). **M11** is the first number that makes the rest
-of them metres: `depth_scale` = 4.6002 off a tape measure. **M12** is the first
-clip carrying real translation, and it settled a question open since P7 — 6-DoF
-odometry beats rotation-only, 0.4545 m of paired-surface gap against 0.6688 m,
-which `bags/desk1` could never show because a pan is explained by rotation alone.
-M13 and M14 are **built and not done** (2026-09-30): the map and local bundle
-adjustment exist and both gates run, and each fails on its ATE alone — the local map
-tracks worse than P7 because the depth network's scale differs 15–21% between
-keyframes and a map mixes depth maps, and BA's median beats both (0.259 m against
-0.429 and 0.309) without separating from no-BA at three runs. M15–M19 remain, and
-none of them needs a person in a room. The last thing to close
-before M12 was M11 on 2026-09-28; M10 on 2026-09-25, M8 and M9 on 2026-09-19, M5
-on 2026-09-15, M4 on 2026-09-13, M2.5 and M3 the day before.
+Status as of **2026-10-02**: M0–M12 and **M15–M19 done** — milestones F, H and I
+are closed, so every piece of a monocular SLAM system now exists and has a gate:
+place recognition (M15), a pose graph that publishes a real `map -> odom` (M16), a
+volume rebuilt at the corrected poses (M17), a `LOST` state that stops the TSDF
+being written under a pose the tracker does not trust (M18), and relocalisation into
+a map saved by an earlier session (M19). **M13 and M14 are built and not done**: the
+local map tracks worse than P7 because the depth network's scale differs 15–21%
+between keyframes, and BA's median beats both without separating from no-BA at
+three runs. **Most of it is off by default** — `loop_closure`, `rebuild`,
+`local_map`, `local_ba`, and a map is loaded only when asked — so the default
+pipeline is still P7's odometry, now with P19's refusal in front of the TSDF. Turning
+the rest on is a gate run on the live camera, not more code.
 
 The build order and per-phase tests live in
 [../plans/future/project_final_state.md](../plans/future/project_final_state.md);
@@ -73,8 +69,8 @@ outside opinion about whether any of it worked.
 | M15 | Place recognition against the whole keyframe store | **done 2026-10-02** — [#12](https://github.com/bthek1/ros2_pi/issues/12) P16, `bash tools/gates/place.sh` **PASS** under the bounded rule: **0 wrong-place closures** by motion capture over three fr1/desk runs (34 closures; 71 over two gate runs), no closure losing to odometry by more than ε = 2.69° (the closures' own interquartile range), at least 80% beating it (0.82/0.91/1.00 — run 1 is close to the floor), `bags/walk1`'s return to its start found. The plan's desk1 control ("revisits nothing") was measured false and moved to fr1/desk |
 | M16 | Pose graph — `map -> odom` stops being a static identity | **done 2026-09-30** — [#12](https://github.com/bthek1/ros2_pi/issues/12) P17, `bash tools/gates/loop.sh` **PASS**: keyframe ATE (Sim(3), TUM fr1/desk, motion capture) **0.118–0.153 m with loop closure against 0.361–0.533 m without**, three runs each, non-overlapping by 0.21 m; 9–11 closures and sub-millisecond solves a run; `map -> odom` a real, non-identity dynamic edge with `map -> base_link` and `tf_static` resolving through it and 0 TF warnings, on fr1/desk and through `bags/walk1`'s return. `loop_closure` defaults false until the online trajectory is scored too |
 | M17 | Frame memory and a volume rebuilt at corrected poses | **done 2026-10-02** — [#12](https://github.com/bthek1/ros2_pi/issues/12) P18, `bash tools/gates/rebuild.sh` **PASS**: over the same remembered frames, the rebuild at the pose graph's corrections sits **0.513–0.525 m** from the same frames rebuilt at motion-capture poses against **0.658–0.898 m** for odometry alone, agreement 0.083–0.116 against 0.057–0.066, every run and non-overlapping; six rebuilds a run, each integrating its whole memory; no stage slower. The self-consistency gap #12 named could not see this and was replaced by an outside reference (`rebuild_eval`) |
-| M18 | A `LOST` state that stops fusing | not started — [#13](https://github.com/bthek1/ros2_pi/issues/13) P19, `bash tools/gates/lost.sh`. Today a failed solve holds the last pose — 20.1% of `desk1`'s depth frames — and a held pose under a moving camera is permanent damage to the TSDF |
-| M19 | Relocalisation from a persisted map | not started — [#13](https://github.com/bthek1/ros2_pi/issues/13) P20, `bash tools/gates/relocalise.sh` |
+| M18 | A `LOST` state that stops fusing | **done 2026-10-02** — [#13](https://github.com/bthek1/ros2_pi/issues/13) P19, `bash tools/gates/lost.sh` **PASS** twice: a 3 s lens cap on `bags/desk1` is LOST in **5 depth frames** and OK **3 frames** after it clears, **0 voxels** integrated while LOST beside 136–148 frames refused, OK over the rest of the clip **0.898–0.902** against P7's 0.799; the control (fuse while LOST, never recover) integrates 514–622 M voxel updates while LOST and scores 0.20–0.33. OK/LOST travels on `/tracking/state`, a value at every depth stamp, because a withheld transform is interpolated by tf2. **desk1 goes LOST on its own** for ~10% of its depth frames — fused at a stale pose until now; the gate's first run put the cap inside one of those stretches and passed over nothing |
+| M19 | Relocalisation from a persisted map | **done 2026-10-02** — [#13](https://github.com/bthek1/ros2_pi/issues/13) P20, `bash tools/gates/relocalise.sh` **PASS**: a map of TUM fr1/desk's first 300 frames (14 keyframes, 42.9 kB each), loaded by a new container replaying from frame 330, relocalises after **2 LOST depth frames** to **0.18 m median / 0.25 m worst** of motion capture (the saved map's own error: 0.14 m); **819 queries from `bags/desk1` into that map, 0 accepted**. Moved from walk1 to fr1/desk for the ground truth, and the control to a different room, with reasons in the gate header |
 
 ## What "done" means here
 

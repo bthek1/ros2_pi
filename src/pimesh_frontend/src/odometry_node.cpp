@@ -11,7 +11,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
+#include <unordered_map>
 #include <unordered_set>
 #include <string>
 #include <utility>
@@ -20,6 +22,7 @@
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "pimesh_core/image_buffer.hpp"
 #include "pimesh_frontend/keyframe_store.hpp"
+#include "pimesh_frontend/map_io.hpp"
 #include "pimesh_frontend/tum_trajectory.hpp"
 #include "pimesh_frontend/keypoints_view.hpp"
 #include "rcl_interfaces/msg/floating_point_range.hpp"
@@ -202,6 +205,35 @@ OdometryNode::OdometryNode(const rclcpp::NodeOptions & options)
         "is replaced at the held pose. Without it, losing track once loses it for "
         "the rest of the session — measured as pose_ok frozen at 188 while held "
         "climbed past 560.", 1, 200)));
+
+  // --- The tracking state (#13's P19) -----------------------------------------
+  //
+  // Separate from max_hold_frames on purpose, and counted separately: that one is
+  // when to give up on a *reference view*, this one is when to stop trusting the
+  // *pose*. They default to the same 5, and the monitor keeps its own run length
+  // because the stall rule resets the node's every 5 — see tracking_state.hpp.
+  TrackingMonitor::Config tracking_config;
+  tracking_config.lost_after_holds = static_cast<std::size_t>(
+    declare_parameter(
+      "lost_after_holds", 5,
+      describe_int(
+        "Consecutive depth frames without a fit before the state is LOST and "
+        "fusion_node stops integrating. A run, never one: bags/desk1 holds ~20% of "
+        "its depth frames as scattered singles, and LOST on the first would refuse a "
+        "fifth of the room.", 1, 1000)));
+  tracking_config.recover_after_fits = static_cast<std::size_t>(
+    declare_parameter(
+      "recover_after_fits", 2,
+      describe_int(
+        "Consecutive fits needed to leave LOST. tools/gates/lost.sh sets it past the "
+        "clip's length for its never-recovers control.", 1, 100000000)));
+  tracking_ = std::make_unique<TrackingMonitor>(tracking_config);
+  const std::string tracking_topic = declare_parameter(
+    "tracking_state_topic", std::string("/tracking/state"),
+    describe(
+      "Where OK / LOST goes, one message per depth frame. fusion_node's "
+      "tracking_state_topic must be the same string, and test_transforms asserts "
+      "it: a mismatch leaves fusion with no state for any frame, which it refuses."));
   keyframe_min_shared_ = static_cast<std::size_t>(
     declare_parameter(
       "keyframe_min_shared", 60,
@@ -494,6 +526,59 @@ OdometryNode::OdometryNode(const rclcpp::NodeOptions & options)
       "Where to write every keyframe's pose in map_frame, TUM format, once a stats "
       "window — the camera optical pose, the frame TUM's ground truth is in. Empty "
       "writes nothing. For tools/gates/loop.sh."));
+  // --- A saved map (#13's P20) ---------------------------------------------------
+  map_save_path_ = declare_parameter(
+    "map_save_path", std::string(""),
+    describe(
+      "Write the keyframe store here — each keyframe at its pose in map_frame — every "
+      "5 s while keyframes are being added, and once more at shutdown. Empty saves "
+      "nothing. See map_io.hpp for the format and for why map points are not in it."));
+  map_load_path_ = declare_parameter(
+    "map_load_path", std::string(""),
+    describe(
+      "Load a map saved by an earlier session. The session then starts LOST and leaves "
+      "LOST only by relocalising into it: map -> odom is set from the recovered pose, "
+      "and fusion_node integrates nothing until then. Empty loads nothing."));
+  if (!map_load_path_.empty()) {
+    if (!map_save_path_.empty()) {
+      throw rclcpp::exceptions::InvalidParameterValueException(
+              "map_load_path and map_save_path together would extend a map across "
+              "sessions, which is not built yet — see milestone-i-future.md");
+    }
+    if (loop_closure_) {
+      throw rclcpp::exceptions::InvalidParameterValueException(
+              "map_load_path with loop_closure:=true would give map -> odom two "
+              "authorities, the relocalisation and the pose graph");
+    }
+    if (regime_ != OdometryRegime::SixDof) {
+      throw rclcpp::exceptions::InvalidParameterValueException(
+              "map_load_path needs odometry:=sixdof — a relocalisation is verified against "
+              "depth landmarks, which rotation_only never reads");
+    }
+    const auto started = std::chrono::steady_clock::now();
+    const std::string why = load_keyframes(map_load_path_, loaded_map_);
+    if (!why.empty()) {
+      // Fatal, for the calibration loader's reason: a map somebody asked for and did
+      // not get is not a session without a map, it is a session that would say LOST
+      // for ever about a room it was told it knew.
+      throw std::runtime_error("map_load_path: " + why);
+    }
+    std::error_code ec;
+    const auto bytes = std::filesystem::file_size(map_load_path_, ec);
+    reloc_stats_.loaded = loaded_map_.size();
+    reloc_stats_.load_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - started).count();
+    reloc_stats_.file_mb = ec ? -1.0 : static_cast<double>(bytes) / 1e6;
+    TrackingMonitor::Config relocalising = tracking_->config();
+    relocalising.recover_by_relocalisation = true;
+    tracking_ = std::make_unique<TrackingMonitor>(relocalising);
+    RCLCPP_INFO(
+      get_logger(),
+      "map loaded: keyframes=%zu file_mb=%.2f load_ms=%.1f from %s — starting LOST until "
+      "a relocalisation into it", reloc_stats_.loaded, reloc_stats_.file_mb,
+      reloc_stats_.load_ms, map_load_path_.c_str());
+  }
+
   mapper_ = std::make_unique<pimesh_backend::LocalMapper>(*map_, mapper_config);
   mapper_->start();
   map_points_period_s_ = declare_parameter(
@@ -587,6 +672,12 @@ OdometryNode::OdometryNode(const rclcpp::NodeOptions & options)
 
   stats_pub_ = create_publisher<pimesh_msgs::msg::PipelineStats>("/pipeline/stats", 10);
 
+  // **Reliable and deep, because fusion_node looks each one up by exact stamp.** A
+  // state the middleware dropped is a frame fusion refuses for want of one — the
+  // safe direction, but a frame lost all the same. 60 is ~3.5 s of depth.
+  tracking_pub_ = create_publisher<pimesh_msgs::msg::TrackingState>(
+    tracking_topic, rclcpp::QoS(rclcpp::KeepLast(60)).reliable());
+
   // Latched, so a viewer started after the last keyframe still gets the map. A
   // VOLATILE reader against this writer is compatible and simply misses the stored
   // one — see the note on /world/mesh in CLAUDE.md for why that mismatch is legal.
@@ -644,7 +735,99 @@ OdometryNode::~OdometryNode()
 {
   depth_mailbox_.stop();
   if (pose_worker_.joinable()) {pose_worker_.join();}
+  // The last word, after the worker has stopped adding keyframes: whatever the 5 s
+  // cadence had not written yet.
+  if (!map_save_path_.empty()) {
+    if (places_) {places_->flush();}
+    save_map("shutdown");
+  }
+  relocaliser_.reset();
   places_.reset();
+}
+
+void OdometryNode::save_map(const char * why)
+{
+  const auto started = std::chrono::steady_clock::now();
+  // Each keyframe at its pose in the map frame: the pose graph's corrected pose where
+  // loop closure has one, else the current map <- odom (identity without closure).
+  std::unordered_map<std::int64_t, cv::Affine3d> corrected;
+  cv::Affine3d map_from_odom = cv::Affine3d::Identity();
+  if (places_) {
+    map_from_odom = places_->map_from_odom();
+    if (loop_closure_) {
+      for (const auto & [stamp, pose] : places_->trajectory()) {corrected[stamp] = pose;}
+    }
+  }
+  std::deque<Keyframe> out;
+  for (const Keyframe & kf : keyframes_.frames()) {
+    Keyframe copy = kf;
+    const auto found = corrected.find(kf.stamp_ns);
+    copy.odom_from_camera =
+      found != corrected.end() ? found->second : map_from_odom * kf.odom_from_camera;
+    out.push_back(std::move(copy));
+  }
+  const std::string error = save_keyframes(map_save_path_, out);
+  const double ms = std::chrono::duration<double, std::milli>(
+    std::chrono::steady_clock::now() - started).count();
+  if (!error.empty()) {
+    RCLCPP_ERROR(get_logger(), "map not saved (%s): %s", why, error.c_str());
+    return;
+  }
+  std::error_code ec;
+  const auto bytes = std::filesystem::file_size(map_save_path_, ec);
+  {
+    std::lock_guard<std::mutex> lock(reloc_mutex_);
+    ++reloc_stats_.saves;
+    reloc_stats_.saved_keyframes = out.size();
+    reloc_stats_.save_ms = ms;
+    reloc_stats_.saved_mb = ec ? -1.0 : static_cast<double>(bytes) / 1e6;
+  }
+  RCLCPP_INFO(
+    get_logger(), "map saved (%s): keyframes=%zu file_mb=%.2f save_ms=%.1f to %s", why,
+    out.size(), ec ? -1.0 : static_cast<double>(bytes) / 1e6, ms, map_save_path_.c_str());
+}
+
+void OdometryNode::apply_relocalisations()
+{
+  if (!relocaliser_) {return;}
+  for (const Relocalisation & r : relocaliser_->take_results()) {
+    if (!r.accepted) {continue;}
+    bool applied = false;
+    std::uint64_t lost_frames = 0;
+    {
+      std::lock_guard<std::mutex> lock(tracking_mutex_);
+      applied = tracking_->relocalised();
+      lost_frames = tracking_->lost_frames();
+    }
+    if (!applied) {
+      // An answer to a query asked while LOST, arriving after an earlier answer
+      // already fixed the map frame. Moving it again would be a jump in map -> odom
+      // with nothing new to justify it.
+      std::lock_guard<std::mutex> lock(reloc_mutex_);
+      ++reloc_stats_.ignored;
+      continue;
+    }
+    // **Set, not accumulated** — P7's keyframe lesson one frame up: the map pose of
+    // this frame is measured against the saved keyframe directly, so map <- odom is
+    // that measurement composed with this frame's odom pose, once.
+    const cv::Affine3d map_from_odom = r.map_from_camera * r.odom_from_camera.inv();
+    {
+      std::lock_guard<std::mutex> lock(reloc_mutex_);
+      reloc_map_from_odom_ = map_from_odom;
+      ++reloc_stats_.applied;
+    }
+    const cv::Vec3d t(r.map_from_camera.translation());
+    const cv::Vec4d q = quaternion_from_rotation(r.map_from_camera.rotation());
+    // Read by tools/gates/relocalise.sh and scored against motion capture: the query
+    // camera's pose in the saved map, TUM order (x y z qx qy qz qw).
+    RCLCPP_INFO(
+      get_logger(),
+      "relocalised query_ns=%lld candidate_ns=%lld inliers=%zu matches=%zu searched=%zu "
+      "ms=%.1f lost_frames=%lu pose=%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
+      static_cast<long long>(r.query_stamp_ns), static_cast<long long>(r.candidate_stamp_ns),
+      r.inliers, r.matches, r.searched, r.ms, static_cast<unsigned long>(lost_frames),
+      t[0], t[1], t[2], q[0], q[1], q[2], q[3]);
+  }
 }
 
 void OdometryNode::on_keypoints(pimesh_msgs::msg::Keypoints::ConstSharedPtr msg)
@@ -772,7 +955,14 @@ std::shared_ptr<const OdometryNode::FrameRecord> OdometryNode::record_at(std::in
 void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
 {
   ++depth_frames_;
-  if (regime_ != OdometryRegime::SixDof) {return;}
+  if (regime_ != OdometryRegime::SixDof) {
+    // rotation_only estimates on the image stamps, not these; the state at a depth
+    // stamp is whether that chain is holding. Published all the same, because
+    // fusion_node refuses a frame it has no state for, and gates/odom.sh's control
+    // run integrates in this regime.
+    track(!holding_.load(), msg->header.stamp);
+    return;
+  }
 
   const auto start = std::chrono::steady_clock::now();
 
@@ -785,6 +975,7 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
         "no /camera_info yet — holding pose. Unprojection needs K, and a pose from "
         "invented intrinsics is confidently wrong rather than absent.");
       ++shift_held_;
+      track(false, msg->header.stamp);
       return;
     }
     k = k_;
@@ -797,6 +988,7 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
       "depth frame with encoding '%s' %ux%u step %u is not usable 32FC1",
       msg->encoding.c_str(), msg->width, msg->height, msg->step);
     ++shift_held_;
+    track(false, msg->header.stamp);
     return;
   }
 
@@ -814,11 +1006,13 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
       "no ORB output at the depth map's own stamp — %lu so far. The history is %zu "
       "frames; a persistent count means depth has fallen further behind than that.",
       static_cast<unsigned long>(depth_unmatched_.load()), history_frames_);
+    track(false, msg->header.stamp);
     return;
   }
 
   if (!ensure_basis(record->optical_frame)) {
     ++shift_held_;
+    track(false, msg->header.stamp);
     return;
   }
 
@@ -1208,7 +1402,53 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
     odom_from_camera = odom_from_camera_now;
   }
 
+  // An answer from the relocaliser lands before this frame's state is decided, so a
+  // relocalisation takes effect at this stamp — state and map -> odom together.
+  apply_relocalisations();
+  // The state first, then the pose: fusion_node waits for the transform and reads
+  // the state it finds, so the state has to be on the wire by then.
+  track(fit_ok, msg->header.stamp);
   publish_pose(rclcpp::Time(msg->header.stamp, RCL_ROS_TIME));
+
+  // --- While LOST with a saved map: ask it where this is (#13's P20) ----------------
+  //
+  // Only a frame with a *fitted* pose is asked about. The answer is turned into
+  // map <- odom through this frame's odom pose, and a held pose is wrong by however
+  // far the camera moved since it was last fitted — which would be baked into every
+  // pose after it.
+  if (!map_load_path_.empty() && fit_ok) {
+    bool lost = false;
+    {
+      std::lock_guard<std::mutex> lock(tracking_mutex_);
+      lost = tracking_->state() == Tracking::Lost;
+    }
+    if (lost) {
+      if (!relocaliser_) {
+        Relocaliser::Config config;
+        config.place = place_config_.place;
+        config.place.focal_px = k(0, 0);
+        relocaliser_ = std::make_unique<Relocaliser>(config, std::move(loaded_map_));
+        relocaliser_->start();
+        RCLCPP_INFO(
+          get_logger(), "relocaliser up: keyframes=%zu min_inliers=%zu focal_px=%.1f",
+          relocaliser_->size(), config.place.min_inliers, config.place.focal_px);
+      }
+      Keyframe query;
+      query.stamp_ns = when;
+      query.odom_from_camera = odom_from_camera;
+      query.descriptors = record->descriptors.clone();
+      query.track_ids = record->ids;
+      query.bearings.reserve(record->pixels.size());
+      for (const cv::Point2f & pixel : record->pixels) {
+        query.bearings.push_back(bearing(k, pixel.x, pixel.y));
+      }
+      query.landmark_row = landmark_rows;
+      query.landmarks = landmark_points;
+      relocaliser_->submit(std::move(query));
+      std::lock_guard<std::mutex> lock(reloc_mutex_);
+      ++reloc_stats_.submitted;
+    }
+  }
 
   // --- Retiring the reference --------------------------------------------------
   //
@@ -1303,7 +1543,18 @@ void OdometryNode::process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg)
       for_places = frame;
       for_places->descriptors = frame.descriptors.clone();
     }
-    if (keyframes_.maybe_insert(std::move(frame)) && for_places) {
+    const bool inserted = keyframes_.maybe_insert(std::move(frame));
+    // #13's P20: the map file, at most every 5 s of stamps while keyframes arrive. On
+    // this thread because the store is this thread's; ~40 kB a keyframe, measured and
+    // printed as save_ms rather than assumed cheap.
+    if (inserted && !map_save_path_.empty() && keyframes_.size() != keyframes_at_last_save_ &&
+      when - last_map_save_ns_ >= 5000000000LL)
+    {
+      last_map_save_ns_ = when;
+      keyframes_at_last_save_ = keyframes_.size();
+      save_map("periodic");
+    }
+    if (inserted && for_places) {
       if (!places_) {
         place_config_.place.focal_px = k(0, 0);
         places_ = std::make_unique<PlaceRecognizer>(place_config_);
@@ -1491,6 +1742,38 @@ void OdometryNode::update_pose(
   ++pose_ok_;
 }
 
+void OdometryNode::track(bool posed, const builtin_interfaces::msg::Time & stamp)
+{
+  auto out = std::make_unique<pimesh_msgs::msg::TrackingState>();
+  out->header.stamp = stamp;
+  out->header.frame_id = base_frame_;
+  out->posed = posed;
+  {
+    std::lock_guard<std::mutex> lock(tracking_mutex_);
+    const bool changed = tracking_->observe(posed);
+    out->state = tracking_->state() == Tracking::Ok ?
+      pimesh_msgs::msg::TrackingState::OK : pimesh_msgs::msg::TrackingState::LOST;
+    out->holds = static_cast<std::uint32_t>(tracking_->holds());
+    // One line per transition, with the stamp, because tools/gates/lost.sh measures
+    // how many depth frames each took against a blackout it injected by stamp.
+    if (changed && tracking_->state() == Tracking::Lost) {
+      RCLCPP_WARN(
+        get_logger(),
+        "tracking LOST stamp_ns=%lld after %zu depth frames without a fit — fusion_node "
+        "stops integrating until %zu fits in a row",
+        static_cast<long long>(rclcpp::Time(stamp).nanoseconds()), tracking_->holds(),
+        tracking_->config().recover_after_fits);
+    } else if (changed) {
+      RCLCPP_INFO(
+        get_logger(),
+        "tracking OK stamp_ns=%lld after %zu fits in a row; %llu depth frames LOST so far",
+        static_cast<long long>(rclcpp::Time(stamp).nanoseconds()), tracking_->fits(),
+        static_cast<unsigned long long>(tracking_->lost_frames()));
+    }
+  }
+  tracking_pub_->publish(std::move(out));
+}
+
 void OdometryNode::publish_pose(const rclcpp::Time & stamp)
 {
   {
@@ -1528,7 +1811,14 @@ void OdometryNode::publish_pose(const rclcpp::Time & stamp)
     // TF_OLD_DATA at the frame rate, from inside the buffer's lock, which is the
     // stall CLAUDE.md records. A correction therefore takes effect at the next frame
     // and is never back-dated.
-    const cv::Affine3d correction = places_ ? places_->map_from_odom() : cv::Affine3d::Identity();
+    cv::Affine3d correction = places_ ? places_->map_from_odom() : cv::Affine3d::Identity();
+    // With a saved map the relocalisation is the one authority for this edge (the
+    // constructor refuses loop closure beside it). Identity until the first one —
+    // the state is LOST until then, so nothing downstream reads through it.
+    if (!map_load_path_.empty()) {
+      std::lock_guard<std::mutex> lock(reloc_mutex_);
+      correction = reloc_map_from_odom_;
+    }
     const cv::Vec3d ct(correction.translation());
     const cv::Vec4d cq = quaternion_from_rotation(correction.rotation());
     geometry_msgs::msg::TransformStamped map_tf;
@@ -1870,6 +2160,51 @@ void OdometryNode::log_stats()
       places.correction_m, places.correction_deg);
   }
 
+  // --- The tracking state (#13's P19) ------------------------------------------
+  //
+  // Cumulative, and read by tools/gates/lost.sh. `frames` is the denominator the
+  // monitor saw — every depth frame — so `lost_frames / frames` is the share of the
+  // session fusion_node was told to refuse.
+  Tracking tracking_now;
+  {
+    std::lock_guard<std::mutex> lock(tracking_mutex_);
+    tracking_now = tracking_->state();
+    RCLCPP_INFO(
+      get_logger(),
+      "stats tracking state=%s frames=%lu lost_frames=%lu entered_lost=%lu recovered=%lu "
+      "longest_hold_run=%zu lost_after_holds=%zu recover_after_fits=%zu",
+      tracking_name(tracking_now), static_cast<unsigned long>(tracking_->frames()),
+      static_cast<unsigned long>(tracking_->lost_frames()),
+      static_cast<unsigned long>(tracking_->entered_lost()),
+      static_cast<unsigned long>(tracking_->recovered()), tracking_->longest_hold_run(),
+      tracking_->config().lost_after_holds, tracking_->config().recover_after_fits);
+  }
+
+  // --- The saved map and relocalisation (#13's P20) -------------------------------
+  {
+    Relocaliser::Stats searched;
+    if (relocaliser_) {searched = relocaliser_->stats();}
+    RelocStats r;
+    {
+      std::lock_guard<std::mutex> lock(reloc_mutex_);
+      r = reloc_stats_;
+    }
+    auto pct = [](const std::vector<double> & v, double p) {
+        return v.empty() ? -1.0 : pimesh_core::percentile(v, p);
+      };
+    RCLCPP_INFO(
+      get_logger(),
+      "stats reloc map_loaded=%s keyframes=%zu load_ms=%.1f file_mb=%.2f submitted=%lu "
+      "queries=%lu skipped=%lu accepted=%lu applied=%lu ignored=%lu query_ms=%.2f "
+      "query_ms_p95=%.2f niced=%s saves=%lu saved_keyframes=%zu save_ms=%.1f saved_mb=%.2f",
+      map_load_path_.empty() ? "false" : "true", r.loaded, r.load_ms, r.file_mb,
+      static_cast<unsigned long>(r.submitted), static_cast<unsigned long>(searched.queries),
+      static_cast<unsigned long>(searched.skipped), static_cast<unsigned long>(searched.accepted),
+      static_cast<unsigned long>(r.applied), static_cast<unsigned long>(r.ignored),
+      pct(searched.query_ms, 0.5), pct(searched.query_ms, 0.95), searched.niced ? "true" : "false",
+      static_cast<unsigned long>(r.saves), r.saved_keyframes, r.save_ms, r.saved_mb);
+  }
+
   // --- The same numbers, on a topic, for P8's dashboard ------------------------
   //
   // **One row, where this was the second of two until the split.** The node
@@ -1899,8 +2234,8 @@ void OdometryNode::log_stats()
   char detail[192];
   std::snprintf(
     detail, sizeof(detail),
-    "%s held=%lu traj=%.2fm net=%.2fm reproj=%.2fpx shared=%.0f keyframes=%zu",
-    regime_name(regime_), static_cast<unsigned long>(refused),
+    "%s %s held=%lu traj=%.2fm net=%.2fm reproj=%.2fpx shared=%.0f keyframes=%zu",
+    tracking_name(tracking_now), regime_name(regime_), static_cast<unsigned long>(refused),
     trajectory_m_.load(), net_displacement(),
     (shifted > 0) ? reprojection_sum_px_.load() / shifted_d : 0.0,
     (depth_total > 0.0) ? pair_sum_.load() / depth_total : 0.0,

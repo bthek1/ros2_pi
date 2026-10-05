@@ -187,6 +187,18 @@ FusionNode::FusionNode(const rclcpp::NodeOptions & options)
       "it ~50 ms before depth finishes, so this is slack and not a design rate.",
       0.0, 2000.0)) / 1000.0;
 
+  const std::string tracking_topic = declare_parameter(
+    "tracking_state_topic", std::string("/tracking/state"),
+    describe(
+      "odometry_node's OK / LOST, one per depth frame. A frame is integrated only "
+      "with an OK state at its own stamp; LOST and no state at all are both refused. "
+      "Must equal odometry_node's tracking_state_topic — test_transforms asserts it."));
+  fuse_while_lost_ = declare_parameter(
+    "fuse_while_lost", false,
+    describe(
+      "Integrate LOST frames anyway. tools/gates/lost.sh's control run and nothing "
+      "else: a refusal nobody has watched fail to happen is not an assertion."));
+
   agree_tolerance_ = declare_parameter(
     "agree_tolerance", 0.05,
     describe_double(
@@ -302,6 +314,11 @@ FusionNode::FusionNode(const rclcpp::NodeOptions & options)
   info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
     info_topic, info_qos,
     [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr msg) {on_camera_info(std::move(msg));});
+  // Matches the writer: reliable and deep, because each one is looked up by stamp.
+  // A shared const pointer — the dashboard reads this topic too.
+  tracking_sub_ = create_subscription<pimesh_msgs::msg::TrackingState>(
+    tracking_topic, rclcpp::QoS(rclcpp::KeepLast(60)).reliable(),
+    [this](pimesh_msgs::msg::TrackingState::ConstSharedPtr msg) {on_tracking(std::move(msg));});
 
   // The contract the dashboard reads in P8: every stage says what it measured
   // about itself and the dashboard computes nothing. Publishing it now rather
@@ -325,6 +342,10 @@ FusionNode::FusionNode(const rclcpp::NodeOptions & options)
     depth_topic.c_str(), rgb_topic.c_str(), volume_key.c_str(), world_frame_.c_str(),
     static_cast<double>(volume.voxel_size_m) * 1000.0, volume.truncation_voxels,
     static_cast<double>(volume.min_weight), align_ ? "on" : "OFF (control)");
+  RCLCPP_INFO(
+    get_logger(), "tracking state from %s: %s", tracking_topic.c_str(),
+    fuse_while_lost_ ? "LOST frames are INTEGRATED (control)" :
+    "a frame is integrated only with an OK state at its own stamp");
 }
 
 FusionNode::~FusionNode()
@@ -396,6 +417,38 @@ void FusionNode::work()
   while (!mailbox_.stopped()) {
     auto frame = mailbox_.pop(std::chrono::milliseconds(100));
     if (frame) {process(*frame);}
+  }
+}
+
+void FusionNode::on_tracking(pimesh_msgs::msg::TrackingState::ConstSharedPtr msg)
+{
+  {
+    std::lock_guard<std::mutex> lock(tracking_mutex_);
+    recent_states_.push_back(std::move(msg));
+    while (recent_states_.size() > state_history_) {recent_states_.pop_front();}
+  }
+  tracking_arrived_.notify_all();
+}
+
+pimesh_msgs::msg::TrackingState::ConstSharedPtr FusionNode::state_at(
+  const builtin_interfaces::msg::Time & stamp)
+{
+  const auto deadline = std::chrono::steady_clock::now() +
+    std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+    std::chrono::duration<double>(tf_timeout_s_));
+  std::unique_lock<std::mutex> lock(tracking_mutex_);
+  for (;;) {
+    // Newest first: the state for a frame is published just before its transform,
+    // which this worker has already waited for, so it is nearly always at the back.
+    for (auto it = recent_states_.rbegin(); it != recent_states_.rend(); ++it) {
+      if ((*it)->header.stamp == stamp) {return *it;}
+    }
+    if (tracking_arrived_.wait_until(lock, deadline) == std::cv_status::timeout) {
+      for (auto it = recent_states_.rbegin(); it != recent_states_.rend(); ++it) {
+        if ((*it)->header.stamp == stamp) {return *it;}
+      }
+      return nullptr;
+    }
   }
 }
 
@@ -493,6 +546,35 @@ void FusionNode::process(Frame & frame)
     return;
   }
 
+  // --- Does the tracker trust that pose? (#13's P19) ---------------------------
+  //
+  // After the pose and not instead of it: a LOST frame *has* a pose — the held one,
+  // published on purpose so TF stays continuous — and that is exactly the problem.
+  // Before alignment, so a refused frame costs no ray-cast and never moves the
+  // aligner's baseline.
+  const auto tracking = state_at(frame.depth->header.stamp);
+  if (!tracking) {
+    no_state_.fetch_add(1, std::memory_order_relaxed);
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "no tracking state at a depth frame's stamp — %lu refused so far. Unknown is not "
+      "OK; is odometry_node publishing on this node's tracking_state_topic?",
+      static_cast<unsigned long>(no_state_.load(std::memory_order_relaxed)));
+    return;
+  }
+  const bool lost = tracking->state != pimesh_msgs::msg::TrackingState::OK;
+  if (lost && !fuse_while_lost_) {
+    refused_lost_.fetch_add(1, std::memory_order_relaxed);
+    // **A refusal restarts the interval clock.** `interval_ms_` is the gap between
+    // two integrations, and gates/mesh.sh reads its maximum as a stall the mesher
+    // caused. A LOST stretch is a pause by design — measured 2026-10-02, desk1's own
+    // LOST stretch put a 4.2 s "gap" into both of mesh.sh's runs, mesher or not, and
+    // failed it. A pause and a stall must not have the same spelling.
+    std::lock_guard<std::mutex> lock(sample_mutex_);
+    have_last_integration_ = false;
+    return;
+  }
+
   // --- Alignment ------------------------------------------------------------
   //
   // The ray-cast runs at a fraction of the frame's resolution and the incoming
@@ -583,6 +665,13 @@ void FusionNode::process(Frame & frame)
 
   volume_->note_integrated();
   integrated_.fetch_add(1, std::memory_order_relaxed);
+  voxels_total_.fetch_add(result.voxels_updated, std::memory_order_relaxed);
+  if (lost) {
+    integrated_lost_.fetch_add(1, std::memory_order_relaxed);
+    voxels_lost_.fetch_add(result.voxels_updated, std::memory_order_relaxed);
+  } else if (!tracking->posed) {
+    integrated_held_.fetch_add(1, std::memory_order_relaxed);
+  }
   const double total_ms = ms_since(started);
 
   {
@@ -912,12 +1001,31 @@ void FusionNode::log_stats()
   char detail[256];
   std::snprintf(
     detail, sizeof(detail),
-    "%s blocks=%zu agree=%.0f%% gap=%.1fcm no_pose=%lu unpaired=%lu",
+    "%s blocks=%zu agree=%.0f%% gap=%.1fcm refused_lost=%lu no_pose=%lu unpaired=%lu",
     align_ ? "aligned" : "unaligned", blocks, mean_of(agree) * 100.0, mean_of(gap) * 100.0,
+    static_cast<unsigned long>(refused_lost_.load(std::memory_order_relaxed)),
     static_cast<unsigned long>(no_pose_.load(std::memory_order_relaxed)),
     static_cast<unsigned long>(unpaired_.load(std::memory_order_relaxed)));
   msg->detail = detail;
   stats_pub_->publish(std::move(msg));
+
+  // --- #13's P19, on a line of its own -------------------------------------------------
+  //
+  // Cumulative. tools/gates/lost.sh asserts voxels_lost == 0 **beside** refused_lost > 0,
+  // because the first is zero by construction whenever nothing reaches the increment —
+  // including when the refusal never ran.
+  RCLCPP_INFO(
+    get_logger(),
+    "stats lost fuse_while_lost=%s refused_lost=%lu no_state=%lu integrated_lost=%lu "
+    "voxels_lost=%lu integrated_held=%lu integrated=%lu voxels_total=%lu",
+    fuse_while_lost_ ? "true" : "false",
+    static_cast<unsigned long>(refused_lost_.load(std::memory_order_relaxed)),
+    static_cast<unsigned long>(no_state_.load(std::memory_order_relaxed)),
+    static_cast<unsigned long>(integrated_lost_.load(std::memory_order_relaxed)),
+    static_cast<unsigned long>(voxels_lost_.load(std::memory_order_relaxed)),
+    static_cast<unsigned long>(integrated_held_.load(std::memory_order_relaxed)),
+    static_cast<unsigned long>(integrated),
+    static_cast<unsigned long>(voxels_total_.load(std::memory_order_relaxed)));
 
   // --- The rebuild (#12's P18), on a line of its own ---------------------------------
   //

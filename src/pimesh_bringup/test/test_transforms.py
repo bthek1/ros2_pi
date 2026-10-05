@@ -355,11 +355,13 @@ def test_the_launch_description_actually_builds(launch_module):
     # intra_process, log_payloads, probe, probe_duration_s, align,
     # remesh_period_s, dashboard, dashboard_port, odom_regime, local_map, local_ba,
     # ba_depth_scale_sigma, loop_closure, keyframe_trajectory_path, rebuild,
-    # rebuild_control, memory_dump_dir, source,
+    # rebuild_control, memory_dump_dir, blackout_start_s, blackout_s,
+    # fuse_while_lost, recover_after_fits (#13's P19), map_save_path,
+    # map_load_path, dataset_skip_frames, dataset_max_frames (#13's P20), source,
     # dataset_dir, trajectory_path, use_cuda, pipeline — each exists because
     # something outside this file has to be able to set it: all but the last for
     # gates and viewers, the last for tools/view/replay.sh.
-    assert kinds.get(DeclareLaunchArgument) == 22
+    assert kinds.get(DeclareLaunchArgument) == 30
     # One per probe **and one per source**, loaded into the running container
     # rather than listed in it, because `composable_node_descriptions` is built
     # when this file is evaluated and cannot be made conditional on an argument.
@@ -694,6 +696,9 @@ def test_the_overrides_are_the_ones_the_gates_actually_pass(launch_module):
         'ba_depth_scale_sigma': float, 'loop_closure': bool,
         'keyframe_trajectory_path': str, 'rebuild': bool, 'rebuild_control': bool,
         'memory_dump_dir': str,
+        'blackout_start_s': float, 'blackout_s': float, 'fuse_while_lost': bool,
+        'recover_after_fits': int, 'map_save_path': str, 'map_load_path': str,
+        'skip_frames': int, 'max_frames': int,
         'dataset_dir': str, 'trajectory_path': str}
     overrides = _override_values(launch_module)
 
@@ -1407,3 +1412,109 @@ def test_map_to_odom_has_exactly_one_publisher_either_way(launch_module):
         running = [a for a in plain if a.condition is None or a.condition.evaluate(context)]
         statics = len(launch_module.STATIC_TRANSFORMS) - 1 + static_expected
         assert len(running) == statics, f'pipeline:={pipeline}: {len(running)} plain nodes'
+
+
+def _launch_defaults(launch_module):
+    """{override name: (launch argument, its default as text)} for every override."""
+    from launch.actions import DeclareLaunchArgument
+
+    declared = {
+        entity.name: entity.default_value
+        for entity in launch_module.generate_launch_description().entities
+        if isinstance(entity, DeclareLaunchArgument)
+    }
+    out = {}
+    for name, value in _override_values(launch_module).items():
+        # A ParameterValue keeps its substitution list privately; the one entry is the
+        # LaunchConfiguration whose argument supplies the value.
+        (configuration,) = value._ParameterValue__value
+        argument = ''.join(part.text for part in configuration.variable_name)
+        default = declared[argument]
+        out[name] = (argument, value.value_type,
+                     ''.join(part.text for part in default) if default else None)
+    return out
+
+
+def test_no_launch_override_quietly_replaces_what_the_yaml_says(config, launch_module):
+    """**An override is applied after the YAML, so its default always wins.**
+
+    `_component` threads every override into every component, *after* the keyed
+    YAML, on every launch — not only when a gate passes the argument. So an
+    argument whose default drifts from the YAML value is not a default at all: the
+    file says one thing, the node runs another, and the file is the one somebody
+    reads. That is the trap this project already found once at the parameter-name
+    level (`test_no_parameter_in_the_yaml_is_read_by_nobody`); this is the same
+    trap one level along, on the value.
+
+    Written with #13's P19, whose `recover_after_fits` is the first override that is
+    a tuning number rather than a switch — the kind somebody re-tunes in the YAML
+    and expects to take effect.
+    """
+    defaults = _launch_defaults(launch_module)
+    assert len(defaults) >= 15, f'only {len(defaults)} overrides found'
+    nodes = [name for name, _, _ in
+             launch_module.COMPONENTS + launch_module.PROBE_COMPONENTS +
+             launch_module.SOURCE_COMPONENTS]
+    compared = 0
+    for name, (argument, value_type, text) in defaults.items():
+        for node in nodes:
+            section = config.get(f'/**/{node}', {}).get('ros__parameters', {})
+            if name not in section:
+                continue
+            if value_type is bool:
+                launched = text == 'true'
+            else:
+                launched = value_type(text)
+            assert launched == section[name], (
+                f"launch argument '{argument}' defaults to {text!r}, which replaces "
+                f"{node}'s {name}: {section[name]!r} from config/pimesh.yaml on every launch")
+            compared += 1
+    # A floor, so a fixture that stopped finding the YAML sections is not a pass.
+    assert compared >= 8, f'only {compared} override/YAML pairs compared'
+
+
+def test_fusion_reads_the_tracking_state_odometry_writes(config):
+    """**The seventh pair, and #13's P19's second false green: a state nobody reads.**
+
+    odometry_node says LOST and fusion_node refuses to integrate — but only if they
+    name the same topic. fusion_node refuses a frame it has *no* state for, so a
+    mismatch is an empty map rather than a map fused through every blackout; still
+    a pipeline that runs, and this is the hermetic half of catching it.
+    """
+    odometry = config['/**/odometry_node']['ros__parameters']
+    fusion = config['/**/fusion_node']['ros__parameters']
+    assert odometry['tracking_state_topic'] == fusion['tracking_state_topic'], (
+        f"odometry_node publishes OK/LOST on '{odometry['tracking_state_topic']}' and "
+        f"fusion_node reads '{fusion['tracking_state_topic']}' — it would refuse every frame")
+
+
+def test_the_dashboard_reads_the_tracking_state_odometry_writes(config):
+    """The page's LOST flag. A mismatch here fails quietly the other way: the flag
+    reads UNKNOWN for ever, which on a dark page is easy to take as "no news"."""
+    odometry = config['/**/odometry_node']['ros__parameters']
+    dashboard = config['/**/dashboard_node']['ros__parameters']
+    assert odometry['tracking_state_topic'] == dashboard['tracking_state_topic']
+
+
+def test_lost_is_reachable_and_recoverable(config):
+    """Both thresholds at least one, and the committed config not the gate's control.
+
+    `recover_after_fits` past the length of a clip is tools/gates/lost.sh's
+    never-recovers control; committed, it would be a pipeline that stops mapping at
+    the first blackout of every session and has a perfect record about it.
+    """
+    odometry = config['/**/odometry_node']['ros__parameters']
+    assert odometry['lost_after_holds'] >= 1
+    assert 1 <= odometry['recover_after_fits'] <= 30
+    assert config['/**/fusion_node']['ros__parameters']['fuse_while_lost'] is False
+    assert config['/**/decode_node']['ros__parameters']['blackout_s'] == 0.0
+
+
+def test_no_committed_session_loads_or_saves_a_map(config):
+    """#13's P20. A committed `map_load_path` is a pipeline that starts every session
+    LOST and fuses nothing until it recognises a room somebody saved once — on a new
+    room, for ever. A committed `map_save_path` overwrites that file every session.
+    Both belong to a gate or to a person who asked."""
+    odometry = config['/**/odometry_node']['ros__parameters']
+    assert odometry['map_load_path'] == ''
+    assert odometry['map_save_path'] == ''

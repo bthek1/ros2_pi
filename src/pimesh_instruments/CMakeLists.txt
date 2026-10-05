@@ -31,6 +31,18 @@ if(BUILD_TESTING)
   # matching, and scoring a featureless frame as zero.
   ament_add_pytest_test(test_orb_reference test/test_orb_reference.py)
 
+  # #13's P19. gates/lost.sh asserts how many depth frames LOST and OK took against
+  # an injected blackout, and this is what counts them. Three of its failure modes
+  # flatter the tracker: UNKNOWN read as OK, an earlier LOST credited to the
+  # blackout, and stamps compared as doubles past 2^53.
+  ament_add_pytest_test(test_lost_timeline test/test_lost_timeline.py)
+
+  # #13's P20. gates/relocalise.sh asserts how far a relocalised pose is from motion
+  # capture, through a Sim(3) fitted on the saved map's keyframes. Left in the map's
+  # own units the error would read at half its size on fr1/desk, and a relocalised
+  # pose let into its own alignment has nothing to disagree with.
+  ament_add_pytest_test(test_reloc_truth test/test_reloc_truth.py)
+
   # P16's judge. gates/place.sh closes the phase on the precision this computes
   # against motion capture, and every way it can be wrong flatters the detector:
   # an unjudged closure counted true, a relative pose compared inverted, a

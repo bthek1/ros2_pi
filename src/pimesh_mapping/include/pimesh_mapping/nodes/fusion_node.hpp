@@ -15,6 +15,7 @@
 #include "nav_msgs/msg/path.hpp"
 #include "opencv2/core/affine.hpp"
 #include "pimesh_msgs/msg/pipeline_stats.hpp"
+#include "pimesh_msgs/msg/tracking_state.hpp"
 #include "pimesh_core/mailbox.hpp"
 #include "pimesh_mapping/rebuild.hpp"
 #include "pimesh_mapping/scale_aligner.hpp"
@@ -99,6 +100,12 @@ private:
   void process(Frame & frame);
   sensor_msgs::msg::Image::ConstSharedPtr colour_for(const builtin_interfaces::msg::Time & stamp);
   bool pose_at(const builtin_interfaces::msg::Time & stamp, cv::Affine3d & world_from_camera);
+  // --- #13's P19: the tracking state --------------------------------------------
+  void on_tracking(pimesh_msgs::msg::TrackingState::ConstSharedPtr msg);
+  /// The state odometry_node published at exactly `stamp`, waiting up to
+  /// `tf_timeout_ms` for it; nullptr if none came. Exact, like every rendezvous here.
+  pimesh_msgs::msg::TrackingState::ConstSharedPtr state_at(
+    const builtin_interfaces::msg::Time & stamp);
   void log_stats();
   // --- #12's P18: frame memory and the rebuild ---------------------------------
   void remember(
@@ -180,6 +187,33 @@ private:
     double agree_control {-1.0};
     bool niced {false};
   } rebuild_stats_;
+
+  // --- #13's P19: refusing to fuse while LOST ------------------------------------
+  //
+  // **A frame is integrated only with an OK state at its own stamp.** LOST is refused,
+  // and so is *no state at all*: a fusion_node whose tracking_state_topic matches
+  // nothing would otherwise fuse through every blackout with nothing to say so, which
+  // is the volume_key failure. Refusing makes the same mismatch an empty map instead —
+  // loud — and `no_state` says why.
+  rclcpp::Subscription<pimesh_msgs::msg::TrackingState>::SharedPtr tracking_sub_;
+  std::mutex tracking_mutex_;
+  std::condition_variable tracking_arrived_;
+  std::deque<pimesh_msgs::msg::TrackingState::ConstSharedPtr> recent_states_;
+  std::size_t state_history_ {120};
+  /// tools/gates/lost.sh's control: integrate LOST frames anyway, so "0 voxels while
+  /// LOST" has been watched to fail. Never a setting anybody should choose.
+  bool fuse_while_lost_ {false};
+  std::atomic<std::uint64_t> refused_lost_ {0};
+  std::atomic<std::uint64_t> no_state_ {0};
+  /// Integrated with an OK state whose pose was *held* — the hysteresis tolerating a
+  /// short run of holds. Counted, because each is a frame fused at a stale pose.
+  std::atomic<std::uint64_t> integrated_held_ {0};
+  /// The control's evidence: frames and voxels integrated while LOST. **Zero in the
+  /// real run because nothing reaches the increment**, which is why the gate reads
+  /// `refused_lost > 0` beside it — a zero from a check that ran.
+  std::atomic<std::uint64_t> integrated_lost_ {0};
+  std::atomic<std::uint64_t> voxels_lost_ {0};
+  std::atomic<std::uint64_t> voxels_total_ {0};
 
   std::string world_frame_ {"map"};
   std::string optical_frame_ {"camera_optical_frame"};

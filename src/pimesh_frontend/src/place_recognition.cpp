@@ -221,11 +221,13 @@ PlaceResult find_place(
   std::vector<Scored> scored;
   for (std::size_t i = 0; i < database.size(); ++i) {
     const Keyframe & kf = database[i];
-    if (kf.stamp_ns > query.stamp_ns - gap_ns) {
+    if (!config.across_sessions && kf.stamp_ns > query.stamp_ns - gap_ns) {
       ++result.too_recent;
       continue;
     }
-    if (shared_tracks(kf.track_ids, query_tracks) > config.max_shared_tracks) {
+    if (!config.across_sessions &&
+      shared_tracks(kf.track_ids, query_tracks) > config.max_shared_tracks)
+    {
       ++result.still_tracked;
       continue;
     }

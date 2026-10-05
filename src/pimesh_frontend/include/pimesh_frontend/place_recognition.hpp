@@ -79,6 +79,14 @@ struct PlaceConfig
   double reprojection_px {3.0};
   double focal_px {500.0};
   int ransac_iterations {300};
+  /// #13's P20: the database is a map saved by **another session**, so the two
+  /// exclusions that make sense within one session are switched off. `min_gap_s`
+  /// compares stamps from two recordings, which may be days apart in either
+  /// direction; `max_shared_tracks` compares track ids, which restart at zero in
+  /// every session — a saved keyframe and a query sharing ids 0..499 is a
+  /// coincidence of numbering, and excluding it on that would refuse exactly the
+  /// revisit relocalisation exists for.
+  bool across_sessions {false};
 };
 
 /// One verified candidate.

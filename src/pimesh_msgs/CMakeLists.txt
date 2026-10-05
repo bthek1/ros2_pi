@@ -14,6 +14,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   msg/Keypoints.msg
   msg/MeshStats.msg
   msg/PipelineStats.msg
+  msg/TrackingState.msg
   srv/ResetMap.srv
   srv/SaveMesh.srv
   DEPENDENCIES std_msgs geometry_msgs

@@ -83,6 +83,11 @@
     stats_period_s: 5.0
     # Off: at 59 Hz this is 59 log lines a second. gates/ipc.sh overrides it.
     log_payloads: false
+    # #13's P19: an injected lens cap, for tools/gates/lost.sh only. Frames whose
+    # stamp lies blackout_start_s..+blackout_s after the first frame's go out black.
+    # blackout_s 0 injects nothing, and 0 is the only value outside a gate.
+    blackout_start_s: 0.0
+    blackout_s: 0.0
 
 /**/ipc_probe:
   ros__parameters:
@@ -141,6 +146,8 @@
     # camera; it is a diagnostic, not a run.
     rate_scale: 1.0
     max_frames: 0
+    # #13's P20: start this far in. With max_frames, a slice of the sequence.
+    skip_frames: 0
     stats_period_s: 0.1
 
 /**/keypoint_node:
@@ -250,6 +257,21 @@
     # held climbed past 560. Replacing it bakes in the drift of the lost stretch,
     # which is the better of the two.
     max_hold_frames: 5
+    # #13's P19: OK / LOST. LOST after this many depth frames in a row without a
+    # fit, and fusion_node stops integrating; OK again after recover_after_fits fits
+    # in a row. A run and never one hold: bags/desk1 holds ~20% of its depth frames
+    # as scattered singles. Counted by the monitor itself, not by max_hold_frames'
+    # counter, which the stall rule resets every 5 — see tracking_state.hpp.
+    lost_after_holds: 5
+    recover_after_fits: 2
+    # Must equal fusion_node's and dashboard_node's (test_transforms asserts both).
+    tracking_state_topic: /tracking/state
+    # #13's P20. Save this session's keyframes as a map, or load one an earlier
+    # session saved and relocalise into it — never both in one session yet, and never
+    # load beside loop_closure (two authorities for map -> odom). A session that loads
+    # starts LOST and fuses nothing until it relocalises. Empty is off.
+    map_save_path: ""
+    map_load_path: ""
     # A low-pass on the measured position, in seconds. The one filter in this
     # pipeline, and it is here because the signal and the noise sit in different
     # bands: a hand sweeping a room moves centimetres a second, while the
@@ -381,7 +403,11 @@
     # counting those as distances makes the implied scale come out too small with
     # nothing saying so. test_transforms asserts the pair.
     max_range_m: 6.0
-    duration_s: 30.0
+    # 60, not the 30 this file said until 2026-10-02: the launch file's
+    # probe_duration_s override (default 60.0) is applied after this file on every
+    # launch, so 30 never once took effect. gates/scale.sh passes its own window.
+    # Found by test_no_launch_override_quietly_replaces_what_the_yaml_says.
+    duration_s: 60.0
     warmup_frames: 5
 
 /**/depth_probe:
@@ -468,6 +494,13 @@
     # Slack, not a design rate. keypoint_node publishes the pose for a frame ~50 ms
     # before depth_node finishes inferring on it, so this wait is normally zero.
     tf_timeout_ms: 50.0
+    # #13's P19: a frame is integrated only with an OK state at its own stamp, from
+    # odometry_node on this topic — LOST and *no state at all* are both refused, so a
+    # mismatched topic is an empty map rather than a map fused through every
+    # blackout. Must equal odometry_node's.
+    tracking_state_topic: /tracking/state
+    # tools/gates/lost.sh's control, and never a setting: integrate LOST frames.
+    fuse_while_lost: false
     stats_period_s: 5.0
 
 /**/mesh_node:
@@ -558,6 +591,9 @@
     rgb_topic: /keypoints/image/compressed
     depth_topic: /depth/image/compressed
     odom_topic: /odom
+    # #13's P19: the pose card says LOST when odometry_node does. Must equal
+    # odometry_node's tracking_state_topic.
+    tracking_state_topic: /tracking/state
     mesh_topic: /world/mesh
     # The save button's directory. The service takes a path and this node supplies
     # the directory, because a browser must not get to choose where a process

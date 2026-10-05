@@ -117,6 +117,9 @@ DashboardNode::DashboardNode(const rclcpp::NodeOptions & options)
       "rather than within one."));
   const std::string odom_topic = declare_parameter(
     "odom_topic", std::string("/odom"), describe("The pose stream P7 publishes."));
+  const std::string tracking_topic = declare_parameter(
+    "tracking_state_topic", std::string("/tracking/state"),
+    describe("OK / LOST from odometry_node (#13's P19). Must equal its tracking_state_topic."));
   const std::string mesh_topic = declare_parameter(
     "mesh_topic", std::string("/world/mesh"), describe("The surface, as a Marker."));
 
@@ -153,6 +156,10 @@ DashboardNode::DashboardNode(const rclcpp::NodeOptions & options)
   odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
     odom_topic, odom_qos,
     [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {on_odom(std::move(msg));});
+  // KeepLast(1): the page shows the latest verdict. Reliable, to match the writer.
+  tracking_sub_ = create_subscription<pimesh_msgs::msg::TrackingState>(
+    tracking_topic, rclcpp::QoS(rclcpp::KeepLast(1)).reliable(),
+    [this](pimesh_msgs::msg::TrackingState::ConstSharedPtr msg) {on_tracking(std::move(msg));});
   mesh_sub_ = create_subscription<visualization_msgs::msg::Marker>(
     mesh_topic, mesh_qos,
     [this](visualization_msgs::msg::Marker::ConstSharedPtr msg) {on_mesh(std::move(msg));});
@@ -251,6 +258,12 @@ void DashboardNode::on_depth(sensor_msgs::msg::CompressedImage::ConstSharedPtr m
   server_->broadcast(Channel::Depth, msg->data.data(), msg->data.size());
 }
 
+void DashboardNode::on_tracking(pimesh_msgs::msg::TrackingState::ConstSharedPtr msg)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  tracking_ = msg->state;
+}
+
 void DashboardNode::on_odom(nav_msgs::msg::Odometry::ConstSharedPtr msg)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -339,6 +352,9 @@ std::string DashboardNode::pose_json()
   const auto & q = last_odom_.pose.pose.orientation;
   out << "{\"have\":true,\"stale\":" << ((age > stale_after_s_) ? "true" : "false")
       << ",\"age_s\":" << json::number(age)
+      << ",\"tracking\":" << json::quote(
+    tracking_ == pimesh_msgs::msg::TrackingState::OK ? "OK" :
+    tracking_ == pimesh_msgs::msg::TrackingState::LOST ? "LOST" : "UNKNOWN")
       << ",\"frame\":" << json::quote(last_odom_.header.frame_id)
       << ",\"position\":[" << json::number(p.x) << "," << json::number(p.y) << "," << json::number(p.z) << "]"
       << ",\"orientation\":[" << json::number(q.x) << "," << json::number(q.y) << "," << json::number(q.z)

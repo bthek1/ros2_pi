@@ -565,5 +565,32 @@ arm at launch; and a unit test's 1e-6° bound sat on `acos`'s own resolution and
 failed a correct fit on the Pi's aarch64, which is what compiling and testing at both
 ends is for.
 
+**Milestone I, both phases, 2026-10-02 — and the first PASS was over nothing.**
+P19's gate puts a lens cap on `bags/desk1` and asks how many depth frames it takes to
+say LOST. Its first run answered **one**, against a threshold of five, and passed. The
+cap had gone on at 20 s, and desk1 goes LOST *on its own* from 17.5 s — the tracker was
+already LOST when the blackout began, so "LOST in one frame" measured the clip, not the
+state machine. The gate now asserts the state *before* the blackout was OK, moves the cap
+to 40 s, and the two runs since say 5 and 5. That stretch was the real finding: ~10% of
+desk1's depth frames, up to 101 in a row, had been fused at a stale held pose since P7.
+
+Refusing them broke two gates that had nothing wrong with them, which is the second
+lesson in one afternoon. `mesh.sh` read fusion's longest gap between integrations as a
+stall the mesher caused, and got 4.2 s — in both runs, mesher or not — because a LOST
+stretch is now a deliberate pause; a refusal restarts that clock now, so a pause and a
+stall no longer share a spelling. `rebuild.sh`'s rebuild arm ran 6% slow against a 4.2%
+bound in its first run, on code the arm comparison does not distinguish — and that run
+coincided with Claude running shellcheck and the instruments' mutation tests on the same
+box, the interference this file already names. Both were re-run quiet.
+
+A new check found an old fault: `test_no_launch_override_quietly_replaces_what_the_yaml_says`
+— overrides apply after the YAML on every launch — failed on its first run because
+`scale_probe`'s `duration_s: 30.0` had never once taken effect. And P20's instruments
+each caught something before the gate ran: `test_map_io` found a 0×32 descriptor block
+loading as 0×0, and `test_reloc_truth`'s first fixture had the scale inverted — the
+instrument was right and the test was wrong, which is the case a mutation run exists to
+tell apart. P20 itself passed first time, on a positive case moved to fr1/desk for its
+ground truth and a control moved to a room that is certainly not this one.
+
 Do not write "the node publishes X at Y Hz" until a node has published X and you
 have watched it do Y.

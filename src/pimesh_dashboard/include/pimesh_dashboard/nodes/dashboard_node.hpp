@@ -12,6 +12,7 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "pimesh_dashboard/web_server.hpp"
 #include "pimesh_msgs/msg/pipeline_stats.hpp"
+#include "pimesh_msgs/msg/tracking_state.hpp"
 #include "pimesh_msgs/srv/reset_map.hpp"
 #include "pimesh_msgs/srv/save_mesh.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -66,6 +67,7 @@ private:
   void on_rgb(sensor_msgs::msg::CompressedImage::ConstSharedPtr msg);
   void on_depth(sensor_msgs::msg::CompressedImage::ConstSharedPtr msg);
   void on_odom(nav_msgs::msg::Odometry::ConstSharedPtr msg);
+  void on_tracking(pimesh_msgs::msg::TrackingState::ConstSharedPtr msg);
   void on_mesh(visualization_msgs::msg::Marker::ConstSharedPtr msg);
   void tick();
 
@@ -85,6 +87,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr rgb_sub_;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr depth_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<pimesh_msgs::msg::TrackingState>::SharedPtr tracking_sub_;
   rclcpp::Subscription<visualization_msgs::msg::Marker>::SharedPtr mesh_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Client<pimesh_msgs::srv::SaveMesh>::SharedPtr save_client_;
@@ -103,6 +106,10 @@ private:
   nav_msgs::msg::Odometry last_odom_;
   bool have_odom_ {false};
   std::chrono::steady_clock::time_point odom_received_;
+  /// #13's P19: the tracker's own verdict on the pose, beside STALE. STALE says the
+  /// pose stopped arriving; LOST says it is arriving and is not trusted — which,
+  /// until P19, looked identical to a pose that was fine. UNKNOWN until one arrives.
+  std::uint8_t tracking_ {pimesh_msgs::msg::TrackingState::UNKNOWN};
   /// The trajectory tail the page draws. A ring of positions, not the whole
   /// history: the point of the trail is the shape of recent motion, and an
   /// unbounded one would be a memory leak with a picture attached.

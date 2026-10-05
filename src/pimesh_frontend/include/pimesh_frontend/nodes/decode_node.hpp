@@ -69,6 +69,19 @@ private:
 
   bool log_payloads_ {false};
 
+  /// #13's P19: a lens cap, for tools/gates/lost.sh. Frames whose stamp falls
+  /// `blackout_start_s` to `blackout_start_s + blackout_s` after the first frame's
+  /// are published black. Off at `blackout_s` 0, which is the default. **By stamp,
+  /// not by wall clock**, so the same frames go dark however fast the bag plays.
+  /// Worker-thread only.
+  double blackout_start_s_ {0.0};
+  double blackout_s_ {0.0};
+  std::int64_t first_stamp_ns_ {-1};
+  std::uint64_t blacked_ {0};
+  std::int64_t first_black_ns_ {-1};
+  std::int64_t last_black_ns_ {-1};
+  bool blackout_reported_ {false};
+
   /// Reused across frames, so the decoder allocates its 2.7 MB once rather than
   /// 59 times a second. The message's buffer cannot serve this purpose: it is a
   /// fresh allocation per publish by construction.

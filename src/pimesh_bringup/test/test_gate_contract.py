@@ -222,3 +222,46 @@ def test_every_key_rebuild_sh_reads_off_stats_rebuild_is_written():
     read = _shell_keys(_REBUILD_SH, 'rebuild_value')
     assert len(written) >= 15 and {'memory_mb', 'niced'} <= read, (written, read)
     assert not (read - written), f'rebuild.sh reads {sorted(read - written)} off `stats rebuild`'
+
+
+# #13's P19. tools/gates/lost.sh reads `stats lost` off fusion_node and `stats
+# tracking` off odometry_node by key, and lost_timeline.py's printed keys by name.
+# A renamed `voxels_lost` reads as an empty string, and the gate's `== 0` check
+# then fails a run that was fine — or, worse, `refused_lost` empty reads as "the
+# refusal never ran" when it did.
+_LOST_SH = _read('tools', 'gates', 'lost.sh')
+_FUSION = _read('src', 'pimesh_mapping', 'src', 'fusion_node.cpp')
+_LOST_TIMELINE = _read('tools', 'eval', 'lost_timeline.py')
+
+
+def _lost_loop_keys(line):
+    """The keys in lost.sh's `for key in ...; do` loop over the `stats <line>` line."""
+    match = re.search(r'for key in ([a-z_ ]+); do\s+R\[\$arm\.\$key\]=\$\(stat_of "\$log" \w+ '
+                      + line + ' ', _LOST_SH)
+    assert match, f'lost.sh no longer reads `stats {line}` in a `for key in` loop'
+    return set(match.group(1).split())
+
+
+def test_every_key_lost_sh_reads_off_stats_lost_is_written():
+    written = _format_keys(_FUSION, 'stats lost ')
+    read = _lost_loop_keys('lost')
+    assert len(written) >= 7 and len(read) >= 5
+    assert not (read - written), f'lost.sh reads {sorted(read - written)} off `stats lost`'
+
+
+def test_every_key_lost_sh_reads_off_stats_tracking_is_written():
+    written = _format_keys(_ODOMETRY, 'stats tracking ')
+    read = _lost_loop_keys('tracking')
+    assert len(written) >= 7 and len(read) >= 5
+    assert not (read - written), f'lost.sh reads {sorted(read - written)} off `stats tracking`'
+
+
+def test_every_timeline_key_lost_sh_reads_is_one_the_instrument_prints():
+    # The instrument's keys are the dict literal in timeline(); the gate reads them
+    # as R[lost.<key>] / R[$L.<key>] / R[$C.<key>] and through `row "..." <key>`.
+    printed = set(re.findall(r"^\s+'([a-z_]+)':", _LOST_TIMELINE, re.M))
+    nodes = _lost_loop_keys('lost') | _lost_loop_keys('tracking') | {'black_frames'}
+    read = (set(re.findall(r'R\[\$[LC]\.([a-z_]+)\]', _LOST_SH)) |
+            set(re.findall(r'^row "[^"]*" ([a-z_]+)$', _LOST_SH, re.M))) - nodes
+    assert len(printed) >= 9 and len(read) >= 8
+    assert not (read - printed), f'lost.sh reads {sorted(read - printed)} lost_timeline.py never prints'

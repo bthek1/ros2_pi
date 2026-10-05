@@ -97,6 +97,19 @@ DecodeNode::DecodeNode(const rclcpp::NodeOptions & options)
       "is 59 log lines a second — and switched on by tools/gates/ipc.sh, which "
       "needs the publisher half of the pointer-handover evidence."));
 
+  blackout_start_s_ = declare_parameter(
+    "blackout_start_s", 0.0,
+    describe_range(
+      "Seconds after the first frame's stamp at which the injected blackout starts. "
+      "tools/gates/lost.sh's lens cap; inert while blackout_s is 0.", 0.0, 100000.0));
+  blackout_s_ = declare_parameter(
+    "blackout_s", 0.0,
+    describe_range(
+      "Length of the injected blackout, in seconds of stamp: every frame inside it is "
+      "published black. 0, the default, injects nothing. A test fixture and never a "
+      "setting — it exists so that losing track is something a gate can cause on "
+      "demand rather than wait for.", 0.0, 100000.0));
+
   const double stats_period_s = declare_parameter(
     "stats_period_s", 5.0,
     describe_range("How often to log the throughput summary.", 0.5, 120.0));
@@ -206,6 +219,38 @@ void DecodeNode::decode_one(std::unique_ptr<sensor_msgs::msg::CompressedImage> m
       "imdecode failed on a %zu byte payload (format '%s')",
       msg->data.size(), msg->format.c_str());
     return;
+  }
+
+  // --- The injected lens cap (#13's P19) ----------------------------------------
+  //
+  // Black, not dropped: a dropped frame is a gap the pipeline already handles by
+  // waiting, while a black one is what a covered lens actually delivers — ORB finds
+  // nothing in it, and the depth network still returns a confident depth map that
+  // fusion_node would integrate at whatever pose it was handed.
+  if (blackout_s_ > 0.0) {
+    const std::int64_t stamp = rclcpp::Time(msg->header.stamp).nanoseconds();
+    if (first_stamp_ns_ < 0) {first_stamp_ns_ = stamp;}
+    const auto from = first_stamp_ns_ + static_cast<std::int64_t>(blackout_start_s_ * 1e9);
+    const auto to = from + static_cast<std::int64_t>(blackout_s_ * 1e9);
+    if (stamp >= from && stamp < to) {
+      bgr_.setTo(cv::Scalar::all(0));
+      if (first_black_ns_ < 0) {
+        first_black_ns_ = stamp;
+        RCLCPP_WARN(
+          get_logger(), "blackout start stamp_ns=%lld (injected, blackout_s=%.2f)",
+          static_cast<long long>(stamp), blackout_s_);
+      }
+      last_black_ns_ = stamp;
+      ++blacked_;
+    } else if (stamp >= to && first_black_ns_ >= 0 && !blackout_reported_) {
+      // Reported at the first frame *after* it, so the line carries the last black
+      // stamp rather than a computed boundary no frame sits on.
+      blackout_reported_ = true;
+      RCLCPP_WARN(
+        get_logger(), "blackout end stamp_ns=%lld last_black_ns=%lld frames=%lu",
+        static_cast<long long>(stamp), static_cast<long long>(last_black_ns_),
+        static_cast<unsigned long>(blacked_));
+    }
   }
 
   auto out = std::make_unique<sensor_msgs::msg::Image>();

@@ -111,6 +111,14 @@ DatasetNode::DatasetNode(const rclcpp::NodeOptions & options)
     declare_parameter(
       "max_frames", 0,
       describe("Stop after this many frames. 0 replays the whole sequence.")));
+  const auto skip_frames = static_cast<std::size_t>(
+    declare_parameter(
+      "skip_frames", 0,
+      describe(
+        "Start this many frames into the sequence. With max_frames, a slice: "
+        "tools/gates/relocalise.sh saves a map from one part of a sequence and "
+        "relocalises from a later one (#13's P20). max_frames counts from the start "
+        "of the sequence, not from the skip.")));
 
   const double stats_period_s = declare_parameter(
     "stats_period_s", 0.1,
@@ -134,6 +142,15 @@ DatasetNode::DatasetNode(const rclcpp::NodeOptions & options)
   }
   frames_ = list.frames;
   if (max_frames > 0 && frames_.size() > max_frames) {frames_.resize(max_frames);}
+  // A skip that leaves nothing is a refusal, not an empty replay: a gate that asked
+  // for the second half of a sequence and got silence would read it as a relocaliser
+  // that never answered.
+  if (skip_frames >= frames_.size()) {
+    throw std::runtime_error(
+      "dataset_node: skip_frames=" + std::to_string(skip_frames) + " leaves nothing of a " +
+      std::to_string(frames_.size()) + "-frame sequence");
+  }
+  frames_.erase(frames_.begin(), frames_.begin() + static_cast<std::ptrdiff_t>(skip_frames));
 
   // **Decode the first frame here, and only to learn its size.** The size is
   // what makes the calibration check an assertion rather than a comment: the

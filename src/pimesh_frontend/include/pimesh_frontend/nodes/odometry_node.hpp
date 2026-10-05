@@ -17,6 +17,7 @@
 #include "opencv2/core.hpp"
 #include "pimesh_msgs/msg/keypoints.hpp"
 #include "pimesh_msgs/msg/pipeline_stats.hpp"
+#include "pimesh_msgs/msg/tracking_state.hpp"
 #include "pimesh_frontend/keyframe_store.hpp"
 #include "pimesh_backend/local_mapper.hpp"
 #include "pimesh_backend/map.hpp"
@@ -24,8 +25,10 @@
 #include "pimesh_frontend/local_map_match.hpp"
 #include "pimesh_frontend/orb_tracker.hpp"
 #include "pimesh_frontend/place_recognition.hpp"
+#include "pimesh_frontend/relocaliser.hpp"
 #include "pimesh_frontend/rgbd_odometry.hpp"
 #include "pimesh_frontend/rotation_fit.hpp"
+#include "pimesh_frontend/tracking_state.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/image.hpp"
@@ -158,6 +161,10 @@ private:
   void pose_work();
   void process_depth(sensor_msgs::msg::Image::ConstSharedPtr msg);
   void publish_pose(const rclcpp::Time & stamp);
+  /// #13's P19: one depth frame's outcome into the monitor, and the resulting state
+  /// published at that frame's stamp. **Called before publish_pose** for the same
+  /// stamp, so a state is on the wire before the transform fusion_node waits for.
+  void track(bool posed, const builtin_interfaces::msg::Time & stamp);
   void log_stats();
   void publish_map_points(const rclcpp::Time & stamp);
 
@@ -192,6 +199,8 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<pimesh_msgs::msg::PipelineStats>::SharedPtr stats_pub_;
+  /// #13's P19: OK / LOST at every depth stamp. fusion_node and dashboard_node read it.
+  rclcpp::Publisher<pimesh_msgs::msg::TrackingState>::SharedPtr tracking_pub_;
   /// The map's points, for `just view-map`. A viewer's topic and nothing else reads
   /// it; published at most every `map_points_period_s`, from the pose worker, when a
   /// keyframe has changed the map.
@@ -302,7 +311,15 @@ private:
   /// base_link's transform from camera_optical_frame, from TF, looked up once.
   cv::Affine3d base_from_optical_ {cv::Affine3d::Identity()};
   bool have_basis_ {false};
-  bool holding_ {false};
+  /// Atomic since #13's P19: in rotation_only it is written by the keypoints
+  /// callback and read by the pose worker, which reports it as the tracking state.
+  std::atomic<bool> holding_ {false};
+
+  // --- Tracking state (#13's P19) ----------------------------------------------
+  //
+  // Fed by the pose worker, one outcome per depth frame; read by the stats timer.
+  std::mutex tracking_mutex_;
+  std::unique_ptr<TrackingMonitor> tracking_;
 
   // --- The RGB-D rendezvous --------------------------------------------------
   //
@@ -377,6 +394,42 @@ private:
   /// writes nothing.
   std::string keyframe_trajectory_path_;
   void write_keyframe_trajectory();
+
+  // --- A saved map, and relocalising into it (#13's P20) ---------------------------
+  //
+  // **Load or save, never both in one session yet**, and never load with loop
+  // closure: two authorities for `map <- odom` is the failure the TF section of
+  // architecture.md opens with. See milestone-i-future.md for extending a map.
+  std::string map_save_path_;
+  std::string map_load_path_;
+  /// The loaded keyframes, held until the relocaliser is built — which waits for the
+  /// first frame's K, as place recognition does, because its pixel tolerance is
+  /// converted into bearing units by the focal length.
+  std::deque<Keyframe> loaded_map_;
+  std::unique_ptr<Relocaliser> relocaliser_;
+  /// Pose-worker-only: drain the relocaliser's answers and apply the first accepted
+  /// one while LOST. Called before the frame's state is published.
+  void apply_relocalisations();
+  /// Write the keyframe store, each keyframe at its pose in map_frame.
+  void save_map(const char * why);
+  std::int64_t last_map_save_ns_ {0};
+  std::size_t keyframes_at_last_save_ {0};
+  /// Under reloc_mutex_: read by publish_pose and the stats timer.
+  std::mutex reloc_mutex_;
+  cv::Affine3d reloc_map_from_odom_ {cv::Affine3d::Identity()};
+  struct RelocStats
+  {
+    std::size_t loaded {0};
+    double load_ms {-1.0};
+    double file_mb {-1.0};
+    std::uint64_t submitted {0};
+    std::uint64_t applied {0};
+    std::uint64_t ignored {0};
+    std::uint64_t saves {0};
+    std::size_t saved_keyframes {0};
+    double save_ms {-1.0};
+    double saved_mb {-1.0};
+  } reloc_stats_;
   std::atomic<std::uint64_t> keyframes_deferred_ {0};
   std::atomic<std::uint64_t> keyframes_dropped_ {0};
   double map_points_period_s_ {1.0};

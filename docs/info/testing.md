@@ -52,12 +52,72 @@ capture device, and a suite that only runs on the Pi is one that stops being run
 `src/pimesh_camera/test/` covers the refusal paths with `/dev/null` and a temp
 file; the busy-device case is `tools/gates/capture.sh`'s job.
 
-**Status: 625 tests across forty-two suites, identical on both distros**
-(`bash tools/gates/test.sh`, 2026-09-30, after #12's P16).
+**Status: 681 tests across forty-six suites, identical on both distros**
+(`bash tools/gates/test.sh`, 2026-10-02, after #13's P20).
 
 ## The suites
 
-625 across forty-two suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+681 across forty-six suites, identical on both distros: the stamp arithmetic (`test_stamp` encodes the usb_cam bug as a failing assertion), the `CameraInfo` matrix layout, `V4l2Capture`'s refusal paths, the static transforms and launch conversion in `test_transforms` — which also
+
+**Milestone I's suites (added 2026-10-02, #13's P19 and P20).** Every one of them
+covers code whose wrong version still runs.
+
+**`test_tracking_state`** is the OK / LOST monitor, and both directions of getting it
+wrong produce a pipeline: a monitor that goes LOST eagerly refuses a fifth of
+`bags/desk1`, one that never does fuses through every blackout and has a perfect
+"nothing fused while LOST" record. It pins LOST on exactly the `lost_after_holds`-th
+consecutive hold and never on scattered ones (desk1's ~20% held frames were singles
+when P7 measured them), recovery on *consecutive* fits, and the trap the header
+documents: the monitor counts its own run, because `odometry_node`'s hold counter is
+reset by the stall rule every 5 frames, and a threshold above 5 driven from it would
+be a LOST that can never be entered. P20's half: with a loaded map it starts LOST,
+fits alone never recover it, `relocalised()` does exactly once, and a late answer
+while OK changes nothing.
+
+**`test_map_io`** is the saved map. Read back both ways — through the loader and byte
+by byte against the layout `map_io.hpp` documents, `test_mesh_io`'s lesson — and
+**cut at every byte**, each cut asserted to refuse and to leave the caller's map
+alone, because a map read leniently from a short file is a smaller map and a smaller
+map is a plausible one. Trailing bytes, a wrong magic and an implausible count are
+refusals too; the last is a refusal and not an allocation.
+
+**`test_place_recognition` gained the relocaliser.** `relocalised_pose` is one line
+with its own case, for P7's reason: the composition is checked on an *asymmetric*
+pair, and the case asserts the hurried composition lands half a metre away — two
+coincident views would pass either way. `across_sessions` is pinned on a saved
+keyframe that shares every track id with the query and is stamped *later*: within a
+session both exclude it, across sessions neither means anything. The thread recovers
+a query's map pose to 2 cm while its odom pose is somewhere unrelated, refuses
+another room, keeps only the newest of three waiting queries, and stops with one
+queued.
+
+**`test_lost_timeline`** and **`test_reloc_truth`** are the two gates' instruments.
+`lost_timeline.py` counts depth frames to LOST and back against an injected blackout,
+and three of its failure modes flatter the tracker: UNKNOWN read as OK, a LOST from
+*before* the blackout credited to it, and stamps compared as doubles — at 1.8e18 ns
+two frames 64 ns apart are equal, which is why it is Python and not awk. The gate's
+first run found a fourth: desk1 is LOST on its own from 17.5 s, so a blackout at 20 s
+found it already LOST and "LOST in 1 frame" measured nothing; `state_before` is
+reported and asserted since. `reloc_truth.py` scores relocalised poses against motion
+capture through the Sim(3) of the *saved* keyframes; its cases pin that the error is
+in TUM's metres (the pipeline's are ~0.5 of them on fr1/desk, so an error left in map
+units reads at half size) and that a relocalised pose never joins its own alignment.
+The first version of that suite failed — its fixture had the scale inverted, and the
+instrument was right. Then it failed **on the Pi only**: a rotation bound of 1e-6° on
+an angle off `acos`, which resolves ~8e-7° near zero — `test_ground_truth`'s lesson
+from after milestone H, repeated a week later and caught the same way, by running the
+suite at both ends. Mutations of both instruments are each caught.
+
+**`test_transforms` gained the seventh and eighth pairs** — `fusion_node` and
+`dashboard_node` reading the tracking state `odometry_node` writes — and a check
+nothing had: **that no launch override's default replaces the YAML's value**. The
+overrides are applied *after* the YAML on every launch, so a drifted default is not a
+default at all. Its first run found one: `scale_probe`'s `duration_s: 30.0` had never
+taken effect, because `probe_duration_s` defaults to 60.0 — harmless, since
+`gates/scale.sh` always passes its own window, and exactly the kind of number that is
+wrong in the file somebody reads. **`test_gate_contract`** gained the keys `lost.sh`
+reads off `stats lost`, `stats tracking` and the timeline, each checked by renaming
+one.
 
 **Two gaps closed after milestone H, 2026-10-02.** `SharedVolume::replace` — the
 swap that makes a rebuild visible to `mesh_node` — had no test: `test_shared_volume`

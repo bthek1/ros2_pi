@@ -221,9 +221,6 @@ EXEMPT_PATHS = {
         'a .cpp the gpu-stack gate compiles with g++; never committed',
     'src/pimesh_hello':
         'deleted 2026-09-23; CLAUDE.md names it in the record of its deletion',
-    # Gates that milestones F-I will write. Each goes when its phase lands.
-    'tools/gates/lost.sh': 'written by #13 P19',
-    'tools/gates/relocalise.sh': 'written by #13 P20',
 }
 # Data trees are git-ignored, so a fresh clone has none of them and their
 # absence says nothing about a name being right.
