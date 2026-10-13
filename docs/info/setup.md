@@ -205,15 +205,16 @@ them but source.
 ```bash
 just build                   # dev box
 bash tools/pi/build-pi.sh       # rsync source to the Pi, then build there under Jazzy
-bash tools/test.sh           # build, then colcon test, then colcon test-result
+just test                    # build, then colcon test, then colcon test-result
 bash tools/pi/test-pi.sh        # the same, on the Pi, under Jazzy
-bash tools/clean.sh          # drop build/ install/ log/ here
+just clean                   # drop build/ install/ log/ here
 bash tools/pi/clean-pi.sh       # and there
 ```
 
-`just build` is the only one of these in the justfile, because it is the only
-one typed every day; the rest are scripts, like everything else that is not a
-day-to-day action.
+`just build`, `just test` and `just clean` are recipes because they are typed
+every day; they call `tools/build.sh`, `test.sh` and `clean.sh`, which the Pi
+plumbing runs at the far end where there is no `just`. The `tools/pi/` ones are
+scripts, like everything else that is not a day-to-day action.
 
 **Use these rather than bare `colcon`.** `just build` expands to
 
@@ -261,6 +262,7 @@ Available recipes:
     dashboard seconds="600" bag="" dashboard_port="8080" # The whole pipeline in a browser tab: http://localhost:8080. Not evidence
     record name seconds="60"                      # Record a clip from the Pi's camera into bags/<name>, counted from the first frame
     replay bag seconds="600"                      # A recorded bag in RViz, looping. bag = a name under bags/, or a path to one
+    run seconds="600" bag=""                      # Build, then the latest whole pipeline: today the mesh view. bag = optional, else the camera
     view-camera seconds="600"                     # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
     view-depth seconds="600" bag=""               # The room as a depth cloud, in RViz. bag = optional, else the camera
     view-keypoints seconds="600" bag=""           # ORB corners and the pose, in RViz. bag = optional, else the camera
@@ -273,9 +275,12 @@ Available recipes:
 ```
 
 That is the whole list, and the shortness is the point: `build` is how you
-build, `run` is what you start in order to *watch* something. If you have just
-cloned this, `just build && just view-camera` is the entire getting-started
-path — or `just dashboard` once the GPU stack is installed.
+build, `test` is how you check, and `run` is what you start in order to *watch*
+something. **`just run` is the one to start with**: it builds, then brings up the
+latest whole pipeline — today `just view-mesh`, the camera through to a surface
+in RViz. It is `build` and that viewer as dependencies, with no body of its own,
+so moving it to a newer view is a one-word change. `just view-camera` is the
+lighter first check, and `just dashboard` the same pipeline in a browser.
 
 **Everything else is a script in `tools/`, run directly.** The gates especially
 — there are eighteen, they are run constantly, and as recipes they buried the

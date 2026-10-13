@@ -123,7 +123,7 @@ R[save_ms]=$(stat_of "$work/a.log" odometry_node reloc save_ms)
 # --- B: load, relocalise -----------------------------------------------------------
 echo "-- B: fr1/desk from $(( SPLIT + GAP )), loading --"
 run_dataset "$work/b.log" "$B_SECONDS" dataset_skip_frames:=$(( SPLIT + GAP )) \
-    map_load_path:="$MAP" || { echo "FAIL gate-relocalise"; exit 1; }
+    map_load_path:="$MAP" loop_closure:=false || { echo "FAIL gate-relocalise"; exit 1; }
 R[loaded]=$(grep -o 'map loaded: keyframes=[0-9]*' "$work/b.log" | head -1 | grep -o '[0-9]*$')
 R[load_ms]=$(grep -o 'map loaded: .* load_ms=[0-9.]*' "$work/b.log" | head -1 | grep -o '[0-9.]*$')
 R[first_lost]=$(grep -o 'relocalised .*lost_frames=[0-9]*' "$work/b.log" | head -1 | grep -o '[0-9]*$')
@@ -156,7 +156,7 @@ fi
 echo "-- control: bags/desk1 against fr1/desk's map --"
 log="$work/control.log"
 timeout -s INT $(( BAG_SECONDS + 60 )) ros2 launch pimesh_bringup pimesh.launch.py \
-    odom_regime:=sixdof map_load_path:="$MAP" >"$log" 2>&1 &
+    odom_regime:=sixdof map_load_path:="$MAP" loop_closure:=false >"$log" 2>&1 &
 ready=0
 for _ in $(seq 120); do
     if grep -q "fusion_node up:" "$log" 2>/dev/null; then ready=1; break; fi

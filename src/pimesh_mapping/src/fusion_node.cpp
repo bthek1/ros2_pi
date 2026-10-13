@@ -218,10 +218,12 @@ FusionNode::FusionNode(const rclcpp::NodeOptions & options)
 
   // --- The rebuild (#12's P18) ------------------------------------------------------
   //
-  // **Off by default until gates/rebuild.sh says otherwise.** Needs the pose graph's
-  // corrections, so it only does anything with odometry_node's loop_closure on.
+  // **On by default since 2026-10-13**, beside odometry_node's loop_closure: gates/
+  // rebuild.sh passed, and a closure that corrects the trajectory and leaves the
+  // surface where the drift put it is half a loop closure. Needs the pose graph's
+  // corrections, so it only does anything with loop_closure on.
   rebuild_ = declare_parameter(
-    "rebuild", false,
+    "rebuild", true,
     describe(
       "Remember integrated frames and, when the pose graph's corrections move them "
       "far enough, integrate the volume again from scratch at the corrected poses. "

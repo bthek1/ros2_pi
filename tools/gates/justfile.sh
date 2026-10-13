@@ -121,7 +121,10 @@ awk '/^```text$/ { grab = 1; next } /^```$/ { grab = 0 } grab' "$doc" >"$pasted"
 doc_diff=$(diff -u "$pasted" "$listed" | grep -c '^[-+][^-+]' || true)
 (( doc_diff == 0 )) || {
     note "docs/info/setup.md quotes a recipe list that is ${doc_diff} line(s) out of date"
-    diff -u "$pasted" "$listed" | head -20
+    # `|| true`: diff exits 1 whenever it finds a difference, which under
+    # pipefail and `set -e` ended this gate right here — so a drifted list hid
+    # every check below it, and their silence read as passing (found 2026-10-13).
+    diff -u "$pasted" "$listed" | head -20 || true
 }
 
 # 5. Lint. This is the payoff a 627-line justfile could not have: shellcheck
@@ -170,7 +173,35 @@ r = json.load(open(sys.argv[1]))["recipes"][sys.argv[2]]
 print("\n".join(p["name"] for p in r.get("parameters", [])))
 ' "$dump" "$1"
 }
+# The parameters of a body-less recipe that reach none of its dependencies'
+# arguments. `just run` is `run seconds bag: build (view-mesh seconds bag)` — no
+# body, so `just -n` prints the *dependencies'* commands and the count below
+# would be read off `build`'s line. A dependency argument is passed as a value,
+# not pasted as text, so it cannot vanish; what can go wrong is a parameter that
+# never reaches the recipe it was meant for.
+unforwarded() {         # $1 = recipe; prints a line per parameter no dependency receives
+    /usr/bin/python3 -c '
+import json, sys
+r = json.load(open(sys.argv[1]))["recipes"][sys.argv[2]]
+used = {a[1] for d in r.get("dependencies", []) for a in d.get("arguments", [])
+        if isinstance(a, list) and len(a) == 2 and a[0] == "variable"}
+print("\n".join(p["name"] for p in r.get("parameters", []) if p["name"] not in used))
+' "$dump" "$1"
+}
+bodyless() {            # $1 = recipe; exit 0 when it has no body of its own
+    /usr/bin/python3 -c '
+import json, sys
+sys.exit(0 if not json.load(open(sys.argv[1]))["recipes"][sys.argv[2]]["body"] else 1)
+' "$dump" "$1"
+}
 while read -r name want; do
+    if bodyless "$name"; then
+        for p in $(unforwarded "$name"); do
+            note "recipe '${name}' has no body and passes parameter '${p}' to no dependency"
+            missing_args=$(( missing_args + 1 ))
+        done
+        continue
+    fi
     # **2>&1, and the first version of this check had 2>/dev/null.** `just -n`
     # echoes the command to *stderr*, so discarding stderr left $line empty, the
     # loop skipped every recipe, and the gate printed "0 recipe(s) lose an

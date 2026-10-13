@@ -4,6 +4,8 @@
 # for real.
 #
 #   TUM fr1/desk  x RUNS per arm, alternating   loop_closure:=true against :=false
+#                 rebuild:=false in both — rebuild is on by default since 2026-10-13, and
+#                 the arms must differ in loop_closure alone (rebuild is gates/rebuild.sh's)
 #   bags/walk1    once, loop_closure:=true      the TF tree survives a real closure
 #
 # **The ATE is on fr1/desk, not on walk1 as #12 was written.** walk1 has no ground
@@ -117,7 +119,7 @@ run_dataset() {          # $1 = log, $2 = loop_closure, $3 = trajectory, $4 = tr
     local log=$1 lc=$2 traj=$3 prefix=$4 label=$5 window=$(( SEQ_SECONDS + 8 ))
     timeout -s INT $(( window + 45 )) ros2 launch pimesh_bringup pimesh.launch.py \
         source:=dataset_node dataset_dir:="$SEQ" odom_regime:=sixdof \
-        loop_closure:="$lc" keyframe_trajectory_path:="$traj" >"$log" 2>&1 &
+        loop_closure:="$lc" rebuild:=false keyframe_trajectory_path:="$traj" >"$log" 2>&1 &
     local ready=0
     for _ in $(seq 120); do
         if grep -q "dataset .*replaying at" "$log" 2>/dev/null; then ready=1; break; fi

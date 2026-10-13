@@ -388,7 +388,7 @@ private:
   PlaceRecognizer::Config place_config_;
   /// #12's P17: publish the pose graph's `map -> odom` rather than identity. The
   /// edge is published either way, beside `odom -> base_link` with the same stamp.
-  bool loop_closure_ {false};
+  bool loop_closure_ {true};
   std::string map_frame_ {"map"};
   /// Every keyframe's corrected pose, TUM format, rewritten each stats window. Empty
   /// writes nothing.

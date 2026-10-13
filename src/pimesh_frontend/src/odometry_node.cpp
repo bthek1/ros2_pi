@@ -499,12 +499,13 @@ OdometryNode::OdometryNode(const rclcpp::NodeOptions & options)
   place_config_.max_keyframes = static_cast<std::size_t>(max_keyframes);
   // --- Loop closure (#12's P17) ---------------------------------------------------
   //
-  // **false by default until gates/loop.sh says otherwise**, for local_map's reason.
+  // **On by default since 2026-10-13**: gates/loop.sh passed (keyframe ATE 0.118-0.153 m
+  // against 0.361-0.533 m without), and the project's default is the SLAM pipeline.
   // Off, `map -> odom` is still published — identity — because the launch file no
   // longer runs a static publisher for that edge while the pipeline is up: one
   // authority per edge.
   loop_closure_ = declare_parameter(
-    "loop_closure", false,
+    "loop_closure", true,
     describe(
       "Add each place-recognition closure to a pose graph over every keyframe, "
       "optimise it, and publish the correction as map -> odom. Needs "
@@ -548,7 +549,8 @@ OdometryNode::OdometryNode(const rclcpp::NodeOptions & options)
     if (loop_closure_) {
       throw rclcpp::exceptions::InvalidParameterValueException(
               "map_load_path with loop_closure:=true would give map -> odom two "
-              "authorities, the relocalisation and the pose graph");
+              "authorities, the relocalisation and the pose graph — loop_closure is on "
+              "by default, so loading a map needs loop_closure:=false");
     }
     if (regime_ != OdometryRegime::SixDof) {
       throw rclcpp::exceptions::InvalidParameterValueException(

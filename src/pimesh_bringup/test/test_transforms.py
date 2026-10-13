@@ -1518,3 +1518,33 @@ def test_no_committed_session_loads_or_saves_a_map(config):
     odometry = config['/**/odometry_node']['ros__parameters']
     assert odometry['map_load_path'] == ''
     assert odometry['map_save_path'] == ''
+
+
+def _declared_default(relative, name):
+    """The literal default a component passes to `declare_parameter("name", …)`."""
+    import re
+    with open(os.path.join(_WORKSPACE, 'src', relative)) as f:
+        text = f.read()
+    found = re.findall(r'declare_parameter\(\s*"' + re.escape(name) + r'",\s*([^,\s]+)\s*,', text)
+    assert len(found) == 1, f'{relative}: {len(found)} declarations of {name!r}'
+    return found[0]
+
+
+def test_the_default_pipeline_is_slam_and_both_halves_of_it_agree(launch_module):
+    """**loop_closure and rebuild are on by default since 2026-10-13**, and they are
+    two switches that only mean something together.
+
+    Three ways to get it wrong, each silent. `rebuild` on with `loop_closure` off
+    remembers every frame for a rebuild that never comes — memory spent on nothing,
+    and a mesh that looks exactly like odometry's. `loop_closure` on with `rebuild`
+    off corrects the trajectory and leaves the surface where the drift put it — a
+    `map -> odom` that moves and a mesh that does not. And a launch default that
+    disagrees with the node's own `declare_parameter` default makes `ros2 launch`
+    and `ros2 run` two different pipelines, which is how a standalone debugging
+    session ends up measuring visual odometry while calling it SLAM.
+    """
+    defaults = _launch_defaults(launch_module)
+    launched = {name: defaults[name][2] for name in ('loop_closure', 'rebuild')}
+    assert launched == {'loop_closure': 'true', 'rebuild': 'true'}, launched
+    assert _declared_default('pimesh_frontend/src/odometry_node.cpp', 'loop_closure') == 'true'
+    assert _declared_default('pimesh_mapping/src/fusion_node.cpp', 'rebuild') == 'true'

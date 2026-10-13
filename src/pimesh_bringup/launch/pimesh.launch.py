@@ -508,11 +508,13 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             'loop_closure',
-            default_value='false',
+            default_value='true',
             description="odometry_node adds each place-recognition closure to a "
                         'pose graph and publishes its correction as map -> odom '
-                        'when true. false is the control in tools/gates/loop.sh: '
-                        'the same search, map -> odom identity.',
+                        'when true — the default, and what makes this SLAM. false '
+                        'is visual odometry, and the control in tools/gates/loop.sh: '
+                        'the same search, map -> odom identity. Must be false with '
+                        'map_load_path.',
         ),
         DeclareLaunchArgument(
             'keyframe_trajectory_path',
@@ -522,11 +524,11 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument(
             'rebuild',
-            default_value='false',
+            default_value='true',
             description="fusion_node remembers integrated frames and rebuilds the "
-                        'volume at the pose graph\'s corrected poses when true. '
-                        'Needs loop_closure:=true to have corrections. For '
-                        'tools/gates/rebuild.sh.',
+                        'volume at the pose graph\'s corrected poses when true '
+                        '(the default). Needs loop_closure:=true to have '
+                        'corrections. false is tools/gates/rebuild.sh\'s control.',
         ),
         DeclareLaunchArgument(
             'rebuild_control',

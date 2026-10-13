@@ -89,6 +89,7 @@ P7's tracker.
 ### Running it
 
 ```bash
+just run            # build, then the latest whole pipeline (today: just view-mesh)
 just build          # colcon, with the flags this box needs
 just view-mesh      # the pipeline on the Pi's camera, surface in RViz
 just dashboard      # the same, watched from a browser tab

@@ -1360,8 +1360,13 @@ strong priors, re-verify before quoting a number as this project's own.
   three groups. **`build`** — `build`, `clean`; **`test`** — `test`, which builds,
   runs `colcon test` *and* `colcon test-result --all`, so it exits non-zero on a
   failure where `colcon test` alone exits 0 (measured with a scratch package's
-  failing test: `just test` 1, `colcon test` 0); **`run`** — the eight viewers and
-  `record`. Gates, the Pi plumbing, the fetchers, calibration and the straggler
+  failing test: `just test` 1, `colcon test` 0); **`run`** — `run` itself, the eight viewers and
+  `record`. **`just run` is "build, then the latest whole pipeline"** — today
+  `run seconds bag: build (view-mesh seconds bag)`, dependencies and no body, so
+  pointing it at a newer view is one word. Dependency arguments are passed as
+  values, not pasted as text, so its empty `bag` cannot vanish; `gates/justfile.sh`
+  checks a body-less recipe by asking whether each parameter reaches a dependency,
+  and `gates/teardown.sh` has it in its table. Gates, the Pi plumbing, the fetchers, calibration and the straggler
   sweep stay `bash tools/<name>.sh` and `bash tools/gates/<name>.sh`, never
   recipes. The bar for a recipe is "would a newcomer's first `just` need to see
   this?", and adding a group is the thing to argue about, not adding a line —
@@ -1526,7 +1531,7 @@ strong priors, re-verify before quoting a number as this project's own.
   ordinary end of script. `gates/hello-clean.sh` had signalled every recipe ten
   times over and had never once closed a window, and that is the path that leaked
   on 2026-09-14. It now covers `INT`, `INT-TWICE`, `HUP`, `CLOSE` and
-  `CLOSE-EARLY` — 25 cases over eight recipes since `view-map` joined — and waits for the recipe to
+  `CLOSE-EARLY` — 28 cases over nine recipes since `just run` joined (2026-10-13) — and waits for the recipe to
   *return* rather than sleeping three seconds and sweeping, because the contract
   is that nothing is running by the time it has returned.
 

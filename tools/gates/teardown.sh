@@ -87,7 +87,7 @@ fi
 # something. The camera path is covered by view-camera in the row above.
 
 # recipe -> the argv to run it with, and what "it is up" means for it.
-ALL_RECIPES=(view-camera replay view-keypoints view-depth view-mesh view-odom view-map dashboard)
+ALL_RECIPES=(view-camera replay view-keypoints view-depth view-mesh view-odom view-map dashboard run)
 
 # **A recipe argument narrows the table** — `bash tools/gates/teardown.sh view-mesh`
 # runs that recipe's endings and nothing else, which is how #15 closed P0 before
@@ -214,7 +214,9 @@ argv_for() {                # $1 = recipe, $2 = seconds; prints one argv word pe
     case $1 in
         replay)      printf '%s\n' "${JUST[@]}" replay "$GATE_BAG" "$2" ;;
         view-camera) printf '%s\n' "${JUST[@]}" view-camera "$2" ;;
-        view-keypoints|view-depth|view-mesh|view-odom|view-map)
+        # `run` is `build` then `view-mesh`, by dependency, with the same two
+        # parameters — the first command a person types, so it is in the table.
+        view-keypoints|view-depth|view-mesh|view-odom|view-map|run)
                      printf '%s\n' "${JUST[@]}" "$1" "$2" "$GATE_BAG" ;;
         # A port, not a window. The third argument keeps it off 8080 so a gate run
         # cannot collide with a dashboard somebody has open.
@@ -256,7 +258,7 @@ session_up() {              # $1 = recipe
         # builds the CUDA context *and* waits eight seconds before starting RViz,
         # because there is nothing for a mesh viewer to show until frames have been
         # integrated. The fixture clip has to outlive all of that.
-        view-mesh)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
+        view-mesh|run)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
                     pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
                     pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
         # The same three once more. view-odom is view-mesh with an extra display

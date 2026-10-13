@@ -1,10 +1,8 @@
 # ros2_pi — the commands you actually type. `just` with no arguments lists them.
 #
-# The user-facing surface, kept short: build, test, record, and the viewers.
-# Every viewer is `tools/session.sh` around `ros2 launch pimesh_bringup
-# view.launch.py view:=<name>` — launch owns the processes, session.sh refuses to
-# start beside another session and tears down the Pi, which launch cannot reach.
-# What a view *is* lives in pimesh_bringup/config/views.yaml (#15).
+# Kept short: build, test, record, the viewers, and `run` — the latest whole
+# pipeline, built first. A viewer is `tools/session.sh` around `ros2 launch
+# pimesh_bringup view.launch.py view:=<name>`; views are in config/views.yaml.
 # Gates are not recipes: `bash tools/gates/<name>.sh`, each exiting non-zero and
 # printing the number it asserted on. Recipe bodies stay one line each.
 
@@ -30,6 +28,10 @@ clean:
 [group('test')]
 test *args:
     @bash "{{ ws }}/tools/test.sh" {{ args }}
+
+# Build, then the latest whole pipeline: today the mesh view. bag = optional, else the camera
+[group('run')]
+run seconds="600" bag="": build (view-mesh seconds bag)
 
 # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
 [group('run')]
