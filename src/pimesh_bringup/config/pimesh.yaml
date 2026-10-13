@@ -70,11 +70,11 @@
     input_topic: /image_raw/compressed
     # bgr8, for consumers inside this container. A subscriber from another
     # process may have it, and will cost a 2.7 MB serialisation per frame for the
-    # privilege — which is why rviz/keypoints.rviz watches the compressed preview
+    # privilege — which is why an RViz view watches the compressed preview
     # instead.
     output_topic: /image_raw
     # reliable | best_effort, on the subscription. See decode_node.cpp: the
-    # BEST_EFFORT-reader measurement that rviz/camera.rviz relies on was taken on
+    # BEST_EFFORT-reader measurement the camera viewer relied on was taken on
     # a *viewer*, where a dropped frame costs nothing, and a dropped frame here is
     # a frame the mesh never sees. The conservative default stands until somebody
     # measures this end.

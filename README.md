@@ -89,12 +89,18 @@ P7's tracker.
 ### Running it
 
 ```bash
-just run            # build, then the latest whole pipeline (today: just view-mesh)
-just build          # colcon, with the flags this box needs
-just view-mesh      # the pipeline on the Pi's camera, surface in RViz
-just dashboard      # the same, watched from a browser tab
-just --list         # everything you type on a normal day
+just run                                  # build, then SLAM on the Pi's camera, in RViz
+just run 600 desk1                        # the same on a recorded clip under bags/
+just run 600 desk1 loop_closure:=false    # visual odometry alone, the control
+just run 600 "" dashboard:=true           # plus the browser page on :8080
 ```
+
+`just run` is the only listed recipe. It brings up the default SLAM pipeline:
+tracking, place recognition, loop closure into a pose graph, the LOST refusal, and a TSDF
+rebuilt at the corrected poses. Anything after the bag is a `pimesh.launch.py`
+argument. `just build`, `just test` and `just clean` still work and are not
+listed; a new clip is `bash tools/record.sh <name> [seconds]`. What to look at:
+[docs/info/viewers.md](docs/info/viewers.md).
 
 The tests are the `tools/gates/*.sh` scripts, run directly — each exits 0 or
 non-zero and prints the number it asserted on — plus **719 unit tests across

@@ -192,7 +192,7 @@ PROBE_COMPONENTS = [
 #
 # So it is named rather than flagged, `source:=live` loads nothing, and the one
 # value that does load something loads exactly one thing. `assert_no_session`
-# covers the other half — a dataset replay beside a `just view-camera` is the same
+# covers the other half — a dataset replay beside a `just run` on the camera is the same
 # mixture whatever this list says.
 SOURCE_COMPONENTS = [
     # tools/gates/trajectory.sh: a TUM-format sequence on camera_node's two
@@ -364,7 +364,7 @@ def generate_launch_description() -> LaunchDescription:
     # **Off by default, and that is the same reasoning as `probe`.** A dashboard
     # is a viewer, and a viewer attached to every run would be in every
     # measurement this workspace takes — it subscribes to two JPEG streams and a
-    # 4 MB mesh across a process boundary. `just dashboard` turns it on,
+    # 4 MB mesh across a process boundary. `just run 600 "" dashboard:=true` turns it on,
     # and so does tools/gates/dashboard.sh, which exists to prove that turning it
     # on costs the pipeline nothing.
     dashboards = [

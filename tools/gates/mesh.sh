@@ -45,7 +45,7 @@
 #     rectangle, and a gate that only checked the file existed would pass over all
 #     three.
 #
-# **Those PNGs are the evidence and the RViz window is not.** `just view-mesh` is
+# **Those PNGs are the evidence and the RViz window is not.** `just run` is
 # for a person.
 #
 # It replays bags/desk1, like every phase from P3 on. The Pi is not involved.
@@ -99,7 +99,7 @@ done
     echo "FAIL: no bag at '${BAG_NAME}' (looked for metadata.yaml there and under bags/)"
     echo
     echo "The reference clip is recorded once, with:"
-    echo "  just record desk1 60"
+    echo "  bash tools/record.sh desk1 60"
     echo
     echo "bags/ is git-ignored, so a fresh clone has none — this gate cannot be"
     echo "run without one and does not pretend otherwise."

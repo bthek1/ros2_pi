@@ -68,7 +68,7 @@ DecodeNode::DecodeNode(const rclcpp::NodeOptions & options)
   // sequence, so one lost fragment head-of-line blocks every frame behind it for
   // a heartbeat round trip; measured on this link at ~80 kB a frame, a RELIABLE
   // reader saw 10 gaps over 50 ms in 20 s against BEST_EFFORT's 3, and
-  // rviz/camera.rviz asks for BEST_EFFORT on exactly that evidence.
+  // RViz camera views ask for BEST_EFFORT on exactly that evidence.
   //
   // That measurement was taken on a *viewer*, where a dropped frame costs
   // nothing. Here a dropped frame is a frame the mesh never sees, so the

@@ -4,6 +4,10 @@ Symptom → cause. Most of this is **inherited from the predecessor project**
 `piros2`, where it was diagnosed the expensive way. Read it before debugging;
 the odds are good that whatever just happened has happened before.
 
+Entries name the recipes they were found under — `just view-keypoints`,
+`just replay`, `just view-odom` and the rest. Those were folded into `just run` on
+2026-10-13; the mechanism each entry describes is unchanged.
+
 ## Nothing arrives on a topic across the LAN
 
 - **The daemon is showing you a stale graph.** `ros2 daemon stop && ros2 daemon
@@ -332,7 +336,7 @@ goes through rclcpp's process-global log mutex behind a synchronous terminal
 write. That is the same mechanism documented above for the TF_OLD_DATA flood,
 where a log line at frame rate stuttered RViz's render loop — a log line under a
 lock is a rate limit on everything that lock protects. Setting every
-`Covariance -> Value: false` in `rviz/odom.rviz` does **not** help; the
+`Covariance -> Value: false` in the Odometry display (now `rviz/slam.rviz`) does **not** help; the
 decomposition happens on receipt, not on draw.
 
 The fix is `unconstrained_covariance()` in `pimesh_frontend/rgbd_odometry.hpp`:
@@ -532,7 +536,7 @@ in the foreground, neither is needed. Confirm with `ps -o stat= -p <pid>` — a
 `T` is this, not a hang.
 
 **Related.** A bag of `/image_raw/compressed` and `/camera_info` carries no
-`tf_static`, and `rviz/camera.rviz` has `base_link` as its Fixed Frame, so a bag
+`tf_static`, and the camera viewer's config had `base_link` as its Fixed Frame, so a bag
 replayed without `pimesh.launch.py` produces the same grey panel for an entirely
 different reason. `just replay` starts the launch for exactly this.
 
@@ -708,7 +712,7 @@ ros2 topic echo --once --qos-durability transient_local --qos-reliability reliab
 ```
 
 In an `.rviz` config it is `Durability Policy: Transient Local` on the display's
-`Topic` block — `rviz/mesh.rviz` carries it, and `tools/gates/view-configs.sh`
+`Topic` block — `rviz/slam.rviz` carries it, and `tools/gates/view-configs.sh`
 watches rviz2 actually subscribe.
 
 ## The map stops growing, and the room is half-built

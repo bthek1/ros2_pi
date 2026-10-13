@@ -181,7 +181,7 @@ PIMESH_TF_PAT='tf2_ros/[s]tatic_transform_publisher'
 # Somebody replaying a bag by hand will lose it to a gate, which is cheap; a
 # gate that reports a clean machine while a bag drives the pipeline's input
 # topic is a green light over a wrong measurement, which is not.
-# `record` as well since #15's P2: `just record` runs the recorder under launch,
+# `record` as well since #15's P2: `tools/record.sh` runs the recorder under launch,
 # and a leaked recorder is the worst kind of straggler — silent, and filling the
 # disk with a clip of whatever the camera points at next.
 PIMESH_BAG_PAT='/bin/[r]os2 bag (play|record)'

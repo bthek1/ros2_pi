@@ -211,10 +211,9 @@ just clean                   # drop build/ install/ log/ here
 bash tools/pi/clean-pi.sh       # and there
 ```
 
-`just build`, `just test` and `just clean` are recipes because they are typed
-every day; they call `tools/build.sh`, `test.sh` and `clean.sh`, which the Pi
-plumbing runs at the far end where there is no `just`. The `tools/pi/` ones are
-scripts, like everything else that is not a day-to-day action.
+`just build`, `just test` and `just clean` are private recipes (see *Running*);
+the `tools/pi/` ones are scripts, like everything else that is not a day-to-day
+action.
 
 **Use these rather than bare `colcon`.** `just build` expands to
 
@@ -245,42 +244,37 @@ several minutes at either end — `bash tools/gates/build.sh` prints both.
 
 ## Running
 
-`just` with no arguments lists what exists, by group:
+`just` with no arguments lists what exists, and that is one command:
 
 <!-- gate-justfile keeps the block below equal to `just --list`. Edit the
      justfile, then re-run `bash tools/gates/justfile.sh`; do not edit by hand. -->
 
 ```text
 Available recipes:
-    default                                       # List the recipes
-
-    [build]
-    build *args                                   # Build the workspace
-    clean                                         # Delete build/ install/ log/ here
-
-    [run]
-    dashboard seconds="600" bag="" dashboard_port="8080" # The whole pipeline in a browser tab: http://localhost:8080. Not evidence
-    record name seconds="60"                      # Record a clip from the Pi's camera into bags/<name>, counted from the first frame
-    replay bag seconds="600"                      # A recorded bag in RViz, looping. bag = a name under bags/, or a path to one
-    run seconds="600" bag=""                      # Build, then the latest whole pipeline: today the mesh view. bag = optional, else the camera
-    view-camera seconds="600"                     # The Pi's camera and the frame tree, in RViz. A viewer, not evidence
-    view-depth seconds="600" bag=""               # The room as a depth cloud, in RViz. bag = optional, else the camera
-    view-keypoints seconds="600" bag=""           # ORB corners and the pose, in RViz. bag = optional, else the camera
-    view-map seconds="600" bag="" local_ba="true" # Map points and the trail, in RViz. local_ba = true (default) or false, the control
-    view-mesh seconds="600" bag=""                # The room as a triangle surface, in RViz. bag = optional, else the camera
-    view-odom seconds="600" bag="" odom_regime="sixdof" # The camera's trajectory, in RViz. odom_regime = sixdof (default) or rotation_only
-
-    [test]
-    test *args                                    # Build, run every unit test, and exit non-zero on any failure (colcon test alone does not)
+    run seconds="600" bag="" *launch_args # Build, then the SLAM pipeline in RViz. bag = a clip under bags/ (default: the Pi's camera); then any pimesh.launch.py name:=value
 ```
 
-That is the whole list, and the shortness is the point: `build` is how you
-build, `test` is how you check, and `run` is what you start in order to *watch*
-something. **`just run` is the one to start with**: it builds, then brings up the
-latest whole pipeline — today `just view-mesh`, the camera through to a surface
-in RViz. It is `build` and that viewer as dependencies, with no body of its own,
-so moving it to a newer view is a one-word change. `just view-camera` is the
-lighter first check, and `just dashboard` the same pipeline in a browser.
+**`just run` is the project.** It builds, then brings up the SLAM pipeline — the
+Pi's camera (or a clip under `bags/`) through tracking, loop closure and a TSDF
+rebuilt at the corrected poses, with RViz drawing the mesh, the trajectory and
+the depth image in the `map` frame. Anything after the bag is a
+`pimesh.launch.py` argument, passed through as it is:
+
+```bash
+just run                                 # the Pi's camera, ten minutes
+just run 600 desk1                       # the reference clip instead
+just run 600 desk1 loop_closure:=false   # visual odometry alone, the control
+just run 600 "" dashboard:=true          # plus the browser page on :8080
+```
+
+`build`, `test` and `clean` are `[private]` recipes: `just build`, `just test`
+and `just clean` work and are not listed. They call `tools/build.sh`, `test.sh`
+and `clean.sh`, which the Pi plumbing runs at the far end where there is no
+`just`. Recording a clip is `bash tools/record.sh <name> [seconds]`.
+
+The per-stage viewers (`view-camera`, `view-keypoints`, `view-depth`,
+`view-odom`, `view-map`, `replay`, `dashboard`, `record`) were recipes until
+2026-10-13 and are gone; the build log and closed issues still name them.
 
 **Everything else is a script in `tools/`, run directly.** The gates especially
 — there are eighteen, they are run constantly, and as recipes they buried the

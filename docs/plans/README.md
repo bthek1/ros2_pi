@@ -162,6 +162,8 @@ Promotion still works as described above — a fired trigger moves an entry out
 of the deferred half of that file and into the phase list as the next unused
 number, then into whichever milestone issue is open.
 
-Each milestone issue also carries a **`just view-*` RViz recipe**. That is a
+Milestone issues up to #16 each carried a **`just view-*` RViz recipe**; since
+2026-10-13 there is one, `just run`, and a new view is an entry in
+`pimesh_bringup/config/views.yaml`, not a recipe. A view is a
 viewer for a person, not a gate: it does not close a phase, and the rule at the
 top of this page still holds — the evidence is the number a script printed.

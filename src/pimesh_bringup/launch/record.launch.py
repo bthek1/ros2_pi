@@ -1,6 +1,6 @@
 """Record a clip from the Pi's camera into bags/<name>: #15's P2.
 
-the deleted `just record` did this as a script whose steps were separated by sleeps
+the old `just record` did this as a script whose steps were separated by sleeps
 and polls: reset the camera, sleep 5, start the camera, poll `ros2 topic list`
 until the topic appeared, record under a timer, kill everything, check for
 metadata.yaml. Here each step starts on the **exit event** of the one before it,
@@ -26,7 +26,7 @@ runs or after everything has: a bag that already exists (a reference clip is
 recorded once — delete it deliberately), and a recording that has no
 metadata.yaml at the end, which is a recorder killed before it finished.
 
-Run it through `tools/session.sh record --pi -- …` (`just record`), whose
+Run it through `tools/session.sh record --pi -- …` (`bash tools/record.sh`), whose
 `kill_pi` is what ends the camera on the Pi.
 """
 
@@ -75,7 +75,7 @@ def summarise(bag: Path) -> list:
     for mcap in sorted(bag.glob('*.mcap')):
         digest = hashlib.sha256(mcap.read_bytes()).hexdigest()
         lines.append(f"  {'sha256':<28} {digest}")
-    lines.append(f'Look at it before trusting it:  just replay {bag.name}')
+    lines.append(f'Look at it before trusting it:  just run 600 {bag.name}')
     return lines
 
 

@@ -218,7 +218,7 @@ copy that makes every *downstream* copy unnecessary.
 
 **The reader's QoS is an open question, and the parameter exists so it can be
 measured rather than argued about.** `input_reliability` is `reliable` by default.
-The BEST_EFFORT-reader measurement that `rviz/camera.rviz` relies on was taken on
+The BEST_EFFORT-reader measurement that the camera viewer relied on was taken on
 a *viewer*, where a dropped frame costs nothing; here a dropped frame is a frame
 the mesh never sees. `decode_node`'s stats line counts inter-arrival gaps over
 50 ms, which is the instrument for settling it.

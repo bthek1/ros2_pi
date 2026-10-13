@@ -201,7 +201,7 @@ private:
   rclcpp::Publisher<pimesh_msgs::msg::PipelineStats>::SharedPtr stats_pub_;
   /// #13's P19: OK / LOST at every depth stamp. fusion_node and dashboard_node read it.
   rclcpp::Publisher<pimesh_msgs::msg::TrackingState>::SharedPtr tracking_pub_;
-  /// The map's points, for `just view-map`. A viewer's topic and nothing else reads
+  /// The map's points, for RViz (`local_map:=true`). A viewer's topic and nothing else reads
   /// it; published at most every `map_points_period_s`, from the pose worker, when a
   /// keyframe has changed the map.
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_points_pub_;

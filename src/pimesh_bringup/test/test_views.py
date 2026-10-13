@@ -15,6 +15,9 @@ view that is *well-formed and wrong*:
 - a recipe naming a view the table does not have, or a view with no heading in
   docs/info/viewers.md, which is the page the launch's one log line points to.
 
+One view since 2026-10-13 (`run`); the checks stay general so a second view is
+covered the day it is added.
+
 Read as text and YAML, no launch service: the claims are about the files.
 """
 
@@ -116,9 +119,10 @@ def test_every_recipe_names_a_view_that_exists_and_every_view_has_one(views):
 def test_every_view_has_a_heading_in_the_viewers_page(views):
     with open(_VIEWERS_DOC) as fh:
         headings = set(re.findall(r'^## (\S+)', fh.read(), re.M))
+    # The view is named for its recipe, and the launch's log line links #<name>.
     for name in views:
-        assert f'view-{name}' in headings, (
-            f'docs/info/viewers.md has no "## view-{name}", and the launch points there')
+        assert name in headings, (
+            f'docs/info/viewers.md has no "## {name}", and the launch points there')
 
 
 # --- record.launch.py's after-recording check ----------------------------------

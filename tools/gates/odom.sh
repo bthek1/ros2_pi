@@ -73,7 +73,7 @@
 # person and the camera, which is why it is **P13 of gh issue #10** rather than
 # something a script can reach — promoted there on 2026-09-23 out of
 # docs/plans/future/milestone-e-future.md. Recording it is
-# `just record walk1 60`, and this gate takes the clip name as its
+# `bash tools/record.sh walk1 60`, and this gate takes the clip name as its
 # first argument: `bash tools/gates/odom.sh walk1`.
 #
 # Both runs replay bags/desk1, like every phase from P3 on, so the numbers compare
@@ -221,7 +221,7 @@ done
     echo "FAIL: no bag at '${BAG_NAME}' (looked for metadata.yaml there and under bags/)"
     echo
     echo "The reference clip is recorded once, with:"
-    echo "  just record desk1 60"
+    echo "  bash tools/record.sh desk1 60"
     echo
     echo "bags/ is git-ignored, so a fresh clone has none — this gate cannot be run"
     echo "without one and does not pretend otherwise."

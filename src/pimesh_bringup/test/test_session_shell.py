@@ -35,6 +35,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _WS = os.path.abspath(os.path.join(_HERE, '..', '..', '..'))
 _LIB = os.path.join(_WS, 'tools', 'lib', 'just-lib.sh')
 _JUSTFILE = os.path.join(_WS, 'justfile')
+_RECORD = os.path.join(_WS, 'tools', 'record.sh')
 
 _PAT_LINE = re.compile(r"^(PIMESH_[A-Z_]+_PAT)='([^']*)'", re.M)
 
@@ -65,7 +66,7 @@ def test_the_patterns_use_only_constructs_both_read_alike(patterns):
 
 def test_the_viewer_pattern_matches_both_spellings_of_rviz(patterns):
     pat = patterns['PIMESH_VIEWER_PAT']
-    cfg = '/ws/install/pimesh_bringup/share/pimesh_bringup/rviz/mesh.rviz'
+    cfg = '/ws/install/pimesh_bringup/share/pimesh_bringup/rviz/slam.rviz'
     assert _hits(pat, f'rviz2 -d {cfg}'), 'RViz started by a script'
     # launch_ros's Node execs by installed path: the case the pattern once missed.
     assert _hits(pat, f'/opt/ros/lyrical/lib/rviz2/rviz2 -d {cfg} --ros-args'), \
@@ -74,8 +75,8 @@ def test_the_viewer_pattern_matches_both_spellings_of_rviz(patterns):
 
 def test_the_viewer_pattern_does_not_match_what_starts_rviz(patterns):
     pat = patterns['PIMESH_VIEWER_PAT']
-    for launcher in ('bash -c rviz2 -d /ws/pimesh_bringup/rviz/mesh.rviz',
-                     '/usr/bin/bash -c rviz2 -d /ws/pimesh_bringup/rviz/mesh.rviz',
+    for launcher in ('bash -c rviz2 -d /ws/pimesh_bringup/rviz/slam.rviz',
+                     '/usr/bin/bash -c rviz2 -d /ws/pimesh_bringup/rviz/slam.rviz',
                      'timeout --foreground -s INT 90 rviz2 -d /ws/pimesh_bringup/x.rviz'):
         # Matching these is how kill_local once killed its own caller.
         assert not _hits(pat, launcher), launcher
@@ -97,19 +98,30 @@ def test_the_bag_pattern_matches_a_player_and_a_recorder(patterns):
 # --- what no pattern may match ----------------------------------------------
 
 def _session_command_lines():
-    """Every session recipe as the two processes it becomes, with sample values.
+    """Every session as the two processes it becomes, with sample values.
 
-    `just` runs a body as `bash -euo pipefail -c <body>`, and that bash execs the
-    single command in it, so both command lines exist for a moment and both are
-    swept by kill_local.
+    `just run` runs its body as `bash -euo pipefail -c <body>`, and that bash execs
+    the single command in it, so both command lines exist for a moment and both
+    are swept by kill_local. `tools/record.sh` execs session.sh the same way.
     """
+    bodies = []
     with open(_JUSTFILE) as fh:
-        bodies = [line.strip().lstrip('@') for line in fh if 'tools/session.sh' in line]
+        bodies += [line.strip().lstrip('@') for line in fh
+                   if 'tools/session.sh' in line and not line.startswith('#')]
+    with open(_RECORD) as fh:
+        # The exec line and its continuation, joined: one command line.
+        text = fh.read().replace('\\\n', ' ')
+        bodies += [line.strip().removeprefix('exec ') for line in text.splitlines()
+                   if 'session.sh' in line and not line.startswith('#')]
     lines = []
     for body in bodies:
         body = body.replace('{{ ws }}', '/ws')
-        body = re.sub(r'\{\{\s*if [^}]*\}\}', '--pi', body)
+        body = body.replace('$(dirname "${BASH_SOURCE[0]}")', '/ws/tools')
+        # Non-greedy to the `} }}` that closes it: the branches hold braces of
+        # their own, so `[^}]*` stopped inside them and left the if in the line.
+        body = re.sub(r'\{\{\s*if .*?\}\s*\}\}', '--pi', body)
         body = re.sub(r'\{\{\s*\w+\s*\}\}', 'desk1', body)
+        body = re.sub(r'\$\{?\w+\}?', 'desk1', body)
         argv = body.replace('"', '')
         lines += [f'bash -euo pipefail -c {body}', argv]
     return lines
@@ -117,8 +129,8 @@ def _session_command_lines():
 
 def test_no_pattern_matches_a_session_wrapper(patterns):
     lines = _session_command_lines()
-    # Every viewer and `record`; finding none would make this vacuous.
-    assert len(lines) >= 2 * 9, f'{len(lines) // 2} session recipes found in the justfile'
+    # `just run` and `tools/record.sh`; finding none would make this vacuous.
+    assert len(lines) >= 2 * 2, f'{len(lines) // 2} sessions found in the justfile and record.sh'
     for line in lines:
         for name, pat in patterns.items():
             assert not _hits(pat, line), (
@@ -135,7 +147,7 @@ def _bash(script, **env):
 
 
 _STUBS = '''
-pgrep() { echo "4242 bash /ws/tools/session.sh view-mesh --pi -- ros2 launch pimesh_bringup view.launch.py"; }
+pgrep() { echo "4242 bash /ws/tools/session.sh run --pi -- ros2 launch pimesh_bringup view.launch.py"; }
 ps() { local pid=${@: -1}
        if [[ $pid == "$$" ]]; then echo 111; elif [[ $pid == 4242 ]]; then printf '%s' "$PGID_4242"; fi; }
 '''

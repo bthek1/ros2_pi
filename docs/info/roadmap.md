@@ -39,8 +39,9 @@ and that is the pipeline** — then, opened 2026-09-23,
 [#11 G](https://github.com/bthek1/ros2_pi/issues/11) = M13–M14 (closed 2026-09-30 unmet, carried to [#16](https://github.com/bthek1/ros2_pi/issues/16)),
 [#12 H](https://github.com/bthek1/ros2_pi/issues/12) = M15–M17,
 [#13 I](https://github.com/bthek1/ros2_pi/issues/13) = M18–M19, which turn it
-into **monocular visual SLAM**. Each carries a `just view-*` RViz recipe for
-watching that stage by eye — a viewer, never the evidence.
+into **monocular visual SLAM**. Each carried a `just view-*` RViz recipe for
+watching that stage by eye — a viewer, never the evidence — until 2026-10-13,
+when they were folded into the one `just run`.
 
 **The dividing line between the two halves is not a feature.** A–E estimate a
 pose and fuse a surface; F–I add a map, a backend that revisits it, loop closure

@@ -79,7 +79,7 @@ done
     echo "FAIL: no bag at '${BAG_NAME}' (looked for metadata.yaml there and under bags/)"
     echo
     echo "P3's reference clip is recorded once, with:"
-    echo "  just record desk1 60"
+    echo "  bash tools/record.sh desk1 60"
     echo
     echo "bags/ is git-ignored, so a fresh clone has none — this gate cannot be"
     echo "run without one and does not pretend otherwise."

@@ -1,9 +1,10 @@
-"""A viewer: the pipeline, a source of frames, and RViz — one file for every view.
+"""The view `just run` opens: the pipeline, a source of frames, and RViz.
 
 `just view-mesh` used to be a 135-line shell script, and so did seven siblings
 that differed from it in an RViz config name, a sleep and some checklist text.
-What a view *is* now lives in `config/views.yaml`, one entry per view, and this
-file is the one place that turns an entry into processes. #15's P0.
+What a view *is* lives in `config/views.yaml` — one entry, `run`, since the
+per-stage viewers were removed on 2026-10-13 — and this file is the one place
+that turns an entry into processes. #15's P0.
 
 **What `launch` does here that the scripts did by hand**:
 
@@ -34,8 +35,7 @@ Pi to its own `timeout`.
 **`pimesh.launch.py` is included, never redeclared.** Every argument it declares
 — `odom_regime`, `local_ba`, `loop_closure`, `dashboard_port`, thirty of them —
 is forwarded from this file's command line untouched, because an include sees its
-parent's launch configurations. A view that needs one set (the replay view wants
-`pipeline:=false`) says so in `views.yaml`, and this file sets it before the
+parent's launch configurations. A view that needs one set says so in `views.yaml`, and this file sets it before the
 include runs. Declaring any of them again here would be two defaults for one
 value, which is the drift `test_no_launch_override_quietly_replaces_what_the_yaml_says`
 exists for one layer down.
@@ -198,8 +198,8 @@ def _announce(context):
     where = ''
     if cfg.get('dashboard', 'false').lower() == 'true':
         where = f' Open http://localhost:{cfg["dashboard_port"]}.'
-    return [LogInfo(msg=(f'view-{name}: source {cfg["_view_source"]}.{where} What to look '
-                         f'at: docs/info/viewers.md#view-{name}'))]
+    return [LogInfo(msg=(f'just {name}: source {cfg["_view_source"]}.{where} What to look '
+                         f'at: docs/info/viewers.md#{name}'))]
 
 
 def generate_launch_description() -> LaunchDescription:

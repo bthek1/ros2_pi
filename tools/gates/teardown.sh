@@ -60,38 +60,28 @@ fi
 # That is what `run_for` exists for, and why every recipe below is started here
 # rather than trusted.
 #
-# view-camera is the cheapest recipe that carries *both* shapes — it spans both
-# machines and runs its viewer in the foreground — which is why it is the one
-# that carries the extra endings below. It also has the most to lose: the thing
-# it leaves behind on the Pi holds /dev/video0 *exclusively*. A leaked
-# camera_node does not merely linger; it makes every later session in this
-# project die with "Device or resource busy", including the ones that would
-# have diagnosed it.
-
-# replay is the fourth, and it is here because of how its failure looks rather
-# than how expensive it is. What it leaves behind is a `ros2 bag play` on
-# /image_raw/compressed — a *second source* of the pipeline's input topic, and
-# an unattended one. A leaked viewer is visible and a leaked camera_node
-# announces itself the next time anything opens /dev/video0; a leaked player
-# announces nothing and quietly mixes recorded frames into whatever the next
-# measurement thinks it is measuring. On 2026-09-12 two of them ran for four
-# minutes while tools/stragglers.sh reported 0/0 and meant it, because no
-# pattern in just-lib.sh matched a bag player at all. That hole is closed there;
-# this is the half that proves the recipe's own trap reaches one.
-
-# view-keypoints is the fifth, and it is the most expensive thing in this table to
-# leak: a container holding decode_node and keypoint_node, the Pi's camera, three
-# static transform publishers and RViz. It is given the fixture bag rather than the
-# live camera here — the session shape being tested is the same either way, and
-# the bag version does not depend on the Pi's Wi-Fi being up for the gate to mean
-# something. The camera path is covered by view-camera in the row above.
+# **One recipe, two rows**, since the justfile was cut to `just run` on
+# 2026-10-13. Eight viewers used to fill this table; what they exercised between
+# them was two session shapes, and `run` has both:
+#
+#   run@pi  `just run` on the Pi's camera — spans both machines, so it carries the
+#           extra endings below. It has the most to lose: what it leaves behind on
+#           the Pi holds /dev/video0 *exclusively*, and a leaked camera_node makes
+#           every later session die with "Device or resource busy", including the
+#           ones that would have diagnosed it.
+#   run     `just run` on this gate's fixture bag — a player, the container and
+#           RViz, local only, so it does not depend on the Pi's Wi-Fi to mean
+#           something. A leaked player is the quiet one: a second, unattended
+#           source on /image_raw/compressed that mixes recorded frames into
+#           whatever the next measurement thinks it is measuring. On 2026-09-12
+#           two of them ran for four minutes while tools/stragglers.sh reported
+#           0/0 and meant it.
 
 # recipe -> the argv to run it with, and what "it is up" means for it.
-ALL_RECIPES=(view-camera replay view-keypoints view-depth view-mesh view-odom view-map dashboard run)
+ALL_RECIPES=(run@pi run)
 
-# **A recipe argument narrows the table** — `bash tools/gates/teardown.sh view-mesh`
-# runs that recipe's endings and nothing else, which is how #15 closed P0 before
-# the other seven had moved. No argument is every recipe, and that is the run that
+# **A recipe argument narrows the table** — `bash tools/gates/teardown.sh run`
+# runs that row's endings and nothing else. No argument is every recipe, and that is the run that
 # closes a claim about the workspace. An unknown name is refused rather than
 # skipped: a gate that runs zero cases and prints PASS is the shape this file
 # opens with.
@@ -106,39 +96,22 @@ else
 fi
 command -v just >/dev/null || { echo "FAIL: just is not on PATH, and every case goes through it"; exit 1; }
 
-# `replay` is the only recipe here that takes an argument, and the bag it takes
-# has to be *this gate's own*. bags/ is git-ignored, so on a fresh clone there
-# is nothing in it; picking whatever happened to be there would make a core
-# teardown gate fail for reasons that have nothing to do with teardown, and
-# would make what it asserts depend on which machine it ran on.
+# **The bag has to be this gate's own.** bags/ is git-ignored, so on a fresh
+# clone there is nothing in it; picking whatever happened to be there would make
+# a core teardown gate fail for reasons that have nothing to do with teardown.
 #
 # So the fixture is synthesized: a throwaway topic recorded into a temp directory
-# and deleted on the way out. `replay` never reads the messages — it hands the bag
-# to `ros2 bag play` and puts RViz in front of it — so the payload is irrelevant
-# and a std_msgs/String is the cheapest thing that makes a valid bag. What is being
-# tested is the process tree: a player, a launcher, three static transform
-# publishers and a viewer, all of which must be gone by the time the recipe has
-# returned.
+# and deleted on the way out. The pipeline never sees a frame from it — what is
+# being tested is the process tree: a player, a launcher, the container and a
+# viewer, all of which must be gone by the time the recipe has returned.
 #
-# **Its length is load-bearing, and it has had to grow three times.** Three seconds was
-# too short in 2026-09-13 (below); twenty was too short for `view-depth`, added
-# 2026-09-15. That recipe waits six seconds before starting RViz rather than
-# three, because depth_node loads a 99 MB model and warms a CUDA session before
-# the container is of any use — so `session_up` cannot be satisfied until the
-# player, the container and a fully started rviz2 overlap, and the player is the
-# one with a deadline. `view-mesh`, added 2026-09-16, waits eight. The fixture has
-# to outlive all of that with room to spare.
-#
-# `view-keypoints` plays a bag **once** rather than on a loop (a looping bag
-# replays header stamps minutes into the past, and odometry_node's pose is then
-# rejected by every TF listener in the domain — docs/info/troubleshooting.md has the
-# measurement). `session_up` for that recipe requires the player, the container
-# *and* the viewer to be running at the same moment, and rviz2 takes several
-# seconds to exist — so a three-second clip was finished before there was
-# anything to see, and the gate failed with "view-keypoints never came up"
-# against a recipe that was behaving correctly. The fixture has to outlive RViz's
-# startup, which is what this is: long enough to overlap by a comfortable margin,
-# short enough that building it is not the slowest thing here.
+# **Its length is load-bearing, and it has had to grow three times.** `session_up`
+# needs the player, the container and a fully started rviz2 to overlap, and the
+# player is the one with a deadline: the container loads a 99 MB model and warms
+# a CUDA session, and the view waits eight seconds before starting RViz. A
+# three-second clip (2026-09-13) and a twenty-second one (2026-09-15) were both
+# finished before there was anything to see, and the gate failed with "never came
+# up" against a recipe behaving correctly.
 GATE_BAG_SECONDS=40
 GATE_BAG=
 
@@ -209,18 +182,15 @@ trap cleanup_fixture EXIT
 # 2026-10-05 before switching: just 1.46 waits for a recipe that traps SIGINT to
 # finish its cleanup, and exits 130 when the recipe re-raises — so the INT and
 # INT-TWICE assertions below mean what they meant against the bare script.
-JUST=(just --justfile "$PIMESH_WS/justfile")
-argv_for() {                # $1 = recipe, $2 = seconds; prints one argv word per line
+#
+# **`--no-deps`**: `run` depends on `build`, and a colcon build per case would be
+# most of this gate's runtime while testing nothing about teardown. The body —
+# session.sh and the launch — is what each case starts.
+JUST=(just --justfile "$PIMESH_WS/justfile" --no-deps)
+argv_for() {                # $1 = row, $2 = seconds; prints one argv word per line
     case $1 in
-        replay)      printf '%s\n' "${JUST[@]}" replay "$GATE_BAG" "$2" ;;
-        view-camera) printf '%s\n' "${JUST[@]}" view-camera "$2" ;;
-        # `run` is `build` then `view-mesh`, by dependency, with the same two
-        # parameters — the first command a person types, so it is in the table.
-        view-keypoints|view-depth|view-mesh|view-odom|view-map|run)
-                     printf '%s\n' "${JUST[@]}" "$1" "$2" "$GATE_BAG" ;;
-        # A port, not a window. The third argument keeps it off 8080 so a gate run
-        # cannot collide with a dashboard somebody has open.
-        dashboard)   printf '%s\n' "${JUST[@]}" dashboard "$2" "$GATE_BAG" 18080 ;;
+        run@pi)      printf '%s\n' "${JUST[@]}" run "$2" ;;
+        run)         printf '%s\n' "${JUST[@]}" run "$2" "$GATE_BAG" ;;
         # No fallback on purpose. A dispatch table that guesses an argv for a
         # recipe nobody taught it is how a row gets added to RECIPES above and
         # silently tested as something else.
@@ -228,58 +198,21 @@ argv_for() {                # $1 = recipe, $2 = seconds; prints one argv word pe
     esac
 }
 
-session_up() {              # $1 = recipe
+session_up() {              # $1 = row
     case $1 in
-        # The camera on the Pi *and* the viewer here. Waiting on only one of
-        # them would signal the session before the other had started, and a
-        # process that was never running is trivially not a straggler.
-        view-camera) pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 &&
-                     pi_run "pgrep -f '$PIMESH_NODE_PAT'" >/dev/null 2>&1 ;;
-        # The player *and* the viewer, for the same reason as view-camera: the
-        # player is up within a second and RViz takes several, so waiting on the
-        # player alone would signal the session before the viewer existed — and
-        # a viewer that was never running is trivially not a straggler. This
-        # gate has been fooled by exactly that shape of "pass" once already.
-        replay)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
-                 pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
-        # The container as well as the player and the viewer: this recipe is the
-        # only one in the table that starts all three, and the container is the
-        # one that would go on decoding frames unattended.
-        view-keypoints) pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
-                        pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
-                        pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
-        # The same three, and the slowest of the set to reach all of them: the
-        # container is not merely started here, it has a model to load and a CUDA
-        # context to build before depth_node returns from its constructor.
-        view-depth) pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
-                    pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
-                    pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
-        # The same three again, and slower still: this container loads the model,
-        # builds the CUDA context *and* waits eight seconds before starting RViz,
-        # because there is nothing for a mesh viewer to show until frames have been
-        # integrated. The fixture clip has to outlive all of that.
-        view-mesh|run)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
-                    pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
-                    pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
-        # The same three once more. view-odom is view-mesh with an extra display
-        # in the config; nothing about how it starts or ends differs.
-        view-odom)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
-                    pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
-                    pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
-        # And view-map is view-odom with the backend thread doing bundle adjustment
-        # inside the container — a thread, not a process, so nothing new to wait on.
-        view-map)   pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
-                    pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
-                    pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
-        # **The one recipe here with no window at all**, which is why it is worth
-        # having in this list rather than assuming it behaves like the viewers: it
-        # starts a player, the container, *and* a node holding a listening socket
-        # in its own process. A dashboard_node left behind would keep port 8080
-        # bound and the next session would refuse to start — the same failure
-        # shape as a camera_node holding /dev/video0, one machine over.
-        dashboard)  pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
-                    pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
-                    pgrep -f '/lib/[p]imesh_dashboard/' >/dev/null 2>&1 ;;
+        # The container and the viewer here *and* the camera on the Pi. Waiting
+        # on only some of them would signal the session before the rest had
+        # started, and a process that was never running is trivially not a
+        # straggler — this gate has been fooled by exactly that shape of "pass".
+        run@pi) pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
+                pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 &&
+                pi_run "pgrep -f '$PIMESH_NODE_PAT'" >/dev/null 2>&1 ;;
+        # The player, the container and the viewer. The container is the slow
+        # one: it has a model to load and a CUDA context to build before
+        # depth_node returns from its constructor, and RViz waits eight seconds.
+        run)    pgrep -f "$PIMESH_BAG_PAT" >/dev/null 2>&1 &&
+                pgrep -f "$PIMESH_CONTAINER_PAT" >/dev/null 2>&1 &&
+                pgrep -f "$PIMESH_VIEWER_PAT" >/dev/null 2>&1 ;;
     esac
 }
 
@@ -307,9 +240,8 @@ session_up() {              # $1 = recipe
 # aimed at the node can land before the node exists, match nothing, report
 # success, and leave the wrapper to exec it a moment later. Measured 2026-09-14:
 # kill_pi called half a second after a remote start returned 0, and twelve
-# seconds later the Pi had the whole chain running. Only view-camera carries this
-# case, because it is the cheapest recipe that spans both machines and has a
-# window to close.
+# seconds later the Pi had the whole chain running. Only run@pi carries this
+# case, because it is the row that spans both machines.
 #
 # INT-TWICE is the fourth time round, and it is the one this file had no case for
 # on 2026-09-18: `just view-mesh` ended with `^C^C` left a camera_node holding
@@ -319,17 +251,11 @@ session_up() {              # $1 = recipe
 # because kill_local always goes first. Ten INT cases over five recipes had never
 # sent a *second* signal, and a verified teardown takes 7-9 s while printing
 # nothing, which is long enough that pressing Ctrl-C again is the normal thing to
-# do. Only view-camera carries this case, for the same reason it carries
-# CLOSE-EARLY: it is the cheapest recipe that spans both machines, and a teardown
-# with no far end to reach cannot exhibit the bug.
-hows_for() {                # $1 = recipe
+# do. Only run@pi carries this case, for the same reason it carries CLOSE-EARLY:
+# a teardown with no far end to reach cannot exhibit the bug.
+hows_for() {                # $1 = row
     case $1 in
-        # No viewer window to close, so the CLOSE case does not apply:
-        # `dashboard` ends by a signal or by its own timer. Listing CLOSE for it
-        # would emulate closing an rviz2 that was never started, which is a case
-        # that passes for the wrong reason.
-        dashboard)   echo "INT HUP" ;;
-        view-camera) echo "INT INT-TWICE HUP CLOSE CLOSE-EARLY" ;;
+        run@pi)      echo "INT INT-TWICE HUP CLOSE CLOSE-EARLY" ;;
         *)           echo "INT HUP CLOSE" ;;
     esac
 }
@@ -368,8 +294,8 @@ run_and_end() {             # $1 = INT | HUP | CLOSE | CLOSE-EARLY, $2 = recipe
     # happen twice: after setsid, the new leader's own $$ *is* the pgid, and it
     # writes it down before exec'ing the script.
     local pgidfile; pgidfile=$(mktemp)
-    # argv as an array rather than a single word: replay takes a bag path before
-    # its seconds, and a path from mktemp -d is exactly the kind of thing that
+    # argv as an array rather than a single word: the bag is a path from mktemp -d,
+    # and a path from mktemp -d is exactly the kind of thing that
     # must not be re-split by a shell on its way through two of them.
     local -a argv
     if (( ${#CASE_ARGV[@]} )); then argv=("${CASE_ARGV[@]}"); else mapfile -t argv < <(argv_for "$2" 90); fi
@@ -622,7 +548,7 @@ assert_teardown_verified() {
 assert_teardown_verified || exit 1
 
 make_fixture_bag || exit 1
-echo "fixture bag      : ${GATE_BAG} ($(du -sh "$GATE_BAG" | cut -f1), for replay)"
+echo "fixture bag      : ${GATE_BAG} ($(du -sh "$GATE_BAG" | cut -f1), for run)"
 
 counts=""
 cases=0
@@ -687,24 +613,24 @@ done
 # launch-based viewer is in the table, through session.sh directly, because the
 # recipe has no parameter for it and should not grow one for a gate.
 control=""
-if [[ " ${RECIPES[*]} " == *" view-mesh "* ]]; then
+if [[ " ${RECIPES[*]} " == *" run "* ]]; then
     stuck=$(( worst_close * 3 > 30 ? worst_close * 3 : 30 ))
-    CASE_ARGV=(bash "$PIMESH_WS/tools/session.sh" view-mesh --local -- ros2 launch pimesh_bringup
-               view.launch.py view:=mesh seconds:=150 bag:="$GATE_BAG" close_ends_session:=false)
+    CASE_ARGV=(bash "$PIMESH_WS/tools/session.sh" run --local -- ros2 launch pimesh_bringup
+               view.launch.py view:=run seconds:=150 bag:="$GATE_BAG" close_ends_session:=false)
     CASE_EXPECT_STUCK=$stuck
-    run_and_end CLOSE view-mesh || exit 1
+    run_and_end CLOSE run || exit 1
     CASE_ARGV=(); CASE_EXPECT_STUCK=
     out=$(bash "$stragglers" 2>&1) || {
         echo "$out"; echo "FAIL: the control left processes behind after its SIGINT"; exit 1; }
     control="still running ${stuck}s after its window closed, clean after SIGINT"
-    echo "--- control: view-mesh close_ends_session:=false ---"
+    echo "--- control: run close_ends_session:=false ---"
     echo "$control"
 fi
 
 echo
 echo "survivors dev/pi : ${counts}"
 echo "                   (assert 0/0 after every ending, ${cases} cases over"
-echo "                    ${#RECIPES[@]} recipes: Ctrl-C, Ctrl-C twice with the second"
+echo "                    ${#RECIPES[@]} rows of just run: Ctrl-C, Ctrl-C twice with the second"
 echo "                    inside the teardown, a closed terminal, a closed window,"
 echo "                    and a window closed before the far end is up)"
 [[ -n $control ]] && echo "control          : CLOSE without the OnProcessExit handler ${control}  (assert)"

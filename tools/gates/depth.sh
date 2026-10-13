@@ -109,7 +109,7 @@ done
     echo "FAIL: no bag at '${BAG_NAME}' (looked for metadata.yaml there and under bags/)"
     echo
     echo "The reference clip is recorded once, with:"
-    echo "  just record desk1 60"
+    echo "  bash tools/record.sh desk1 60"
     echo
     echo "bags/ is git-ignored, so a fresh clone has none — this gate cannot be"
     echo "run without one and does not pretend otherwise."
@@ -291,7 +291,7 @@ in_range "$rate" "$MIN_RATE_HZ" 1000 ||
 # --- The colour-mapped preview actually ran ----------------------------------
 #
 # `preview=` is non-zero only if depth_node colour-mapped and encoded something, so
-# this is the cheapest evidence that rviz/depth.rviz's Depth panel has a live topic
+# this is the cheapest evidence that rviz/slam.rviz's Depth panel has a live topic
 # behind it. It is worth asserting rather than printing because the failure is the
 # silent one this project keeps meeting: a display subscribed to a topic nobody
 # publishes shows an empty panel that looks exactly like a camera that is not
@@ -303,7 +303,7 @@ in_range "$rate" "$MIN_RATE_HZ" 1000 ||
 # 55 ms to 59 ms and a window's p95 over the ceiling with nothing about the
 # pipeline changed (2026-09-15).
 in_range "${preview_ms:-0}" 0.01 "$MAX_PREVIEW_MS" ||
-    note "the inferno preview cost ${preview_ms:-0} ms/frame — 0 means it never ran, so rviz/depth.rviz's Depth panel has nothing behind it; over ${MAX_PREVIEW_MS} ms means colour-mapping a frame now costs more than a tenth of the depth budget"
+    note "the inferno preview cost ${preview_ms:-0} ms/frame — 0 means it never ran, so rviz/slam.rviz's Depth panel has nothing behind it; over ${MAX_PREVIEW_MS} ms means colour-mapping a frame now costs more than a tenth of the depth budget"
 
 # --- Claim 3: the colour twin and the stamps ---------------------------------
 #
