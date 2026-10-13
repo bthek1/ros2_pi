@@ -1,6 +1,8 @@
-# The viewers, one entry each. view.launch.py reads this file and nothing about a
-# view is written anywhere else: `just view-mesh` is `view.launch.py view:=mesh`,
-# and what makes it the mesh viewer is the entry below.
+# The view `just run` opens. view.launch.py reads this file and nothing about a
+# view is written anywhere else: `just run` is `view.launch.py view:=run`, and what
+# makes it the SLAM view is the entry below. One entry since 2026-10-13, when the
+# seven per-stage viewers (camera, replay, keypoints, depth, odom, map, dashboard)
+# were removed; the table shape stays so a second view is one entry, not a script.
 #
 # **Not a ROS parameter file.** No node reads it, so it is not keyed by node name
 # and `test_no_parameter_in_the_yaml_is_read_by_nobody` does not apply to it;
@@ -28,78 +30,16 @@
 #                 line untouched, so these are only the ones that make the view
 #                 what it is.
 #
-# What a person should look at in each view is docs/info/viewers.md, under a
-# heading with the recipe's name.
+# What a person should look at is docs/info/viewers.md, under a heading with the
+# recipe's name.
 
-mesh:
-  rviz: mesh.rviz
+# The SLAM pipeline, camera to surface: loop closure and the rebuild are on by
+# pimesh.launch.py's defaults, so this sets nothing. slam.rviz draws the mesh,
+# the odometry trail, the depth image and the TF tree in the map frame.
+run:
+  rviz: slam.rviz
   rviz_delay_s: 8.0
   needs_model: true
   needs_bag: false
   loop: false
   launch: {}
-
-# The Pi's camera with the frame tree. The pipeline runs too, as it always has
-# for this recipe; it needs no model check because nothing here looks at depth.
-camera:
-  rviz: camera.rviz
-  rviz_delay_s: 3.0
-  needs_model: false
-  needs_bag: false
-  loop: false
-  launch: {}
-
-# The one view that loops, and it can because it brings up no pipeline: the
-# static frame tree and a bag. It still gets the static map -> odom edge, which
-# pimesh.launch.py keeps for exactly this case.
-replay:
-  rviz: camera.rviz
-  rviz_delay_s: 2.0
-  needs_model: false
-  needs_bag: true
-  loop: true
-  launch: {pipeline: 'false'}
-
-keypoints:
-  rviz: keypoints.rviz
-  rviz_delay_s: 3.0
-  needs_model: false
-  needs_bag: false
-  loop: false
-  launch: {}
-
-depth:
-  rviz: depth.rviz
-  rviz_delay_s: 6.0
-  needs_model: true
-  needs_bag: false
-  loop: false
-  launch: {}
-
-# odom_regime is not set here: it is the recipe's parameter, forwarded.
-odom:
-  rviz: odom.rviz
-  rviz_delay_s: 8.0
-  needs_model: true
-  needs_bag: false
-  loop: false
-  launch: {}
-
-# local_map is what makes this the map view; local_ba is the recipe's parameter.
-map:
-  rviz: map.rviz
-  rviz_delay_s: 8.0
-  needs_model: true
-  needs_bag: false
-  loop: false
-  launch: {local_map: 'true'}
-
-# No window, so nothing ends it but a signal or `seconds`. dashboard_node runs
-# in its own process, outside the container, because it must be able to die.
-dashboard:
-  rviz: null
-  rviz_delay_s: 0.0
-  needs_model: true
-  needs_bag: false
-  loop: false
-  launch: {dashboard: 'true'}
